@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\VisionStation.Application\VisionStation.Application.csproj" />
+    <ProjectReference Include="..\VisionStation.Devices\VisionStation.Devices.csproj" />
+    <ProjectReference Include="..\VisionStation.Domain\VisionStation.Domain.csproj" />
+    <ProjectReference Include="..\VisionStation.Infrastructure\VisionStation.Infrastructure.csproj" />
+    <ProjectReference Include="..\VisionStation.Vision\VisionStation.Vision.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Prism.Wpf" Version="9.0.537" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <AssemblyName>VisionStation.Vision.UI</AssemblyName>
+    <RootNamespace>VisionStation.Vision.UI</RootNamespace>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,62 @@
+<Window x:Class="VisionStation.Vision.UI.Views.FullscreenImageWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:VisionStation.Vision.UI.Controls"
+        xmlns:converters="clr-namespace:VisionStation.Vision.UI.Converters"
+        Title="{Binding Title}"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        WindowState="Maximized"
+        ResizeMode="NoResize"
+        Background="Black"
+        Foreground="{StaticResource TextPrimaryBrush}">
+    <Window.InputBindings>
+        <KeyBinding Key="Escape" Command="{Binding CloseCommand}" />
+        <KeyBinding Key="F11" Command="{Binding CloseCommand}" />
+    </Window.InputBindings>
+
+    <Window.Resources>
+        <converters:ImageFrameToBitmapSourceConverter x:Key="ImageFrameToBitmapSourceConverter" />
+    </Window.Resources>
+
+    <Grid Background="Black">
+        <controls:ZoomableImageSurface ImageFrame="{Binding CurrentFrame}"
+                                       OverlayItemsSource="{Binding OverlayItemsSource}"
+                                       CanOpenFullscreen="False"
+                                       Background="Black">
+            <Grid Background="Black">
+                <Image Source="{Binding CurrentFrame, Converter={StaticResource ImageFrameToBitmapSourceConverter}}"
+                       Stretch="Uniform"
+                       SnapsToDevicePixels="True" />
+                <controls:ResultOverlayCanvas ImageFrame="{Binding CurrentFrame}"
+                                              ItemsSource="{Binding OverlayItemsSource}"
+                                              IsHitTestVisible="False" />
+            </Grid>
+        </controls:ZoomableImageSurface>
+
+        <Border HorizontalAlignment="Stretch"
+                VerticalAlignment="Top"
+                Height="42"
+                Background="#DD0B1117"
+                BorderBrush="{StaticResource BorderBrushStrong}"
+                BorderThickness="0,0,0,1">
+            <Grid Margin="12,0">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8A5;" Width="24" FontSize="15" />
+                    <TextBlock Text="{Binding Title}" Margin="8,0,0,0" FontWeight="SemiBold" />
+                    <TextBlock Text="滚轮缩放，中键拖拽，Esc/F11关闭"
+                               Margin="18,0,0,0"
+                               Foreground="{StaticResource TextSecondaryBrush}" />
+                </StackPanel>
+
+                <Button Command="{Binding CloseCommand}"
+                        Style="{StaticResource ActionButtonStyle}"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        MinWidth="72"
+                        Margin="0"
+                        Content="关闭" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

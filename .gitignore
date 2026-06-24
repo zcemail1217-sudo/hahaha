@@ -1,0 +1,59 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+artifacts/
+_verify/
+.codex-build/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.rsuser
+
+# Rider / ReSharper
+.idea/
+_ReSharper*/
+*.DotSettings.user
+
+# Test results and coverage
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+coverage/
+coverage.xml
+coverage.cobertura.xml
+
+# NuGet
+*.nupkg
+packages/
+!packages/build/
+project.lock.json
+project.assets.json
+
+# Logs and diagnostics
+*.log
+*.binlog
+*.dmp
+*.etl
+*.trace
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+
+# Local environment and secrets
+.env
+.env.*
+*.local.json
+appsettings.Development.json
+appsettings.Local.json
+secrets.json
+
+# Codex / agent scratch output
+.superpowers/

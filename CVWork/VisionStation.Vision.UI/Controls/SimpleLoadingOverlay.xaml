@@ -1,0 +1,27 @@
+<UserControl x:Class="VisionStation.Vision.UI.Controls.SimpleLoadingOverlay"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root"
+             HorizontalAlignment="Stretch"
+             VerticalAlignment="Stretch"
+             IsHitTestVisible="{Binding IsActive, ElementName=Root}">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="SimpleLoadingBooleanToVisibilityConverter" />
+    </UserControl.Resources>
+
+    <Grid Background="#26000000"
+          Visibility="{Binding IsActive, ElementName=Root, Converter={StaticResource SimpleLoadingBooleanToVisibilityConverter}}">
+        <Border HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Padding="18,11"
+                Background="#EE0B1117"
+                BorderBrush="{StaticResource BorderBrushStrong}"
+                BorderThickness="1"
+                CornerRadius="8">
+            <TextBlock Text="{Binding Message, ElementName=Root}"
+                       FontSize="15"
+                       FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimaryBrush}" />
+        </Border>
+    </Grid>
+</UserControl>

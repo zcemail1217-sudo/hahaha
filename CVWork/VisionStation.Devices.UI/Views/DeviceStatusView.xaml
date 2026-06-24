@@ -1,0 +1,2545 @@
+<UserControl x:Class="VisionStation.Devices.UI.Views.DeviceStatusView"
+             x:Name="Root"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:prism="http://prismlibrary.com/"
+             Foreground="{StaticResource TextPrimaryBrush}"
+             prism:ViewModelLocator.AutoWireViewModel="True">
+    <UserControl.Resources>
+        <Style x:Key="StatusChipStyle" TargetType="Border">
+            <Setter Property="Background" Value="#FF111B23" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="Margin" Value="6,0,0,0" />
+        </Style>
+
+        <Style x:Key="WorkspaceTabButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="36" />
+            <Setter Property="MinWidth" Value="92" />
+            <Setter Property="Padding" Value="14,0" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="AxisChannelButtonStyle" TargetType="Button">
+            <Setter Property="MinHeight" Value="86" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="#FF101922" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4">
+                            <Grid>
+                                <Border x:Name="AccentRail"
+                                        Width="4"
+                                        HorizontalAlignment="Left"
+                                        Background="#FF2C3B44"
+                                        CornerRadius="4,0,0,4" />
+                                <ContentPresenter Margin="16,10,12,10"
+                                                  HorizontalAlignment="Stretch"
+                                                  VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#FF14232C" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
+                            </Trigger>
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#FF12352F" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="AccentRail" Property="Background" Value="{StaticResource AccentBrush}" />
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ReadoutBlockStyle" TargetType="Border">
+            <Setter Property="Background" Value="#FF091119" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="16,12" />
+        </Style>
+
+        <Style x:Key="LampBlockStyle" TargetType="Border">
+            <Setter Property="Background" Value="#FF0D151C" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="9,7" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="MinHeight" Value="54" />
+        </Style>
+
+        <Style x:Key="ConsoleGroupStyle" TargetType="Border">
+            <Setter Property="Background" Value="#FF0B141C" />
+            <Setter Property="BorderBrush" Value="#FF263944" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="14" />
+        </Style>
+
+        <Style x:Key="ConsoleGroupTitleStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+        </Style>
+
+        <Style x:Key="ConsoleButtonStyle" TargetType="Button" BasedOn="{StaticResource ActionButtonStyle}">
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="MinHeight" Value="42" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <Style x:Key="JogButtonStyle" TargetType="Button" BasedOn="{StaticResource ConsoleButtonStyle}">
+            <Setter Property="Background" Value="#FF11312B" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+            <Setter Property="MinHeight" Value="44" />
+        </Style>
+
+        <Style x:Key="EmergencyConsoleButtonStyle" TargetType="Button" BasedOn="{StaticResource ConsoleButtonStyle}">
+            <Setter Property="Background" Value="#552A1018" />
+            <Setter Property="BorderBrush" Value="{StaticResource NgBrush}" />
+            <Setter Property="MinHeight" Value="58" />
+        </Style>
+
+        <Style x:Key="IoTileStyle" TargetType="Border">
+            <Setter Property="Width" Value="176" />
+            <Setter Property="MinHeight" Value="98" />
+            <Setter Property="Background" Value="#FF101A22" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="10" />
+            <Setter Property="Margin" Value="0,0,8,8" />
+        </Style>
+
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+        </Style>
+
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Background" Value="#FF101A22" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="18,8" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="MinHeight" Value="38" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Grid SnapsToDevicePixels="True">
+                            <Border x:Name="Root"
+                                    Margin="0,0,1,0"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter ContentSource="Header"
+                                                  Margin="{TemplateBinding Padding}"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  RecognizesAccessKey="True" />
+                            </Border>
+                            <Border x:Name="RightEdge"
+                                    Width="1"
+                                    Margin="0,4,0,4"
+                                    HorizontalAlignment="Right"
+                                    Background="{TemplateBinding BorderBrush}" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
+                                <Setter TargetName="RightEdge" Property="Background" Value="{StaticResource AccentLineBrush}" />
+                                <Setter Property="Background" Value="#FF14232C" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Panel.ZIndex" Value="1" />
+                                <Setter Property="Background" Value="#FF12352F" />
+                                <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="RightEdge" Property="Background" Value="{StaticResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="FieldLabelStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Margin" Value="0,0,0,5" />
+        </Style>
+
+        <Style x:Key="ConfigurationDataGridStyle" TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
+            <Setter Property="CanUserAddRows" Value="False" />
+            <Setter Property="CanUserDeleteRows" Value="False" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource WorkbenchBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="66" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Width="36"
+                        Height="36"
+                        Background="#2633D6A6"
+                        BorderBrush="{StaticResource AccentLineBrush}"
+                        BorderThickness="1"
+                        CornerRadius="4">
+                    <TextBlock Style="{StaticResource IconTextStyle}"
+                               Text="&#xE950;"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center" />
+                </Border>
+                <StackPanel Margin="10,0,0,0">
+                    <TextBlock Text="{Binding WorkbenchTitle}" FontSize="20" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding WorkbenchSubtitle}" Foreground="{StaticResource TextSecondaryBrush}" />
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <StackPanel Width="132" Margin="0,0,10,0">
+                    <TextBlock Text="调试类型" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,4" />
+                    <ComboBox ItemsSource="{Binding DebugModeOptions}"
+                              SelectedValue="{Binding DebugMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              SelectedValuePath="Value"
+                              DisplayMemberPath="Text"
+                              MinHeight="32" />
+                </StackPanel>
+                <Button Command="{Binding ShowDebugWorkspaceCommand}"
+                        Style="{StaticResource WorkspaceTabButtonStyle}"
+                        Background="{Binding DebugTabBackground}"
+                        BorderBrush="{Binding DebugTabBorderBrush}">
+                    <TextBlock Text="调试台" FontWeight="SemiBold" />
+                </Button>
+                <Button Command="{Binding ShowConfigurationWorkspaceCommand}"
+                        Style="{StaticResource WorkspaceTabButtonStyle}"
+                        Background="{Binding ConfigurationTabBackground}"
+                        BorderBrush="{Binding ConfigurationTabBorderBrush}">
+                    <TextBlock Text="轴卡配置" FontWeight="SemiBold" />
+                </Button>
+                <Border Style="{StaticResource StatusChipStyle}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE945;" Width="18" FontSize="12" Foreground="{StaticResource AccentBrush}" />
+                        <TextBlock Text="{Binding AxisDriverSummaryText}" Margin="6,0,0,0" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Button Command="{Binding ConnectAllCommand}" Style="{StaticResource ActionButtonStyle}" ToolTip="连接轴卡和 IO">
+                    <TextBlock Text="连接轴卡 / IO" />
+                </Button>
+                <Button Command="{Binding EmergencyStopCommand}"
+                        Background="#553B1018"
+                        BorderBrush="{StaticResource NgBrush}"
+                        Style="{StaticResource ActionButtonStyle}"
+                        ToolTip="立即停止所有轴">
+                    <TextBlock Text="急停 E-STOP" Foreground="{StaticResource NgBrush}" FontWeight="SemiBold" />
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="1" Visibility="{Binding AxisDebugWorkspaceVisibility}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="292" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="560" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource PanelBorderStyle}" Padding="14">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE9D9;" Width="24" />
+                            <TextBlock Text="轴通道" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding AxisSoftLimitText}"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   Margin="32,6,0,0" />
+                    </StackPanel>
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding Axes}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Style="{StaticResource AxisChannelButtonStyle}"
+                                            Command="{Binding DataContext.SelectAxisCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <Grid>
+                                                <TextBlock Text="{Binding ChannelText}" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding Key}" HorizontalAlignment="Right" FontWeight="SemiBold" />
+                                            </Grid>
+                                            <TextBlock Grid.Row="1" Text="{Binding Name}" FontSize="17" FontWeight="SemiBold" Margin="0,8,0,0" />
+                                            <Grid Grid.Row="2" Margin="0,8,0,0">
+                                                <TextBlock Text="{Binding SoftLimitText}" Foreground="{StaticResource TextSecondaryBrush}" />
+                                                <TextBlock Text="{Binding ProfileText}" HorizontalAlignment="Right" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" />
+                                            </Grid>
+                                        </Grid>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <Border Grid.Column="2" Style="{StaticResource PanelBorderStyle}" Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="104" />
+                        <RowDefinition Height="58" />
+                        <RowDefinition Height="12" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="0,0,0,12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Row="0"
+                                    Grid.ColumnSpan="3"
+                                    Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE768;" Width="24" />
+                            <TextBlock Text="运动控制台" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="1"
+                                   Grid.Column="0"
+                                   Text="{Binding SelectedAxisTitle}"
+                                   Foreground="{StaticResource AccentBrush}"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Margin="32,5,0,0"
+                                   TextTrimming="CharacterEllipsis" />
+
+                        <TextBlock Grid.Row="1"
+                                   Grid.Column="2"
+                                   Text="{Binding AxisStatusText}"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   VerticalAlignment="Bottom"
+                                   TextAlignment="Right"
+                                   TextTrimming="CharacterEllipsis"
+                                   MaxWidth="360" />
+                    </Grid>
+
+                    <Grid Grid.Row="1" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Style="{StaticResource ReadoutBlockStyle}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="2" />
+                                </Grid.RowDefinitions>
+                                <DockPanel Grid.Row="0">
+                                    <TextBlock Text="反馈" DockPanel.Dock="Right" Foreground="{StaticResource AccentBrush}" />
+                                    <TextBlock Text="ENCODER POSITION / 反馈位置" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" />
+                                </DockPanel>
+                                <TextBlock Grid.Row="1"
+                                           Text="{Binding AxisEncoderText}"
+                                           FontFamily="Consolas"
+                                           FontSize="34"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <Border Grid.Row="2" Background="{StaticResource AccentLineBrush}" Opacity="0.8" />
+                            </Grid>
+                        </Border>
+                        <Border Grid.Column="2" Style="{StaticResource ReadoutBlockStyle}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="2" />
+                                </Grid.RowDefinitions>
+                                <DockPanel Grid.Row="0">
+                                    <TextBlock Text="指令" DockPanel.Dock="Right" Foreground="{StaticResource AccentBrush}" />
+                                    <TextBlock Text="COMMAND POSITION / 指令位置" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" />
+                                </DockPanel>
+                                <TextBlock Grid.Row="1"
+                                           Text="{Binding AxisCommandText}"
+                                           FontFamily="Consolas"
+                                           FontSize="34"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <Border Grid.Row="2" Background="{StaticResource AccentLineBrush}" Opacity="0.8" />
+                            </Grid>
+                        </Border>
+                    </Grid>
+
+                    <UniformGrid Grid.Row="2" Columns="7">
+                        <Border Style="{StaticResource LampBlockStyle}" BorderBrush="{Binding AxisServoBrush}" Margin="0,0,8,0" ToolTip="SERVO / 伺服使能">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="14" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Ellipse Width="9" Height="9" Fill="{Binding AxisServoBrush}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="伺服" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding AxisServoText}" Foreground="{Binding AxisServoBrush}" FontSize="12" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource LampBlockStyle}" BorderBrush="{Binding AxisReadyBrush}" Margin="0,0,8,0" ToolTip="READY / 轴就绪">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="14" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Ellipse Width="9" Height="9" Fill="{Binding AxisReadyBrush}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="就绪" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding AxisReadyText}" Foreground="{Binding AxisReadyBrush}" FontSize="12" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource LampBlockStyle}" BorderBrush="{Binding AxisInPositionBrush}" Margin="0,0,8,0" ToolTip="IN-POS / 轴到位">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="14" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Ellipse Width="9" Height="9" Fill="{Binding AxisInPositionBrush}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="到位" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding AxisInPositionText}" Foreground="{Binding AxisInPositionBrush}" FontSize="12" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource LampBlockStyle}" BorderBrush="{Binding AxisAlarmBrush}" Margin="0,0,8,0" ToolTip="ALARM / 轴报警">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="14" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Ellipse Width="9" Height="9" Fill="{Binding AxisAlarmBrush}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="报警" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding AxisAlarmText}" Foreground="{Binding AxisAlarmBrush}" FontSize="12" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource LampBlockStyle}" BorderBrush="{Binding AxisHomeBrush}" Margin="0,0,8,0" ToolTip="HOME / 原点信号">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="14" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Ellipse Width="9" Height="9" Fill="{Binding AxisHomeBrush}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="原点" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding AxisHomeText}" Foreground="{Binding AxisHomeBrush}" FontSize="12" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource LampBlockStyle}" BorderBrush="{Binding AxisPositiveLimitBrush}" Margin="0,0,8,0" ToolTip="+LIMIT / 正限位">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="14" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Ellipse Width="9" Height="9" Fill="{Binding AxisPositiveLimitBrush}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="正限位" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding AxisPositiveLimitText}" Foreground="{Binding AxisPositiveLimitBrush}" FontSize="12" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource LampBlockStyle}" BorderBrush="{Binding AxisNegativeLimitBrush}" ToolTip="-LIMIT / 负限位">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="14" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Ellipse Width="9" Height="9" Fill="{Binding AxisNegativeLimitBrush}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="负限位" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding AxisNegativeLimitText}" Foreground="{Binding AxisNegativeLimitBrush}" FontSize="12" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </UniformGrid>
+
+                    <Grid Grid.Row="4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="14" />
+                            <ColumnDefinition Width="276" />
+                        </Grid.ColumnDefinitions>
+
+                        <TabControl Grid.Column="0" Background="Transparent" BorderThickness="0">
+                            <TabItem Header="点位模式">
+                                <Border Style="{StaticResource ConsoleGroupStyle}" Margin="0,10,0,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="16" />
+                                            <RowDefinition Height="46" />
+                                            <RowDefinition Height="20" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <Grid Grid.Row="0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="14" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="14" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="目标位置" Style="{StaticResource FieldLabelStyle}" />
+                                                <TextBox Text="{Binding AxisTargetPosition, UpdateSourceTrigger=PropertyChanged}" MinHeight="42" Padding="12,8" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="速度" Style="{StaticResource FieldLabelStyle}" />
+                                                <TextBox Text="{Binding AxisSpeed, UpdateSourceTrigger=PropertyChanged}" MinHeight="42" Padding="12,8" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="4">
+                                                <TextBlock Text="加速度" Style="{StaticResource FieldLabelStyle}" />
+                                                <TextBox Text="{Binding AxisAcceleration, UpdateSourceTrigger=PropertyChanged}" MinHeight="42" Padding="12,8" />
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Button Grid.Row="2" Command="{Binding MoveAxisCommand}" Style="{StaticResource ConsoleButtonStyle}" HorizontalAlignment="Stretch">
+                                            <TextBlock Text="绝对移动" />
+                                        </Button>
+
+                                        <Grid Grid.Row="4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="150" />
+                                                <ColumnDefinition Width="14" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="14" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="步进距离" Style="{StaticResource FieldLabelStyle}" />
+                                                <TextBox Text="{Binding AxisStepDistance, UpdateSourceTrigger=PropertyChanged}" MinHeight="42" Padding="12,8" />
+                                            </StackPanel>
+                                            <Button Grid.Column="2" Command="{Binding MoveNegativeStepCommand}" Style="{StaticResource ConsoleButtonStyle}" VerticalAlignment="Bottom" MinHeight="46">
+                                                <TextBlock Text="- STEP" />
+                                            </Button>
+                                            <Button Grid.Column="4" Command="{Binding MovePositiveStepCommand}" Style="{StaticResource ConsoleButtonStyle}" VerticalAlignment="Bottom" MinHeight="46">
+                                                <TextBlock Text="+ STEP" />
+                                            </Button>
+                                        </Grid>
+                                    </Grid>
+                                </Border>
+                            </TabItem>
+
+                            <TabItem Header="Jog 模式">
+                                <Border Style="{StaticResource ConsoleGroupStyle}" Margin="0,10,0,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="18" />
+                                            <RowDefinition Height="96" />
+                                        </Grid.RowDefinitions>
+                                        <Grid Grid.Row="0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="190" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="Jog速度" Style="{StaticResource FieldLabelStyle}" />
+                                                <TextBox Text="{Binding AxisJogSpeed, UpdateSourceTrigger=PropertyChanged}" MinHeight="42" Padding="12,8" />
+                                            </StackPanel>
+                                        </Grid>
+                                        <Grid Grid.Row="2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="16" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Button Grid.Column="0"
+                                                    Tag="False"
+                                                    PreviewMouseDown="JogButtonPreviewMouseDown"
+                                                    PreviewMouseUp="JogButtonPreviewMouseUp"
+                                                    LostMouseCapture="JogButtonLostMouseCapture"
+                                                    Style="{StaticResource JogButtonStyle}"
+                                                    FontSize="18"
+                                                    ToolTip="按住负向Jog，松开停止">
+                                                <TextBlock Text="JOG -" />
+                                            </Button>
+                                            <Button Grid.Column="2"
+                                                    Tag="True"
+                                                    PreviewMouseDown="JogButtonPreviewMouseDown"
+                                                    PreviewMouseUp="JogButtonPreviewMouseUp"
+                                                    LostMouseCapture="JogButtonLostMouseCapture"
+                                                    Style="{StaticResource JogButtonStyle}"
+                                                    FontSize="18"
+                                                    ToolTip="按住正向Jog，松开停止">
+                                                <TextBlock Text="JOG +" />
+                                            </Button>
+                                        </Grid>
+                                    </Grid>
+                                </Border>
+                            </TabItem>
+
+                            <TabItem Header="回原模式">
+                                <Border Style="{StaticResource ConsoleGroupStyle}" Margin="0,10,0,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="18" />
+                                            <RowDefinition Height="54" />
+                                        </Grid.RowDefinitions>
+                                        <Grid Grid.Row="0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="1.25*" />
+                                                <ColumnDefinition Width="14" />
+                                                <ColumnDefinition Width="86" />
+                                                <ColumnDefinition Width="14" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="14" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="回原模式" Style="{StaticResource FieldLabelStyle}" />
+                                                <ComboBox ItemsSource="{Binding HomeModeOptions}"
+                                                          SelectedItem="{Binding SelectedAxis.HomeMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          MinHeight="42" />
+                                            </StackPanel>
+                                            <CheckBox Grid.Column="2"
+                                                      Content="正向"
+                                                      IsChecked="{Binding SelectedAxis.HomePositive, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                      VerticalAlignment="Bottom"
+                                                      MinHeight="42" />
+                                            <StackPanel Grid.Column="4">
+                                                <TextBlock Text="回原偏移" Style="{StaticResource FieldLabelStyle}" />
+                                                <TextBox Text="{Binding SelectedAxis.HomeOffset, UpdateSourceTrigger=PropertyChanged}" MinHeight="42" Padding="12,8" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="6">
+                                                <TextBlock Text="脱离距离" Style="{StaticResource FieldLabelStyle}" />
+                                                <TextBox Text="{Binding SelectedAxis.EscapeDistance, UpdateSourceTrigger=PropertyChanged}" MinHeight="42" Padding="12,8" />
+                                            </StackPanel>
+                                        </Grid>
+                                        <Button Grid.Row="2" Command="{Binding HomeAxisCommand}" Style="{StaticResource ConsoleButtonStyle}" HorizontalAlignment="Stretch">
+                                            <TextBlock Text="执行回原 HOME" />
+                                        </Button>
+                                    </Grid>
+                                </Border>
+                            </TabItem>
+
+                            <TabItem Header="插补模式">
+                                <Border Style="{StaticResource ConsoleGroupStyle}" Margin="0,10,0,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="12" />
+                                            <RowDefinition Height="*" />
+                                            <RowDefinition Height="10" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="10" />
+                                            <RowDefinition Height="50" />
+                                        </Grid.RowDefinitions>
+
+                                        <Grid Grid.Row="0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="14" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="14" />
+                                                <ColumnDefinition Width="96" />
+                                                <ColumnDefinition Width="10" />
+                                                <ColumnDefinition Width="76" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="合成速度" Style="{StaticResource FieldLabelStyle}" />
+                                                <TextBox Text="{Binding InterpolationSpeed, UpdateSourceTrigger=PropertyChanged}" MinHeight="40" Padding="12,7" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="合成加速度" Style="{StaticResource FieldLabelStyle}" />
+                                                <TextBox Text="{Binding InterpolationAcceleration, UpdateSourceTrigger=PropertyChanged}" MinHeight="40" Padding="12,7" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="4">
+                                                <TextBlock Text="坐标系" Style="{StaticResource FieldLabelStyle}" />
+                                                <TextBox Text="{Binding InterpolationCoordinateSystem, UpdateSourceTrigger=PropertyChanged}" MinHeight="40" Padding="12,7" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="6">
+                                                <TextBlock Text="FIFO" Style="{StaticResource FieldLabelStyle}" />
+                                                <TextBox Text="{Binding InterpolationFifo, UpdateSourceTrigger=PropertyChanged}" MinHeight="40" Padding="12,7" />
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <DataGrid Grid.Row="2"
+                                                  ItemsSource="{Binding InterpolationTargets}"
+                                                  AutoGenerateColumns="False"
+                                                  RowHeight="34"
+                                                  MinHeight="122">
+                                            <DataGrid.Columns>
+                                                <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                                <DataGridTextColumn Header="轴" Binding="{Binding DisplayName}" IsReadOnly="True" Width="*" />
+                                                <DataGridTextColumn Header="绝对目标(mm)" Binding="{Binding TargetPosition, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="130" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+
+                                        <Grid Grid.Row="4">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="8" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <Grid Grid.Row="0">
+                                                <TextBlock Text="同步 DO（可选）" Style="{StaticResource FieldLabelStyle}" />
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                    <Button Command="{Binding AddBeforeMotionOutputCommand}" Style="{StaticResource ConsoleButtonStyle}" MinHeight="28" Padding="10,4" Margin="0,0,8,0">
+                                                        <TextBlock Text="运动前DO" />
+                                                    </Button>
+                                                    <Button Command="{Binding AddAfterMotionOutputCommand}" Style="{StaticResource ConsoleButtonStyle}" MinHeight="28" Padding="10,4">
+                                                        <TextBlock Text="运动后DO" />
+                                                    </Button>
+                                                </StackPanel>
+                                            </Grid>
+                                            <DataGrid Grid.Row="2"
+                                                      ItemsSource="{Binding InterpolationBufferedOutputs}"
+                                                      AutoGenerateColumns="False"
+                                                      RowHeight="30"
+                                                      MaxHeight="92">
+                                                <DataGrid.Columns>
+                                                    <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="52" />
+                                                    <DataGridTextColumn Header="鏃舵満" Binding="{Binding TimingText}" IsReadOnly="True" Width="72" />
+                                                    <DataGridTextColumn Header="DO点号" Binding="{Binding PointNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="70" />
+                                                    <DataGridCheckBoxColumn Header="ON" Binding="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="52" />
+                                                    <DataGridTextColumn Header="寤舵椂ms" Binding="{Binding DelayMilliseconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                        </Grid>
+
+                                        <Grid Grid.Row="6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="12" />
+                                                <ColumnDefinition Width="1.4*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Button Grid.Column="0"
+                                                    Command="{Binding PrecheckLinearInterpolationCommand}"
+                                                    Style="{StaticResource ConsoleButtonStyle}"
+                                                    HorizontalAlignment="Stretch">
+                                                <TextBlock Text="插补预检" />
+                                            </Button>
+                                            <Button Grid.Column="2"
+                                                    Command="{Binding RunLinearInterpolationCommand}"
+                                                    Style="{StaticResource JogButtonStyle}"
+                                                    HorizontalAlignment="Stretch">
+                                                <TextBlock Text="执行硬件直线插补" />
+                                            </Button>
+                                        </Grid>
+                                    </Grid>
+                                </Border>
+                            </TabItem>
+                        </TabControl>
+
+                        <Border Grid.Column="2" Style="{StaticResource ConsoleGroupStyle}">
+                            <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="12" />
+                                <RowDefinition Height="46" />
+                                <RowDefinition Height="10" />
+                                <RowDefinition Height="46" />
+                                <RowDefinition Height="10" />
+                                <RowDefinition Height="46" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="62" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.ColumnSpan="3" Text="AXIS ACTIONS / 轴操作" Style="{StaticResource ConsoleGroupTitleStyle}" />
+                            <Button Grid.Row="2" Grid.Column="0" Command="{Binding ServoOnCommand}" Style="{StaticResource ConsoleButtonStyle}"><TextBlock Text="伺服 ON" /></Button>
+                            <Button Grid.Row="2" Grid.Column="2" Command="{Binding ServoOffCommand}" Style="{StaticResource ConsoleButtonStyle}"><TextBlock Text="伺服 OFF" /></Button>
+                            <Button Grid.Row="4" Grid.Column="0" Command="{Binding StopAxisCommand}" Style="{StaticResource ConsoleButtonStyle}"><TextBlock Text="停止" /></Button>
+                            <Button Grid.Row="4" Grid.Column="2" Command="{Binding ClearAxisAlarmCommand}" Style="{StaticResource ConsoleButtonStyle}"><TextBlock Text="清报警" /></Button>
+                            <Button Grid.Row="6" Grid.Column="0" Command="{Binding ZeroAxisPositionCommand}" Style="{StaticResource ConsoleButtonStyle}" ToolTip="将当前轴的指令位置和反馈位置清零，需先停止轴">
+                                <TextBlock Text="位置清零" />
+                            </Button>
+                            <Button Grid.Row="6" Grid.Column="2" Command="{Binding RefreshAxisStatusCommand}" Style="{StaticResource ConsoleButtonStyle}"><TextBlock Text="刷新状态" /></Button>
+                            <Button Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="3" Command="{Binding EmergencyStopCommand}" Style="{StaticResource EmergencyConsoleButtonStyle}">
+                                <TextBlock Text="急停 E-STOP" Foreground="{StaticResource NgBrush}" FontWeight="SemiBold" />
+                            </Button>
+                        </Grid>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="4" Style="{StaticResource PanelBorderStyle}" Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="0,0,0,12">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8A7;" Width="24" />
+                            <TextBlock Text="数字 IO 点表" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                        </StackPanel>
+                        <Button Command="{Binding RefreshIoPointsCommand}" Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Right">
+                            <TextBlock Text="刷新IO" />
+                        </Button>
+                    </Grid>
+
+                    <TabControl Grid.Row="1" Background="Transparent" BorderThickness="0">
+                        <TabItem Header="DI 输入点">
+                            <DataGrid ItemsSource="{Binding InputPoints}"
+                                      AutoGenerateColumns="False"
+                                      IsReadOnly="True"
+                                      RowHeight="30"
+                                      EnableRowVirtualization="True"
+                                      EnableColumnVirtualization="True">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="地址" Binding="{Binding Address}" Width="62" />
+                                    <DataGridTextColumn Header="标识" Binding="{Binding Key}" Width="128" />
+                                    <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="*" />
+                                    <DataGridTemplateColumn Header="状态" Width="76">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <Ellipse Width="8" Height="8" Fill="{Binding StateBrush}" Margin="0,0,7,0" />
+                                                    <TextBlock Text="{Binding ValueText}"
+                                                               Foreground="{Binding StateBrush}"
+                                                               FontWeight="SemiBold" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="极性" Binding="{Binding PolarityText}" Width="60" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </TabItem>
+
+                        <TabItem Header="DO 输出点">
+                            <DataGrid ItemsSource="{Binding OutputPoints}"
+                                      AutoGenerateColumns="False"
+                                      RowHeight="34"
+                                      EnableRowVirtualization="True"
+                                      EnableColumnVirtualization="True">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="地址" Binding="{Binding Address}" IsReadOnly="True" Width="62" />
+                                    <DataGridTextColumn Header="标识" Binding="{Binding Key}" IsReadOnly="True" Width="128" />
+                                    <DataGridTextColumn Header="名称" Binding="{Binding Name}" IsReadOnly="True" Width="*" />
+                                    <DataGridTemplateColumn Header="状态" Width="76">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <Ellipse Width="8" Height="8" Fill="{Binding StateBrush}" Margin="0,0,7,0" />
+                                                    <TextBlock Text="{Binding ValueText}"
+                                                               Foreground="{Binding StateBrush}"
+                                                               FontWeight="SemiBold" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="输出" Width="76">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Command="{Binding DataContext.ToggleIoPointCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding}"
+                                                        IsEnabled="{Binding CanWrite}"
+                                                        Height="26"
+                                                        MinWidth="54"
+                                                        Padding="8,0"
+                                                        Margin="0"
+                                                        Style="{StaticResource ActionButtonStyle}">
+                                                    <TextBlock Text="{Binding ToggleText}" />
+                                                </Button>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </TabItem>
+                    </TabControl>
+
+                    <TextBlock Grid.Row="2"
+                               Text="{Binding IoStatusText}"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,10,0,0" />
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="1"
+              DataContext="{Binding FieldbusDebug}"
+              Visibility="{Binding DataContext.PlcDebugWorkspaceVisibility, ElementName=Root}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="360" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource PanelBorderStyle}" Padding="16">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,14">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE950;" Width="24" />
+                        <TextBlock Text="PLC 通讯对象" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Text="设备 Key" Style="{StaticResource FieldLabelStyle}" />
+                        <ComboBox ItemsSource="{Binding CommunicationDeviceOptions}"
+                                  SelectedValue="{Binding SelectedCommunicationDeviceKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  MinHeight="34" />
+
+                        <TextBlock Text="PLC 品牌" Style="{StaticResource FieldLabelStyle}" Margin="0,12,0,5" />
+                        <ComboBox ItemsSource="{Binding PlcBrandOptions}"
+                                  SelectedValue="{Binding CommunicationBrand, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  MinHeight="34" />
+
+                        <TextBlock Text="PLC 协议 / 型号" Style="{StaticResource FieldLabelStyle}" Margin="0,12,0,5" />
+                        <ComboBox ItemsSource="{Binding CommunicationProtocolOptions}"
+                                  SelectedValue="{Binding CommunicationProtocol, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  MinHeight="34" />
+
+                        <Grid Margin="0,12,0,0" Visibility="{Binding TcpConnectionFieldsVisibility}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="110" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="IP / Host" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationIpAddress, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="端口" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationPort, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0" Visibility="{Binding SerialConnectionFieldsVisibility}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="110" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="串口" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationSerialPort, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="波特率" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationBaudRate, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="站号" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationStationNo, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="型号 / 系列" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationModel, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Button Command="{Binding SaveCommunicationDeviceCommand}"
+                                Style="{StaticResource ActionButtonStyle}"
+                                HorizontalAlignment="Stretch"
+                                Margin="0,16,0,0">
+                            <TextBlock Text="保存 PLC 参数" />
+                        </Button>
+                    </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <Border Grid.Column="2" Style="{StaticResource PanelBorderStyle}" Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="14" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="14" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8A5;" Width="24" />
+                        <TextBlock Text="PLC 地址读写" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.2*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="1.2*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="100" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="地址" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox Text="{Binding CommunicationAddress, UpdateSourceTrigger=PropertyChanged}" MinHeight="38" Padding="10,7" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="写入值" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox Text="{Binding CommunicationWriteValue, UpdateSourceTrigger=PropertyChanged}" MinHeight="38" Padding="10,7" />
+                        </StackPanel>
+                        <Button Grid.Column="4" Command="{Binding ConnectCommunicationDeviceCommand}" Style="{StaticResource ConsoleButtonStyle}" VerticalAlignment="Bottom"><TextBlock Text="连接" /></Button>
+                        <Button Grid.Column="6" Command="{Binding ReadCommunicationAddressCommand}" Style="{StaticResource ConsoleButtonStyle}" VerticalAlignment="Bottom"><TextBlock Text="读取" /></Button>
+                        <Button Grid.Column="8" Command="{Binding WriteCommunicationAddressCommand}" Style="{StaticResource ConsoleButtonStyle}" VerticalAlignment="Bottom"><TextBlock Text="写入" /></Button>
+                    </Grid>
+
+                    <Border Grid.Row="4" Style="{StaticResource ReadoutBlockStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="READ VALUE" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" />
+                            <TextBlock Grid.Row="1"
+                                       Text="{Binding CommunicationReadValue}"
+                                       FontFamily="Consolas"
+                                       FontSize="32"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="2"
+                                       Text="{Binding CommunicationStatusText}"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       TextWrapping="Wrap" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="1"
+              DataContext="{Binding FieldbusDebug}"
+              Visibility="{Binding DataContext.ModbusDebugWorkspaceVisibility, ElementName=Root}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="360" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource PanelBorderStyle}" Padding="16">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,14">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE950;" Width="24" />
+                        <TextBlock Text="Modbus 连接" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Text="设备 Key" Style="{StaticResource FieldLabelStyle}" />
+                        <ComboBox ItemsSource="{Binding CommunicationDeviceOptions}"
+                                  SelectedValue="{Binding SelectedCommunicationDeviceKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  MinHeight="34" />
+
+                        <TextBlock Text="Modbus 协议" Style="{StaticResource FieldLabelStyle}" Margin="0,12,0,5" />
+                        <ComboBox ItemsSource="{Binding CommunicationProtocolOptions}"
+                                  SelectedValue="{Binding CommunicationProtocol, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  MinHeight="34" />
+
+                        <Grid Margin="0,12,0,0" Visibility="{Binding ModbusTcpConnectionFieldsVisibility}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="110" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="IP / Host" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationIpAddress, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="端口" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationPort, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0" Visibility="{Binding ModbusSerialConnectionFieldsVisibility}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="110" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="串口" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationSerialPort, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="波特率" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationBaudRate, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="站号" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationStationNo, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="地址格式" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationModel, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Button Command="{Binding SaveCommunicationDeviceCommand}"
+                                Style="{StaticResource ActionButtonStyle}"
+                                HorizontalAlignment="Stretch"
+                                Margin="0,16,0,0">
+                            <TextBlock Text="保存 Modbus 参数" />
+                        </Button>
+                    </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <Border Grid.Column="2" Style="{StaticResource PanelBorderStyle}" Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="14" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="14" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8A5;" Width="24" />
+                        <TextBlock Text="Modbus 地址读写" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.2*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="1.2*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="100" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="地址" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox Text="{Binding CommunicationAddress, UpdateSourceTrigger=PropertyChanged}" MinHeight="38" Padding="10,7" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="写入值" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox Text="{Binding CommunicationWriteValue, UpdateSourceTrigger=PropertyChanged}" MinHeight="38" Padding="10,7" />
+                        </StackPanel>
+                        <Button Grid.Column="4" Command="{Binding ConnectCommunicationDeviceCommand}" Style="{StaticResource ConsoleButtonStyle}" VerticalAlignment="Bottom"><TextBlock Text="连接" /></Button>
+                        <Button Grid.Column="6" Command="{Binding ReadCommunicationAddressCommand}" Style="{StaticResource ConsoleButtonStyle}" VerticalAlignment="Bottom"><TextBlock Text="读取" /></Button>
+                        <Button Grid.Column="8" Command="{Binding WriteCommunicationAddressCommand}" Style="{StaticResource ConsoleButtonStyle}" VerticalAlignment="Bottom"><TextBlock Text="写入" /></Button>
+                    </Grid>
+
+                    <Border Grid.Row="4" Style="{StaticResource ReadoutBlockStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="READ VALUE" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" />
+                            <TextBlock Grid.Row="1"
+                                       Text="{Binding CommunicationReadValue}"
+                                       FontFamily="Consolas"
+                                       FontSize="32"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="2"
+                                       Text="{Binding CommunicationStatusText}"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       TextWrapping="Wrap" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="1"
+              DataContext="{Binding TcpDebug}"
+              Visibility="{Binding DataContext.TcpDebugWorkspaceVisibility, ElementName=Root}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="360" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource PanelBorderStyle}" Padding="16">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,14">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE774;" Width="24" />
+                        <TextBlock Text="TCP 连接" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Text="运行模式" Style="{StaticResource FieldLabelStyle}" />
+                        <ComboBox ItemsSource="{Binding TcpModeOptions}"
+                                  SelectedValue="{Binding TcpMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  MinHeight="34" />
+
+                        <TextBlock Text="{Binding TcpHostLabel}" Style="{StaticResource FieldLabelStyle}" Margin="0,12,0,5" />
+                        <TextBox Text="{Binding TcpHost, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+
+                        <TextBlock Text="{Binding TcpPortLabel}" Style="{StaticResource FieldLabelStyle}" Margin="0,12,0,5" />
+                        <TextBox Text="{Binding TcpPort, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+
+                        <CheckBox Content="HEX 报文"
+                                  IsChecked="{Binding TcpSendAsHex}"
+                                  Margin="0,14,0,0"
+                                  MinHeight="28" />
+
+                        <TextBlock Text="拆帧方式" Style="{StaticResource FieldLabelStyle}" Margin="0,12,0,5" />
+                        <ComboBox ItemsSource="{Binding TcpFrameModeOptions}"
+                                  SelectedValue="{Binding TcpFrameMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  MinHeight="34" />
+
+                        <TextBlock Text="最大帧长" Style="{StaticResource FieldLabelStyle}" Margin="0,12,0,5" />
+                        <TextBox Text="{Binding TcpMaxFrameLength, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+
+                        <Grid Margin="0,12,0,0" Visibility="{Binding TcpDelimiterOptionsVisibility}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="6" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <StackPanel Grid.Row="0">
+                                <TextBlock Text="分隔符" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding TcpDelimiterText, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                            <CheckBox Grid.Row="2"
+                                      Content="发送时自动补分隔符"
+                                      IsChecked="{Binding TcpAppendDelimiterOnSend}"
+                                      MinHeight="28" />
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0" Visibility="{Binding TcpFixedLengthOptionsVisibility}">
+                            <StackPanel>
+                                <TextBlock Text="固定长度" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding TcpFixedFrameLength, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0" Visibility="{Binding TcpLengthPrefixOptionsVisibility}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="6" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="10" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="长度头" Style="{StaticResource FieldLabelStyle}" />
+                                    <ComboBox ItemsSource="{Binding TcpLengthPrefixByteOptions}"
+                                              SelectedValue="{Binding TcpLengthPrefixBytes, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              SelectedValuePath="Value"
+                                              DisplayMemberPath="Text"
+                                              MinHeight="34" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="字节序" Style="{StaticResource FieldLabelStyle}" />
+                                    <CheckBox Content="小端"
+                                              IsChecked="{Binding TcpLengthPrefixLittleEndian}"
+                                              MinHeight="34"
+                                              VerticalContentAlignment="Center" />
+                                </StackPanel>
+                            </Grid>
+                            <CheckBox Grid.Row="2"
+                                      Content="发送时自动加长度头"
+                                      IsChecked="{Binding TcpPrefixPayloadOnSend}"
+                                      MinHeight="28" />
+                        </Grid>
+
+                        <Border Style="{StaticResource ReadoutBlockStyle}" Margin="0,14,0,0" Padding="12">
+                            <StackPanel>
+                                <TextBlock Text="SESSION" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" />
+                                <TextBlock Text="{Binding TcpSessionText}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,5,0,0" />
+                            </StackPanel>
+                        </Border>
+
+                        <Grid Margin="0,16,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0"
+                                    Command="{Binding TcpConnectCommand}"
+                                    Style="{StaticResource ActionButtonStyle}"
+                                    HorizontalAlignment="Stretch">
+                                <TextBlock Text="{Binding TcpConnectButtonText}" />
+                            </Button>
+                            <Button Grid.Column="2"
+                                    Command="{Binding TcpDisconnectCommand}"
+                                    Style="{StaticResource ConsoleButtonStyle}"
+                                    HorizontalAlignment="Stretch">
+                                <TextBlock Text="{Binding TcpDisconnectButtonText}" />
+                            </Button>
+                        </Grid>
+                    </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <Border Grid.Column="2" Style="{StaticResource PanelBorderStyle}" Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="14" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="12" />
+                        <RowDefinition Height="170" />
+                        <RowDefinition Height="12" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="12" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="12" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE774;" Width="24" />
+                        <TextBlock Text="TCP 收发" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="2" Text="发送报文" Style="{StaticResource FieldLabelStyle}" />
+                    <TextBox Grid.Row="4"
+                             Text="{Binding TcpPayload, UpdateSourceTrigger=PropertyChanged}"
+                             AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto"
+                             Padding="10"
+                             FontFamily="Consolas" />
+                    <Grid Grid.Row="6">
+                        <TextBlock Text="{Binding TcpStatusText}"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,220,0" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Command="{Binding TcpSendCommand}"
+                                    Style="{StaticResource ActionButtonStyle}">
+                                <TextBlock Text="{Binding TcpSendButtonText}" />
+                            </Button>
+                            <Button Command="{Binding TcpClearCommand}"
+                                    Style="{StaticResource ConsoleButtonStyle}"
+                                    Margin="8,0,0,0">
+                                <TextBlock Text="清空" />
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Grid.Row="8" Text="接收日志" Style="{StaticResource FieldLabelStyle}" />
+                    <TextBox Grid.Row="10"
+                             Text="{Binding TcpResponse, Mode=OneWay}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto"
+                             Padding="10"
+                             FontFamily="Consolas" />
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="1"
+              DataContext="{Binding FieldbusDebug}"
+              Visibility="{Binding DataContext.SerialDebugWorkspaceVisibility, ElementName=Root}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="360" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource PanelBorderStyle}" Padding="16">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,14">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE950;" Width="24" />
+                        <TextBlock Text="串口参数" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Text="设备 Key" Style="{StaticResource FieldLabelStyle}" />
+                        <ComboBox ItemsSource="{Binding CommunicationDeviceOptions}"
+                                  SelectedValue="{Binding SelectedCommunicationDeviceKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  MinHeight="34" />
+
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="110" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="串口" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationSerialPort, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="波特率" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationBaudRate, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="88" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="88" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="数据位" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding SerialDataBits, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="校验位" Style="{StaticResource FieldLabelStyle}" />
+                                <ComboBox ItemsSource="{Binding SerialParityOptions}"
+                                          SelectedValue="{Binding SerialParity, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          SelectedValuePath="Value"
+                                          DisplayMemberPath="Text"
+                                          MinHeight="34" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="4">
+                                <TextBlock Text="停止位" Style="{StaticResource FieldLabelStyle}" />
+                                <ComboBox ItemsSource="{Binding SerialStopBitsOptions}"
+                                          SelectedValue="{Binding SerialStopBits, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          SelectedValuePath="Value"
+                                          DisplayMemberPath="Text"
+                                          MinHeight="34" />
+                            </StackPanel>
+                        </Grid>
+
+                        <CheckBox Content="HEX 报文"
+                                  IsChecked="{Binding SerialSendAsHex}"
+                                  Margin="0,14,0,0"
+                                  MinHeight="28" />
+
+                        <TextBlock Text="拆帧方式" Style="{StaticResource FieldLabelStyle}" Margin="0,12,0,5" />
+                        <ComboBox ItemsSource="{Binding SerialFrameModeOptions}"
+                                  SelectedValue="{Binding SerialFrameMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  MinHeight="34" />
+
+                        <TextBlock Text="最大帧长" Style="{StaticResource FieldLabelStyle}" Margin="0,12,0,5" />
+                        <TextBox Text="{Binding SerialMaxFrameLength, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+
+                        <Grid Margin="0,12,0,0" Visibility="{Binding SerialDelimiterOptionsVisibility}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="6" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <StackPanel Grid.Row="0">
+                                <TextBlock Text="分隔符" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding SerialDelimiterText, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                            <CheckBox Grid.Row="2"
+                                      Content="发送时自动补分隔符"
+                                      IsChecked="{Binding SerialAppendDelimiterOnSend}"
+                                      MinHeight="28" />
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0" Visibility="{Binding SerialFixedLengthOptionsVisibility}">
+                            <StackPanel>
+                                <TextBlock Text="固定长度" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding SerialFixedFrameLength, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0" Visibility="{Binding SerialLengthPrefixOptionsVisibility}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="6" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="10" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="长度头" Style="{StaticResource FieldLabelStyle}" />
+                                    <ComboBox ItemsSource="{Binding TcpLengthPrefixByteOptions}"
+                                              SelectedValue="{Binding SerialLengthPrefixBytes, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              SelectedValuePath="Value"
+                                              DisplayMemberPath="Text"
+                                              MinHeight="34" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="字节序" Style="{StaticResource FieldLabelStyle}" />
+                                    <CheckBox Content="小端"
+                                              IsChecked="{Binding SerialLengthPrefixLittleEndian}"
+                                              MinHeight="34"
+                                              VerticalContentAlignment="Center" />
+                                </StackPanel>
+                            </Grid>
+                            <CheckBox Grid.Row="2"
+                                      Content="发送时自动加长度头"
+                                      IsChecked="{Binding SerialPrefixPayloadOnSend}"
+                                      MinHeight="28" />
+                        </Grid>
+
+                        <Border Style="{StaticResource ReadoutBlockStyle}" Margin="0,14,0,0" Padding="12">
+                            <StackPanel>
+                                <TextBlock Text="SESSION" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" />
+                                <TextBlock Text="{Binding SerialSessionText}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,5,0,0" />
+                            </StackPanel>
+                        </Border>
+
+                        <Grid Margin="0,16,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0"
+                                    Command="{Binding SerialConnectCommand}"
+                                    Style="{StaticResource ActionButtonStyle}"
+                                    HorizontalAlignment="Stretch">
+                                <TextBlock Text="{Binding SerialConnectButtonText}" />
+                            </Button>
+                            <Button Grid.Column="2"
+                                    Command="{Binding SerialDisconnectCommand}"
+                                    Style="{StaticResource ConsoleButtonStyle}"
+                                    HorizontalAlignment="Stretch">
+                                <TextBlock Text="{Binding SerialDisconnectButtonText}" />
+                            </Button>
+                        </Grid>
+
+                        <Button Command="{Binding SaveCommunicationDeviceCommand}"
+                                Style="{StaticResource ActionButtonStyle}"
+                                HorizontalAlignment="Stretch"
+                                Margin="0,16,0,0">
+                            <TextBlock Text="保存串口参数" />
+                        </Button>
+                    </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <Border Grid.Column="2" Style="{StaticResource PanelBorderStyle}" Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="14" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="12" />
+                        <RowDefinition Height="170" />
+                        <RowDefinition Height="12" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="12" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="12" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE950;" Width="24" />
+                        <TextBlock Text="串口收发" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="2" Text="发送报文" Style="{StaticResource FieldLabelStyle}" />
+                    <TextBox Grid.Row="4"
+                             Text="{Binding SerialPayload, UpdateSourceTrigger=PropertyChanged}"
+                             AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto"
+                             Padding="10"
+                             FontFamily="Consolas" />
+
+                    <Grid Grid.Row="6">
+                        <TextBlock Text="{Binding SerialStatusText}"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,220,0" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Command="{Binding SerialSendCommand}"
+                                    Style="{StaticResource ActionButtonStyle}">
+                                <TextBlock Text="{Binding SerialSendButtonText}" />
+                            </Button>
+                            <Button Command="{Binding SerialClearCommand}"
+                                    Style="{StaticResource ConsoleButtonStyle}"
+                                    Margin="8,0,0,0">
+                                <TextBlock Text="清空" />
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Grid.Row="8" Text="接收日志" Style="{StaticResource FieldLabelStyle}" />
+                    <TextBox Grid.Row="10"
+                             Text="{Binding SerialResponse, Mode=OneWay}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto"
+                             Padding="10"
+                             FontFamily="Consolas" />
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="1" Visibility="{Binding CommunicationDebugWorkspaceVisibility}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="360" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource PanelBorderStyle}" Padding="16">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,14">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE950;" Width="24" />
+                        <TextBlock Text="通讯对象" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <StackPanel>
+                        <TextBlock Text="设备 Key" Style="{StaticResource FieldLabelStyle}" />
+                        <ComboBox ItemsSource="{Binding CommunicationDeviceOptions}"
+                                  SelectedValue="{Binding SelectedCommunicationDeviceKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  MinHeight="34" />
+
+                        <TextBlock Text="品牌" Style="{StaticResource FieldLabelStyle}" Margin="0,12,0,5" />
+                        <ComboBox ItemsSource="{Binding PlcBrandOptions}"
+                                  SelectedValue="{Binding CommunicationBrand, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  MinHeight="34" />
+
+                        <TextBlock Text="协议 / 类型" Style="{StaticResource FieldLabelStyle}" Margin="0,12,0,5" />
+                        <ComboBox ItemsSource="{Binding CommunicationProtocolOptions}"
+                                  SelectedValue="{Binding CommunicationProtocol, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  MinHeight="34" />
+
+                        <Grid Margin="0,12,0,0" Visibility="{Binding TcpConnectionFieldsVisibility}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="110" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="IP / Host" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationIpAddress, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="端口" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationPort, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0" Visibility="{Binding SerialConnectionFieldsVisibility}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="110" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="串口" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationSerialPort, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="波特率" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationBaudRate, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="10" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="站号" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationStationNo, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="型号 / 系列" Style="{StaticResource FieldLabelStyle}" />
+                                <TextBox Text="{Binding CommunicationModel, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Button Command="{Binding SaveCommunicationDeviceCommand}"
+                                Style="{StaticResource ActionButtonStyle}"
+                                HorizontalAlignment="Stretch"
+                                Margin="0,16,0,0">
+                            <TextBlock Text="保存通讯参数" />
+                        </Button>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <Border Grid.Column="2" Style="{StaticResource PanelBorderStyle}" Padding="16" Visibility="{Binding AddressableDebugPanelVisibility}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="14" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="14" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8A5;" Width="24" />
+                        <TextBlock Text="地址读写" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.2*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="1.2*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="100" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="地址" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox Text="{Binding CommunicationAddress, UpdateSourceTrigger=PropertyChanged}" MinHeight="38" Padding="10,7" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="写入值" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox Text="{Binding CommunicationWriteValue, UpdateSourceTrigger=PropertyChanged}" MinHeight="38" Padding="10,7" />
+                        </StackPanel>
+                        <Button Grid.Column="4" Command="{Binding ConnectCommunicationDeviceCommand}" Style="{StaticResource ConsoleButtonStyle}" VerticalAlignment="Bottom"><TextBlock Text="连接" /></Button>
+                        <Button Grid.Column="6" Command="{Binding ReadCommunicationAddressCommand}" Style="{StaticResource ConsoleButtonStyle}" VerticalAlignment="Bottom"><TextBlock Text="读取" /></Button>
+                        <Button Grid.Column="8" Command="{Binding WriteCommunicationAddressCommand}" Style="{StaticResource ConsoleButtonStyle}" VerticalAlignment="Bottom"><TextBlock Text="写入" /></Button>
+                    </Grid>
+
+                    <Border Grid.Row="4" Style="{StaticResource ReadoutBlockStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="READ VALUE" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" />
+                            <TextBlock Grid.Row="1"
+                                       Text="{Binding CommunicationReadValue}"
+                                       FontFamily="Consolas"
+                                       FontSize="32"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="2"
+                                       Text="{Binding CommunicationStatusText}"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       TextWrapping="Wrap" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="2" Style="{StaticResource PanelBorderStyle}" Padding="16" Visibility="{Binding TcpDebugPanelVisibility}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="14" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="14" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE774;" Width="24" />
+                        <TextBlock Text="TCP 收发" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.2*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="100" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Host" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox Text="{Binding TcpHost, UpdateSourceTrigger=PropertyChanged}" MinHeight="38" Padding="10,7" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="端口" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox Text="{Binding TcpPort, UpdateSourceTrigger=PropertyChanged}" MinHeight="38" Padding="10,7" />
+                        </StackPanel>
+                        <CheckBox Grid.Column="4" Content="HEX" IsChecked="{Binding TcpSendAsHex}" VerticalAlignment="Bottom" MinHeight="38" />
+                    </Grid>
+                    <Grid Grid.Row="4">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="12" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="12" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBox Grid.Row="0"
+                                 Text="{Binding TcpPayload, UpdateSourceTrigger=PropertyChanged}"
+                                 AcceptsReturn="True"
+                                 VerticalScrollBarVisibility="Auto"
+                                 Padding="10"
+                                 FontFamily="Consolas" />
+                        <TextBox Grid.Row="2"
+                                 Text="{Binding TcpResponse, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 AcceptsReturn="True"
+                                 VerticalScrollBarVisibility="Auto"
+                                 Padding="10"
+                                 FontFamily="Consolas" />
+                        <Grid Grid.Row="4">
+                            <TextBlock Text="{Binding TcpStatusText}" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                            <Button Command="{Binding TcpSendCommand}" Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Right">
+                                <TextBlock Text="发送" />
+                            </Button>
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="1" Visibility="{Binding ConfigurationWorkspaceVisibility}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="150" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0" Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,0,0,10">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="130" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="22" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="运行模式" Style="{StaticResource FieldLabelStyle}" />
+                        <ComboBox ItemsSource="{Binding AxisControllerModes}"
+                                  SelectedValue="{Binding AxisControllerMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  MinHeight="34" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="兼容默认卡号" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBox Text="{Binding GoogolCardNo, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="4">
+                        <TextBlock Text="兼容默认配置文件" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBox Text="{Binding GoogolConfigPath, UpdateSourceTrigger=PropertyChanged}" MinHeight="34" Padding="8,5" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="6" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
+                        <Button Command="{Binding ReloadConfigurationCommand}" Style="{StaticResource ActionButtonStyle}"><TextBlock Text="重载" /></Button>
+                        <Button Command="{Binding SaveConfigurationCommand}" Style="{StaticResource ActionButtonStyle}"><TextBlock Text="保存" /></Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <TabControl Grid.Row="1" Margin="0,0,0,10">
+                <TabItem Header="轴卡配置">
+                    <Grid Margin="0,10,0,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="1*" />
+                            <RowDefinition Height="12" />
+                            <RowDefinition Height="1*" />
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Style="{StaticResource PanelBorderStyle}" Padding="14">
+                            <DockPanel>
+                                <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8CC;" Width="24" />
+                                        <TextBlock Text="轴卡列表" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                                    </StackPanel>
+                                    <Button Command="{Binding AddCardCommand}" Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Right">
+                                        <TextBlock Text="新增轴卡" />
+                                    </Button>
+                                </Grid>
+
+                                <DataGrid ItemsSource="{Binding Cards}" AutoGenerateColumns="False" RowHeight="30" Style="{StaticResource ConfigurationDataGridStyle}">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="92" />
+                                        <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                        <DataGridTemplateColumn Header="驱动" Width="140">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding DataContext.AxisCardDriverOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                              SelectedValue="{Binding Driver, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Value"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTextColumn Header="品牌" Binding="{Binding Vendor}" Width="82" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="型号" Binding="{Binding Model, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="110" />
+                                        <DataGridTextColumn Header="卡号" Binding="{Binding CardNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="64" />
+                                        <DataGridTextColumn Header="轴数" Binding="{Binding AxisCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="64" />
+                                        <DataGridTextColumn Header="输入数" Binding="{Binding InputCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                        <DataGridTextColumn Header="输出数" Binding="{Binding OutputCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                        <DataGridTextColumn Header="配置文件" Binding="{Binding ConfigPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                        <DataGridTextColumn Header="说明" Binding="{Binding Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="160" />
+                                        <DataGridTemplateColumn Header="操作" Width="66">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button Command="{Binding DataContext.RemoveCardCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                            CommandParameter="{Binding}"
+                                                            Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                        <TextBlock Text="删除" />
+                                                    </Button>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Border>
+
+                        <Border Grid.Row="2" Style="{StaticResource PanelBorderStyle}" Padding="14">
+                            <DockPanel>
+                                <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8A7;" Width="24" />
+                                        <TextBlock Text="拓展IO模块" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                                    </StackPanel>
+                                    <Button Command="{Binding AddExtendedModuleCommand}" Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Right">
+                                        <TextBlock Text="新增模块" />
+                                    </Button>
+                                </Grid>
+
+                                <DataGrid ItemsSource="{Binding ExtendedModules}" AutoGenerateColumns="False" RowHeight="30" Style="{StaticResource ConfigurationDataGridStyle}">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="92" />
+                                        <DataGridTemplateColumn Header="父卡" Width="150">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                              SelectedValue="{Binding ParentCardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Key"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTextColumn Header="型号" Binding="{Binding Model, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="160" />
+                                        <DataGridTemplateColumn Header="模块号" Width="78">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding ModuleNoOptions}"
+                                                              SelectedValue="{Binding ModuleNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Value"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="拨码" Width="68">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding StartAddressOptions}"
+                                                              SelectedValue="{Binding StartAddress, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Value"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTextColumn Header="类型" Binding="{Binding ModuleType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                        <DataGridTextColumn Header="模式" Binding="{Binding WorkMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                        <DataGridTextColumn Header="输入数" Binding="{Binding InputCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                        <DataGridTextColumn Header="输出数" Binding="{Binding OutputCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                        <DataGridTextColumn Header="生成配置文件" Binding="{Binding ConfigPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="260" />
+                                        <DataGridTextColumn Header="说明" Binding="{Binding Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                        <DataGridTemplateColumn Header="操作" Width="66">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button Command="{Binding DataContext.RemoveExtendedModuleCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                            CommandParameter="{Binding}"
+                                                            Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                        <TextBlock Text="删除" />
+                                                    </Button>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="轴配置">
+                    <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                        <DockPanel>
+                            <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE9D9;" Width="24" />
+                                    <TextBlock Text="轴参数" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                                </StackPanel>
+                                <Button Command="{Binding AddAxisCommand}" Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Right">
+                                    <TextBlock Text="新增轴" />
+                                </Button>
+                            </Grid>
+
+                            <DataGrid ItemsSource="{Binding Axes}" AutoGenerateColumns="False" Style="{StaticResource ConfigurationDataGridStyle}">
+                                <DataGrid.Columns>
+                                    <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                    <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="92" />
+                                    <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                    <DataGridTemplateColumn Header="轴卡" Width="150">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                          SelectedValue="{Binding CardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          SelectedValuePath="Key"
+                                                          DisplayMemberPath="Text" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="轴号" Width="74">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{Binding AxisNoOptions}"
+                                                          SelectedValue="{Binding AxisNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          SelectedValuePath="Value"
+                                                          DisplayMemberPath="Text" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="脉冲/单位" Binding="{Binding PulsesPerUnit, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="90" />
+                                    <DataGridTextColumn Header="到位容差" Binding="{Binding PositionBand, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                    <DataGridTextColumn Header="负限位" Binding="{Binding SoftLimitNegative, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                    <DataGridTextColumn Header="正限位" Binding="{Binding SoftLimitPositive, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                    <DataGridTextColumn Header="速度" Binding="{Binding DefaultSpeed, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="70" />
+                                    <DataGridTextColumn Header="加速度" Binding="{Binding DefaultAcceleration, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                    <DataGridTextColumn Header="回原模式" Binding="{Binding HomeMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="118" />
+                                    <DataGridCheckBoxColumn Header="正向回原" Binding="{Binding HomePositive, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                    <DataGridTextColumn Header="回原偏移" Binding="{Binding HomeOffset, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                    <DataGridTextColumn Header="脱离距离" Binding="{Binding EscapeDistance, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                    <DataGridTextColumn Header="说明" Binding="{Binding Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                    <DataGridTemplateColumn Header="操作" Width="66">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Command="{Binding DataContext.RemoveAxisCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                        CommandParameter="{Binding}"
+                                                        Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                    <TextBlock Text="删除" />
+                                                </Button>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
+                    </Border>
+                </TabItem>
+
+                <TabItem Header="IO配置">
+                    <TabControl Margin="0,10,0,0">
+                        <TabItem Header="主卡输入">
+                            <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Top"
+                                            Command="{Binding AddInputPointCommand}"
+                                            Style="{StaticResource ActionButtonStyle}"
+                                            HorizontalAlignment="Right"
+                                            Margin="0,0,0,10">
+                                        <TextBlock Text="新增主卡输入" />
+                                    </Button>
+
+                                    <DataGrid ItemsSource="{Binding OnboardInputPoints}" AutoGenerateColumns="False" Style="{StaticResource ConfigurationDataGridStyle}">
+                                        <DataGrid.Columns>
+                                            <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                            <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                            <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                            <DataGridTextColumn Header="地址" Binding="{Binding Address}" IsReadOnly="True" Width="104" />
+                                            <DataGridTemplateColumn Header="轴卡" Width="150">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                  SelectedValue="{Binding CardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Key"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Header="点号" Width="74">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding PointNoOptions}"
+                                                                  SelectedValue="{Binding PointNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Value"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridCheckBoxColumn Header="低有效" Binding="{Binding ActiveLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                            <DataGridTextColumn Header="说明" Binding="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                            <DataGridTemplateColumn Header="操作" Width="66">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <Button Command="{Binding DataContext.RemoveIoPointCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                CommandParameter="{Binding}"
+                                                                Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                            <TextBlock Text="删除" />
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </DockPanel>
+                            </Border>
+                        </TabItem>
+
+                        <TabItem Header="主卡输出">
+                            <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Top"
+                                            Command="{Binding AddOutputPointCommand}"
+                                            Style="{StaticResource ActionButtonStyle}"
+                                            HorizontalAlignment="Right"
+                                            Margin="0,0,0,10">
+                                        <TextBlock Text="新增主卡输出" />
+                                    </Button>
+
+                                    <DataGrid ItemsSource="{Binding OnboardOutputPoints}" AutoGenerateColumns="False" Style="{StaticResource ConfigurationDataGridStyle}">
+                                        <DataGrid.Columns>
+                                            <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                            <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                            <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                            <DataGridTextColumn Header="地址" Binding="{Binding Address}" IsReadOnly="True" Width="104" />
+                                            <DataGridTemplateColumn Header="轴卡" Width="150">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                  SelectedValue="{Binding CardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Key"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Header="点号" Width="74">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding PointNoOptions}"
+                                                                  SelectedValue="{Binding PointNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Value"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridCheckBoxColumn Header="低有效" Binding="{Binding ActiveLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                            <DataGridTextColumn Header="说明" Binding="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                            <DataGridTemplateColumn Header="操作" Width="66">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <Button Command="{Binding DataContext.RemoveIoPointCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                CommandParameter="{Binding}"
+                                                                Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                            <TextBlock Text="删除" />
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </DockPanel>
+                            </Border>
+                        </TabItem>
+
+                        <TabItem Header="轴输入">
+                            <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Top"
+                                            Command="{Binding AddAxisInputPointCommand}"
+                                            Style="{StaticResource ActionButtonStyle}"
+                                            HorizontalAlignment="Right"
+                                            Margin="0,0,0,10">
+                                        <TextBlock Text="新增轴输入" />
+                                    </Button>
+
+                                    <DataGrid ItemsSource="{Binding AxisInputPoints}" AutoGenerateColumns="False" Style="{StaticResource ConfigurationDataGridStyle}">
+                                        <DataGrid.Columns>
+                                            <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                            <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                            <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                            <DataGridTextColumn Header="地址" Binding="{Binding Address}" IsReadOnly="True" Width="132" />
+                                            <DataGridTemplateColumn Header="轴卡" Width="150">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                  SelectedValue="{Binding CardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Key"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Header="轴号" Width="78">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding AxisNoOptions}"
+                                                                  SelectedValue="{Binding AxisNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Value"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Header="点号" Width="82">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding PointNoOptions}"
+                                                                  SelectedValue="{Binding PointNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Value"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridCheckBoxColumn Header="低有效" Binding="{Binding ActiveLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                            <DataGridTextColumn Header="说明" Binding="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                            <DataGridTemplateColumn Header="操作" Width="66">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <Button Command="{Binding DataContext.RemoveIoPointCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                CommandParameter="{Binding}"
+                                                                Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                            <TextBlock Text="删除" />
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </DockPanel>
+                            </Border>
+                        </TabItem>
+
+                        <TabItem Header="轴输出">
+                            <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Top"
+                                            Command="{Binding AddAxisOutputPointCommand}"
+                                            Style="{StaticResource ActionButtonStyle}"
+                                            HorizontalAlignment="Right"
+                                            Margin="0,0,0,10">
+                                        <TextBlock Text="新增轴输出" />
+                                    </Button>
+
+                                    <DataGrid ItemsSource="{Binding AxisOutputPoints}" AutoGenerateColumns="False" Style="{StaticResource ConfigurationDataGridStyle}">
+                                        <DataGrid.Columns>
+                                            <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                            <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                            <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                            <DataGridTextColumn Header="地址" Binding="{Binding Address}" IsReadOnly="True" Width="132" />
+                                            <DataGridTemplateColumn Header="轴卡" Width="150">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                  SelectedValue="{Binding CardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Key"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Header="轴号" Width="78">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding AxisNoOptions}"
+                                                                  SelectedValue="{Binding AxisNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Value"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Header="点号" Width="82">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding PointNoOptions}"
+                                                                  SelectedValue="{Binding PointNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Value"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridCheckBoxColumn Header="低有效" Binding="{Binding ActiveLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                            <DataGridTextColumn Header="说明" Binding="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                            <DataGridTemplateColumn Header="操作" Width="66">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <Button Command="{Binding DataContext.RemoveIoPointCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                CommandParameter="{Binding}"
+                                                                Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                            <TextBlock Text="删除" />
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </DockPanel>
+                            </Border>
+                        </TabItem>
+
+                        <TabItem Header="拓展输入">
+                            <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Top"
+                                            Command="{Binding AddExtendedInputPointCommand}"
+                                            Style="{StaticResource ActionButtonStyle}"
+                                            HorizontalAlignment="Right"
+                                            Margin="0,0,0,10">
+                                        <TextBlock Text="新增拓展输入" />
+                                    </Button>
+
+                                    <DataGrid ItemsSource="{Binding ExtendedInputPoints}" AutoGenerateColumns="False" Style="{StaticResource ConfigurationDataGridStyle}">
+                                        <DataGrid.Columns>
+                                            <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                            <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                            <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                            <DataGridTextColumn Header="地址" Binding="{Binding Address}" IsReadOnly="True" Width="124" />
+                                            <DataGridTemplateColumn Header="父卡" Width="150">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                  SelectedValue="{Binding ParentCardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Key"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Header="模块号" Width="78">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding ModuleNoOptions}"
+                                                                  SelectedValue="{Binding ModuleNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Value"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Header="点号" Width="74">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding PointNoOptions}"
+                                                                  SelectedValue="{Binding PointNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Value"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Header="模块配置文件" Binding="{Binding ModuleConfigPath}" IsReadOnly="True" Width="220" />
+                                            <DataGridCheckBoxColumn Header="低有效" Binding="{Binding ActiveLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                            <DataGridTextColumn Header="说明" Binding="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                            <DataGridTemplateColumn Header="操作" Width="66">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <Button Command="{Binding DataContext.RemoveIoPointCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                CommandParameter="{Binding}"
+                                                                Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                            <TextBlock Text="删除" />
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </DockPanel>
+                            </Border>
+                        </TabItem>
+
+                        <TabItem Header="拓展输出">
+                            <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Top"
+                                            Command="{Binding AddExtendedOutputPointCommand}"
+                                            Style="{StaticResource ActionButtonStyle}"
+                                            HorizontalAlignment="Right"
+                                            Margin="0,0,0,10">
+                                        <TextBlock Text="新增拓展输出" />
+                                    </Button>
+
+                                    <DataGrid ItemsSource="{Binding ExtendedOutputPoints}" AutoGenerateColumns="False" Style="{StaticResource ConfigurationDataGridStyle}">
+                                        <DataGrid.Columns>
+                                            <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                            <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                            <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                            <DataGridTextColumn Header="地址" Binding="{Binding Address}" IsReadOnly="True" Width="124" />
+                                            <DataGridTemplateColumn Header="父卡" Width="150">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                  SelectedValue="{Binding ParentCardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Key"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Header="模块号" Width="78">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding ModuleNoOptions}"
+                                                                  SelectedValue="{Binding ModuleNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Value"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Header="点号" Width="74">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding PointNoOptions}"
+                                                                  SelectedValue="{Binding PointNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  SelectedValuePath="Value"
+                                                                  DisplayMemberPath="Text" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Header="模块配置文件" Binding="{Binding ModuleConfigPath}" IsReadOnly="True" Width="220" />
+                                            <DataGridCheckBoxColumn Header="低有效" Binding="{Binding ActiveLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                            <DataGridTextColumn Header="说明" Binding="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                            <DataGridTemplateColumn Header="操作" Width="66">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <Button Command="{Binding DataContext.RemoveIoPointCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                CommandParameter="{Binding}"
+                                                                Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                            <TextBlock Text="删除" />
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </DockPanel>
+                            </Border>
+                        </TabItem>
+                    </TabControl>
+                </TabItem>
+            </TabControl>
+
+            <Border Grid.Row="2" Style="{StaticResource PanelBorderStyle}" Padding="12">
+                <DockPanel>
+                    <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE950;" Width="24" />
+                            <TextBlock Text="保存状态 / 链路状态" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding ConfigurationStatusText}"
+                                   HorizontalAlignment="Right"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+                    <DataGrid ItemsSource="{Binding Devices}" AutoGenerateColumns="False" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="设备" Binding="{Binding Name}" Width="180" />
+                            <DataGridTextColumn Header="状态" Binding="{Binding State}" Width="120" />
+                            <DataGridTextColumn Header="娑堟伅" Binding="{Binding Message}" Width="*" />
+                            <DataGridTextColumn Header="更新时间" Binding="{Binding Time}" Width="120" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

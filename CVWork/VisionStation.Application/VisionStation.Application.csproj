@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\VisionStation.Communication\VisionStation.Communication.csproj" />
+    <ProjectReference Include="..\VisionStation.Devices\VisionStation.Devices.csproj" />
+    <ProjectReference Include="..\VisionStation.Domain\VisionStation.Domain.csproj" />
+    <ProjectReference Include="..\VisionStation.Infrastructure\VisionStation.Infrastructure.csproj" />
+    <ProjectReference Include="..\VisionStation.Vision\VisionStation.Vision.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <AssemblyName>VisionStation.Application</AssemblyName>
+    <RootNamespace>VisionStation.Application</RootNamespace>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

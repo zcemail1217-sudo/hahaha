@@ -1,0 +1,932 @@
+﻿<UserControl x:Class="VisionStation.Client.Views.ProcessStepPropertyEditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <Style x:Key="EditorLabelStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <Style x:Key="HelperTextStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+
+        <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="FontSize" Value="17" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+
+        <Style x:Key="PageTextBoxStyle" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="FontSize" Value="14" />
+        </Style>
+
+        <Style x:Key="PageComboBoxStyle" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="FontSize" Value="14" />
+        </Style>
+
+        <Style x:Key="PageDataGridStyle" TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
+            <Setter Property="RowHeight" Value="36" />
+            <Setter Property="ColumnHeaderHeight" Value="36" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" />
+        </Style>
+
+        <Style x:Key="PageCheckBoxStyle" TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Margin" Value="0,0,18,10" />
+        </Style>
+
+        <Style x:Key="RecipeScrollViewerStyle" TargetType="ScrollViewer" />
+    </UserControl.Resources>
+
+    <ScrollViewer
+                                                      VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled"
+                                                  Style="{StaticResource RecipeScrollViewerStyle}">
+                                        <StackPanel>
+                                            <TextBlock Text="步骤属性" Style="{StaticResource SectionTitleStyle}" />
+
+                                            <StackPanel Margin="0,0,0,12">
+                                                <TextBlock Text="步骤名称" Style="{StaticResource EditorLabelStyle}" />
+                                                <TextBox Text="{Binding SelectedProcessStep.Name, UpdateSourceTrigger=PropertyChanged}"
+                                                         Style="{StaticResource PageTextBoxStyle}" />
+                                            </StackPanel>
+
+                                            <Grid Margin="0,0,0,14">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="10" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0">
+                                                    <TextBlock Text="工具类型" Style="{StaticResource EditorLabelStyle}" />
+                                                    <Border Background="{StaticResource SurfaceBrush}"
+                                                            BorderBrush="{StaticResource BorderBrushStrong}"
+                                                            BorderThickness="1"
+                                                            CornerRadius="5"
+                                                            MinHeight="34"
+                                                            Padding="10,6">
+                                                        <TextBlock Text="{Binding SelectedProcessStep.DisplayStepTypeText}"
+                                                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                                                   FontSize="14"
+                                                                   FontWeight="SemiBold"
+                                                                   VerticalAlignment="Center"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                    </Border>
+                                                </StackPanel>
+                                                <CheckBox Grid.Column="2"
+                                                          Content="启用"
+                                                          IsChecked="{Binding SelectedProcessStep.Enabled}"
+                                                          Style="{StaticResource PageCheckBoxStyle}"
+                                                          VerticalAlignment="Bottom"
+                                                          Margin="0,0,0,2" />
+                                            </Grid>
+
+                                            <Border Background="{StaticResource SurfaceBrush}"
+                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,0,0,14">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsWaitSignalStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <TextBlock Text="等待参数"
+                                                               FontSize="15"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               Margin="0,0,0,10" />
+
+                                                    <StackPanel Margin="0,0,0,12">
+                                                        <TextBlock Text="参数" Style="{StaticResource EditorLabelStyle}" />
+                                                        <ComboBox ItemsSource="{Binding RecipeVariables}"
+                                                                  DisplayMemberPath="DisplayText"
+                                                                  SelectedValuePath="Key"
+                                                                  SelectedValue="{Binding SelectedProcessStep.SignalId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  Style="{StaticResource PageComboBoxStyle}" />
+                                                    </StackPanel>
+
+                                                    <Grid Margin="0,0,0,12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="目标值" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.ExpectedValue, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="匹配方式" Style="{StaticResource EditorLabelStyle}" />
+                                                            <ComboBox IsEditable="True"
+                                                                      SelectedValuePath="Content"
+                                                                      Text="{Binding SelectedProcessStep.MatchMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                      Style="{StaticResource PageComboBoxStyle}">
+                                                                <ComboBoxItem Content="等于" />
+                                                                <ComboBoxItem Content="不等于" />
+                                                                <ComboBoxItem Content="包含" />
+                                                                <ComboBoxItem Content="正则" />
+                                                                <ComboBoxItem Content="大于" />
+                                                                <ComboBoxItem Content="小于" />
+                                                            </ComboBox>
+                                                        </StackPanel>
+                                                    </Grid>
+
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="超时(ms)" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.TimeoutMs, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="超时动作" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.TimeoutAction, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Background="{StaticResource SurfaceBrush}"
+                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,0,0,14">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsStringProcessStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <TextBlock Text="字符串处理"
+                                                               FontSize="15"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               Margin="0,0,0,10" />
+
+                                                    <Grid Margin="0,0,0,12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="输入参数" Style="{StaticResource EditorLabelStyle}" />
+                                                            <ComboBox ItemsSource="{Binding RecipeVariables}"
+                                                                      DisplayMemberPath="DisplayText"
+                                                                      SelectedValuePath="Key"
+                                                                      SelectedValue="{Binding SelectedProcessStep.StringInputKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                      Style="{StaticResource PageComboBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="输出参数" Style="{StaticResource EditorLabelStyle}" />
+                                                            <ComboBox ItemsSource="{Binding RecipeVariables}"
+                                                                      DisplayMemberPath="DisplayText"
+                                                                      SelectedValuePath="Key"
+                                                                      SelectedValue="{Binding SelectedProcessStep.StringOutputKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                      Style="{StaticResource PageComboBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+
+                                                    <StackPanel Margin="0,0,0,12">
+                                                        <TextBlock Text="处理方式" Style="{StaticResource EditorLabelStyle}" />
+                                                        <ComboBox ItemsSource="{Binding StringProcessOperationOptions}"
+                                                                  Text="{Binding SelectedProcessStep.StringOperation, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  IsEditable="True"
+                                                                  Style="{StaticResource PageComboBoxStyle}" />
+                                                    </StackPanel>
+
+                                                    <Grid Margin="0,0,0,12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="分隔符" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.StringSeparator, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="取第几段" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.StringIndex, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+
+                                                    <Grid Margin="0,0,0,12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="正则表达式/包含文本" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.StringPattern, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="正则分组" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.StringGroup, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+
+                                                    <Grid Margin="0,0,0,12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="截取起点" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.StringStart, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="截取长度" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.StringLength, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="替换前" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.StringOldValue, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="替换后" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.StringNewValue, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Background="{StaticResource SurfaceBrush}"
+                                                    BorderBrush="{StaticResource BorderBrushStrong}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,0,0,14">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsDeviceCommandStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <TextBlock Text="通讯内容"
+                                                               FontSize="15"
+                                                               FontWeight="SemiBold"
+                                                               Margin="0,0,0,10" />
+                                                    <Grid Margin="0,0,0,12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="通讯通道" Style="{StaticResource EditorLabelStyle}" />
+                                                            <ComboBox ItemsSource="{Binding SelectedCommunicationChannelOptions}"
+                                                                      DisplayMemberPath="DisplayText"
+                                                                      SelectedValuePath="Key"
+                                                                      SelectedValue="{Binding SelectedProcessStep.WaitSignalChannelKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                      Style="{StaticResource PageComboBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="超时(ms)" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.TimeoutMs, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                    <TextBlock Text="发送内容" Style="{StaticResource EditorLabelStyle}" />
+                                                    <TextBox Text="{Binding SelectedProcessStep.CommunicationPayload, UpdateSourceTrigger=PropertyChanged}"
+                                                             Style="{StaticResource PageTextBoxStyle}"
+                                                             AcceptsReturn="True"
+                                                             MinHeight="58"
+                                                             TextWrapping="Wrap"
+                                                             Margin="0,0,0,12" />
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="等待响应" Style="{StaticResource HelperTextStyle}" />
+                                                            <ComboBox IsEditable="True"
+                                                                      SelectedValuePath="Content"
+                                                                      Text="{Binding SelectedProcessStep.WaitResponse, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                      Style="{StaticResource PageComboBoxStyle}">
+                                                                <ComboBoxItem Content="true" />
+                                                                <ComboBoxItem Content="false" />
+                                                            </ComboBox>
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="保存回复到" Style="{StaticResource HelperTextStyle}" />
+                                                            <ComboBox ItemsSource="{Binding RecipeVariables}"
+                                                                      DisplayMemberPath="DisplayText"
+                                                                      SelectedValuePath="Key"
+                                                                      SelectedValue="{Binding SelectedProcessStep.ResultKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                      Style="{StaticResource PageComboBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Background="{StaticResource SurfaceBrush}"
+                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,0,0,14">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsAxisMoveStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <TextBlock Text="运动参数"
+                                                               FontSize="15"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               Margin="0,0,0,10" />
+                                                    <Grid Margin="0,0,0,12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="设备 Key" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.DeviceKey, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="超时(ms)" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.TimeoutMs, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+
+                                                    <Grid Margin="0,0,0,12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="轴名" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.AxisKey, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="位置" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.Position, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+
+                                                    <Grid Margin="0,0,0,12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="速度" Style="{StaticResource HelperTextStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.Speed, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="加速度" Style="{StaticResource HelperTextStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.Acceleration, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+
+                                                    <TextBlock Text="多轴配置" Style="{StaticResource HelperTextStyle}" />
+                                                    <TextBox Text="{Binding SelectedProcessStep.AxisTargetsText, UpdateSourceTrigger=PropertyChanged}"
+                                                             Style="{StaticResource PageTextBoxStyle}"
+                                                             AcceptsReturn="True"
+                                                             MinHeight="54"
+                                                             TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Background="{StaticResource SurfaceBrush}"
+                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,0,0,14">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsRunVisionFlowStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <TextBlock Text="视觉流程参数"
+                                                               FontSize="15"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               Margin="0,0,0,10" />
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="视觉工程" Style="{StaticResource EditorLabelStyle}" />
+                                                            <ComboBox ItemsSource="{Binding FlowSummaries}"
+                                                                      DisplayMemberPath="DisplayText"
+                                                                      SelectedValuePath="Id"
+                                                                      SelectedValue="{Binding SelectedProcessStep.FlowId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                      Style="{StaticResource PageComboBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="超时(ms)" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.TimeoutMs, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Background="{StaticResource SurfaceBrush}"
+                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,0,0,14">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsDeviceReadStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <TextBlock Text="读设备参数"
+                                                               FontSize="15"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               Margin="0,0,0,10" />
+                                                    <Grid Margin="0,0,0,12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="设备 Key" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.DeviceKey, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="读取地址" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.SignalId, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="保存读取值到" Style="{StaticResource HelperTextStyle}" />
+                                                            <ComboBox ItemsSource="{Binding RecipeVariables}"
+                                                                      DisplayMemberPath="DisplayText"
+                                                                      SelectedValuePath="Key"
+                                                                      SelectedValue="{Binding SelectedProcessStep.ResultKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                      Style="{StaticResource PageComboBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="超时(ms)" Style="{StaticResource HelperTextStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.TimeoutMs, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Background="{StaticResource SurfaceBrush}"
+                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,0,0,14">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsDeviceWriteStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsWritePlcStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <TextBlock Text="写入设备参数"
+                                                               FontSize="15"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               Margin="0,0,0,10" />
+                                                    <Grid Margin="0,0,0,12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="设备 Key" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.DeviceKey, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="写入地址" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.OutputTarget, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="写入值来源" Style="{StaticResource HelperTextStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.ResultKey, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="超时(ms)" Style="{StaticResource HelperTextStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.TimeoutMs, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Background="{StaticResource SurfaceBrush}"
+                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,0,0,14">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsDeviceCommandStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsCommunicationStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <TextBlock Text="设备命令参数"
+                                                               FontSize="15"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               Margin="0,0,0,10" />
+                                                    <Grid Margin="0,0,0,12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="设备/通道 Key" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.DeviceKey, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="命令" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.CommandName, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="结果键" Style="{StaticResource HelperTextStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.ResultKey, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="超时(ms)" Style="{StaticResource HelperTextStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.TimeoutMs, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Background="{StaticResource SurfaceBrush}"
+                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,0,0,14">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsReadVisionResultStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsWriteResultTableStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <TextBlock Text="结果字段参数"
+                                                               FontSize="15"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               Margin="0,0,0,10" />
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="结果键" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.ResultKey, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="写入目标" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.OutputTarget, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Background="{StaticResource SurfaceBrush}"
+                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,0,0,14">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsResultJudgeStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <TextBlock Text="结果判定参数"
+                                                               FontSize="15"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               Margin="0,0,0,10" />
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="判定结果键" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.ResultKey, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <TextBlock Text="输出目标" Style="{StaticResource EditorLabelStyle}" />
+                                                            <TextBox Text="{Binding SelectedProcessStep.OutputTarget, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Style="{StaticResource PageTextBoxStyle}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                    <TextBlock Text="下限 / 上限" Style="{StaticResource HelperTextStyle}" Margin="0,12,0,8" />
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBox Text="{Binding SelectedProcessStep.LowerLimit, UpdateSourceTrigger=PropertyChanged}"
+                                                                 Style="{StaticResource PageTextBoxStyle}" />
+                                                        <TextBox Grid.Column="2"
+                                                                 Text="{Binding SelectedProcessStep.UpperLimit, UpdateSourceTrigger=PropertyChanged}"
+                                                                 Style="{StaticResource PageTextBoxStyle}" />
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Background="{StaticResource SurfaceBrush}"
+                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,0,0,14">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsDelayStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <TextBlock Text="延时参数"
+                                                               FontSize="15"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               Margin="0,0,0,10" />
+                                                    <TextBlock Text="等待时间(ms)" Style="{StaticResource EditorLabelStyle}" />
+                                                    <TextBox Text="{Binding SelectedProcessStep.DelayMs, UpdateSourceTrigger=PropertyChanged}"
+                                                             Style="{StaticResource PageTextBoxStyle}" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Background="{StaticResource SurfaceBrush}"
+                                                    BorderBrush="{StaticResource BorderBrushStrong}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,0,0,14">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsAcquireImageStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.IsEndStep}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="当前工具没有额外必填参数。"
+                                                           Style="{StaticResource HelperTextStyle}" />
+                                            </Border>
+
+                                            <Border Background="{StaticResource SurfaceBrush}"
+                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,0,0,14">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasVisionFlowResultPreviewItems}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <TextBlock Text="视觉流程结果绑定"
+                                                               FontSize="15"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               Margin="0,0,0,10" />
+                                                    <DataGrid ItemsSource="{Binding VisionFlowResultPreviewItems}"
+                                                              AutoGenerateColumns="False"
+                                                              IsReadOnly="False"
+                                                              CanUserAddRows="False"
+                                                              CanUserDeleteRows="False"
+                                                              HeadersVisibility="Column"
+                                                              MaxHeight="220"
+                                                              Style="{StaticResource PageDataGridStyle}">
+                                                        <DataGrid.Columns>
+                                                            <DataGridTextColumn Header="结果名" Binding="{Binding Name}" Width="1.4*" IsReadOnly="True" />
+                                                            <DataGridTextColumn Header="类型" Binding="{Binding DataType}" Width="92" IsReadOnly="True" />
+                                                            <DataGridTextColumn Header="当前值" Binding="{Binding Value}" Width="1.1*" IsReadOnly="True" />
+                                                            <DataGridTextColumn Header="来源" Binding="{Binding Source}" Width="100" IsReadOnly="True" />
+                                                            <DataGridComboBoxColumn Header="绑定变量"
+                                                                                    SelectedValueBinding="{Binding BoundVariableKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                                    SelectedValuePath="Key"
+                                                                                    DisplayMemberPath="DisplayText"
+                                                                                    Width="180">
+                                                                <DataGridComboBoxColumn.ElementStyle>
+                                                                    <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+                                                                        <Setter Property="ItemsSource" Value="{Binding CompatibleVariables}" />
+                                                                    </Style>
+                                                                </DataGridComboBoxColumn.ElementStyle>
+                                                                <DataGridComboBoxColumn.EditingElementStyle>
+                                                                    <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+                                                                        <Setter Property="ItemsSource" Value="{Binding CompatibleVariables}" />
+                                                                    </Style>
+                                                                </DataGridComboBoxColumn.EditingElementStyle>
+                                                            </DataGridComboBoxColumn>
+                                                        </DataGrid.Columns>
+                                                    </DataGrid>
+                                                    <TextBlock Text="这里只显示所选视觉工程中结果工具的输入项；来源未连接时仍可先选择绑定变量，试运行后会刷新当前值。"
+                                                               Style="{StaticResource HelperTextStyle}"
+                                                               Margin="0,8,0,0" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <StackPanel Margin="0,0,0,12">
+                                                <StackPanel.Style>
+                                                    <Style TargetType="StackPanel">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedProcessStep.ShowAdvancedParametersText}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </StackPanel.Style>
+                                                <TextBlock Text="高级参数文本" Style="{StaticResource EditorLabelStyle}" />
+                                                <TextBox Text="{Binding SelectedProcessStep.ParametersText, UpdateSourceTrigger=PropertyChanged}"
+                                                         Style="{StaticResource PageTextBoxStyle}"
+                                                         AcceptsReturn="True"
+                                                         MinHeight="72"
+                                                         TextWrapping="Wrap" />
+                                            </StackPanel>
+
+                                            <TextBlock Text="说明" Style="{StaticResource EditorLabelStyle}" />
+                                            <TextBox Text="{Binding SelectedProcessStep.Description, UpdateSourceTrigger=PropertyChanged}"
+                                                     Style="{StaticResource PageTextBoxStyle}"
+                                                     AcceptsReturn="True"
+                                                     MinHeight="58"
+                                                     TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        </ScrollViewer>
+</UserControl>

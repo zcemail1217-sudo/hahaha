@@ -1,0 +1,721 @@
+<UserControl x:Class="VisionStation.Devices.UI.Views.DeviceConfigurationView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:prism="http://prismlibrary.com/"
+             prism:ViewModelLocator.AutoWireViewModel="True">
+    <UserControl.Resources>
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+        </Style>
+
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Background" Value="#FF101A22" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="18,8" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="MinHeight" Value="38" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Grid SnapsToDevicePixels="True">
+                            <Border x:Name="Root"
+                                    Margin="0,0,1,0"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter ContentSource="Header"
+                                                  Margin="{TemplateBinding Padding}"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  RecognizesAccessKey="True" />
+                            </Border>
+                            <Border x:Name="RightEdge"
+                                    Width="1"
+                                    Margin="0,4,0,4"
+                                    HorizontalAlignment="Right"
+                                    Background="{TemplateBinding BorderBrush}" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
+                                <Setter TargetName="RightEdge" Property="Background" Value="{StaticResource AccentLineBrush}" />
+                                <Setter Property="Background" Value="#FF14232C" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Panel.ZIndex" Value="1" />
+                                <Setter Property="Background" Value="#FF12352F" />
+                                <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="RightEdge" Property="Background" Value="{StaticResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ConfigDataGridStyle" TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
+            <Setter Property="CanUserAddRows" Value="False" />
+            <Setter Property="CanUserDeleteRows" Value="False" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource WorkbenchBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="58" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE713;" Width="28" />
+                <StackPanel Margin="8,0,0,0">
+                    <TextBlock Text="设备配置" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="轴卡、拓展卡、轴参数、IO点表" Foreground="{StaticResource TextSecondaryBrush}" />
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <Button Command="{Binding ReloadConfigurationCommand}" Style="{StaticResource ActionButtonStyle}" ToolTip="重新加载配置">
+                    <TextBlock Text="重新载入" />
+                </Button>
+                <Button Command="{Binding SaveConfigurationCommand}" Style="{StaticResource ActionButtonStyle}" ToolTip="保存设备配置">
+                    <TextBlock Text="保存配置" />
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="1" Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,0,0,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="150" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="110" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="20" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="轴卡模式" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,4" />
+                    <ComboBox ItemsSource="{Binding AxisControllerModes}"
+                              SelectedValue="{Binding AxisControllerMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              SelectedValuePath="Value"
+                              DisplayMemberPath="Text"
+                              MinHeight="32" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="兼容默认卡号" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,4" />
+                    <TextBox Text="{Binding GoogolCardNo, UpdateSourceTrigger=PropertyChanged}" MinHeight="32" Padding="8,5" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="4">
+                    <TextBlock Text="兼容默认配置文件" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,4" />
+                    <TextBox Text="{Binding GoogolConfigPath, UpdateSourceTrigger=PropertyChanged}" MinHeight="32" Padding="8,5" />
+                </StackPanel>
+
+                <TextBlock Grid.Column="6"
+                           Text="{Binding StatusText}"
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           VerticalAlignment="Bottom"
+                           Margin="0,0,0,6" />
+            </Grid>
+        </Border>
+
+        <TabControl Grid.Row="2">
+            <TabItem Header="轴卡配置">
+                <Grid Margin="0,10,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="1*" />
+                        <RowDefinition Height="12" />
+                        <RowDefinition Height="1*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource PanelBorderStyle}" Padding="14">
+                        <DockPanel>
+                            <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8CC;" Width="24" />
+                                    <TextBlock Text="轴卡列表" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                                </StackPanel>
+                                <Button Command="{Binding AddCardCommand}" Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Right">
+                                    <TextBlock Text="新增轴卡" />
+                                </Button>
+                            </Grid>
+
+                            <DataGrid ItemsSource="{Binding Cards}" AutoGenerateColumns="False" RowHeight="30" Style="{StaticResource ConfigDataGridStyle}">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="92" />
+                                    <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                    <DataGridTemplateColumn Header="驱动" Width="140">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{Binding DataContext.AxisCardDriverOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                          SelectedValue="{Binding Driver, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          SelectedValuePath="Value"
+                                                          DisplayMemberPath="Text" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="品牌" Binding="{Binding Vendor}" Width="82" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="型号" Binding="{Binding Model, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="110" />
+                                    <DataGridTextColumn Header="卡号" Binding="{Binding CardNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="64" />
+                                    <DataGridTextColumn Header="轴数" Binding="{Binding AxisCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="64" />
+                                    <DataGridTextColumn Header="输入数" Binding="{Binding InputCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                    <DataGridTextColumn Header="输出数" Binding="{Binding OutputCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                    <DataGridTextColumn Header="配置文件" Binding="{Binding ConfigPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                    <DataGridTextColumn Header="说明" Binding="{Binding Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="160" />
+                                    <DataGridTemplateColumn Header="操作" Width="66">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Command="{Binding DataContext.RemoveCardCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                        CommandParameter="{Binding}"
+                                                        Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                    <TextBlock Text="删除" />
+                                                </Button>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
+                    </Border>
+
+                    <Border Grid.Row="2" Style="{StaticResource PanelBorderStyle}" Padding="14">
+                        <DockPanel>
+                            <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8A7;" Width="24" />
+                                    <TextBlock Text="拓展IO模块" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                                </StackPanel>
+                                <Button Command="{Binding AddExtendedModuleCommand}" Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Right">
+                                    <TextBlock Text="新增模块" />
+                                </Button>
+                            </Grid>
+
+                            <DataGrid ItemsSource="{Binding ExtendedModules}" AutoGenerateColumns="False" RowHeight="30" Style="{StaticResource ConfigDataGridStyle}">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="92" />
+                                    <DataGridTemplateColumn Header="父卡" Width="150">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                          SelectedValue="{Binding ParentCardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          SelectedValuePath="Key"
+                                                          DisplayMemberPath="Text" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="型号" Binding="{Binding Model, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="160" />
+                                    <DataGridTemplateColumn Header="模块号" Width="78">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{Binding ModuleNoOptions}"
+                                                          SelectedValue="{Binding ModuleNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          SelectedValuePath="Value"
+                                                          DisplayMemberPath="Text" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="拨码" Width="68">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{Binding StartAddressOptions}"
+                                                          SelectedValue="{Binding StartAddress, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          SelectedValuePath="Value"
+                                                          DisplayMemberPath="Text" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="类型" Binding="{Binding ModuleType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                    <DataGridTextColumn Header="模式" Binding="{Binding WorkMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                    <DataGridTextColumn Header="输入数" Binding="{Binding InputCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                    <DataGridTextColumn Header="输出数" Binding="{Binding OutputCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                    <DataGridTextColumn Header="生成配置文件" Binding="{Binding ConfigPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="260" />
+                                    <DataGridTextColumn Header="说明" Binding="{Binding Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                    <DataGridTemplateColumn Header="操作" Width="66">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Command="{Binding DataContext.RemoveExtendedModuleCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                        CommandParameter="{Binding}"
+                                                        Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                    <TextBlock Text="删除" />
+                                                </Button>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="轴配置">
+                <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                    <DockPanel>
+                        <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE9D9;" Width="24" />
+                                <TextBlock Text="轴参数" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                            </StackPanel>
+                            <Button Command="{Binding AddAxisCommand}"
+                                    Style="{StaticResource ActionButtonStyle}"
+                                    HorizontalAlignment="Right"
+                                    ToolTip="新增一个轴定义">
+                                <TextBlock Text="新增轴" />
+                            </Button>
+                        </Grid>
+
+                        <DataGrid ItemsSource="{Binding Axes}" AutoGenerateColumns="False" Style="{StaticResource ConfigDataGridStyle}">
+                            <DataGrid.Columns>
+                                <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="92" />
+                                <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                <DataGridTemplateColumn Header="轴卡" Width="150">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                      SelectedValue="{Binding CardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                      SelectedValuePath="Key"
+                                                      DisplayMemberPath="Text" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="轴号" Width="74">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <ComboBox ItemsSource="{Binding AxisNoOptions}"
+                                                      SelectedValue="{Binding AxisNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                      SelectedValuePath="Value"
+                                                      DisplayMemberPath="Text" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="脉冲/单位" Binding="{Binding PulsesPerUnit, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="90" />
+                                <DataGridTextColumn Header="到位容差" Binding="{Binding PositionBand, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                <DataGridTextColumn Header="负限位" Binding="{Binding SoftLimitNegative, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                <DataGridTextColumn Header="正限位" Binding="{Binding SoftLimitPositive, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                <DataGridTextColumn Header="速度" Binding="{Binding DefaultSpeed, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="70" />
+                                <DataGridTextColumn Header="加速度" Binding="{Binding DefaultAcceleration, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                <DataGridTextColumn Header="回原模式" Binding="{Binding HomeMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="118" />
+                                <DataGridCheckBoxColumn Header="正向回原" Binding="{Binding HomePositive, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                <DataGridTextColumn Header="回原偏移" Binding="{Binding HomeOffset, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                <DataGridTextColumn Header="脱离距离" Binding="{Binding EscapeDistance, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="78" />
+                                <DataGridTextColumn Header="说明" Binding="{Binding Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                <DataGridTemplateColumn Header="操作" Width="66">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Button Command="{Binding DataContext.RemoveAxisCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}"
+                                                    Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                <TextBlock Text="删除" />
+                                            </Button>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </Border>
+            </TabItem>
+
+            <TabItem Header="IO配置">
+                <TabControl Margin="0,10,0,0">
+                    <TabItem Header="主卡输入">
+                        <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Top"
+                                        Command="{Binding AddInputPointCommand}"
+                                        Style="{StaticResource ActionButtonStyle}"
+                                        HorizontalAlignment="Right"
+                                        Margin="0,0,0,10"
+                                        ToolTip="新增主卡输入点">
+                                    <TextBlock Text="新增主卡输入" />
+                                </Button>
+
+                                <DataGrid ItemsSource="{Binding OnboardInputPoints}" AutoGenerateColumns="False" Style="{StaticResource ConfigDataGridStyle}">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                        <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                        <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                        <DataGridTextColumn Header="地址" Binding="{Binding Address}" IsReadOnly="True" Width="104" />
+                                        <DataGridTemplateColumn Header="轴卡" Width="150">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                              SelectedValue="{Binding CardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Key"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="点号" Width="74">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding PointNoOptions}"
+                                                              SelectedValue="{Binding PointNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Value"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridCheckBoxColumn Header="低有效" Binding="{Binding ActiveLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                        <DataGridTextColumn Header="说明" Binding="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                        <DataGridTemplateColumn Header="操作" Width="66">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button Command="{Binding DataContext.RemoveIoPointCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                            CommandParameter="{Binding}"
+                                                            Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                        <TextBlock Text="删除" />
+                                                    </Button>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Border>
+                    </TabItem>
+
+                    <TabItem Header="主卡输出">
+                        <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Top"
+                                        Command="{Binding AddOutputPointCommand}"
+                                        Style="{StaticResource ActionButtonStyle}"
+                                        HorizontalAlignment="Right"
+                                        Margin="0,0,0,10"
+                                        ToolTip="新增主卡输出点">
+                                    <TextBlock Text="新增主卡输出" />
+                                </Button>
+
+                                <DataGrid ItemsSource="{Binding OnboardOutputPoints}" AutoGenerateColumns="False" Style="{StaticResource ConfigDataGridStyle}">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                        <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                        <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                        <DataGridTextColumn Header="地址" Binding="{Binding Address}" IsReadOnly="True" Width="104" />
+                                        <DataGridTemplateColumn Header="轴卡" Width="150">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                              SelectedValue="{Binding CardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Key"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="点号" Width="74">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding PointNoOptions}"
+                                                              SelectedValue="{Binding PointNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Value"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridCheckBoxColumn Header="低有效" Binding="{Binding ActiveLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                        <DataGridTextColumn Header="说明" Binding="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                        <DataGridTemplateColumn Header="操作" Width="66">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button Command="{Binding DataContext.RemoveIoPointCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                            CommandParameter="{Binding}"
+                                                            Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                        <TextBlock Text="删除" />
+                                                    </Button>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Border>
+                    </TabItem>
+
+                    <TabItem Header="轴输入">
+                        <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Top"
+                                        Command="{Binding AddAxisInputPointCommand}"
+                                        Style="{StaticResource ActionButtonStyle}"
+                                        HorizontalAlignment="Right"
+                                        Margin="0,0,0,10"
+                                        ToolTip="新增轴上输入点">
+                                    <TextBlock Text="新增轴输入" />
+                                </Button>
+
+                                <DataGrid ItemsSource="{Binding AxisInputPoints}" AutoGenerateColumns="False" Style="{StaticResource ConfigDataGridStyle}">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                        <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                        <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                        <DataGridTextColumn Header="地址" Binding="{Binding Address}" IsReadOnly="True" Width="132" />
+                                        <DataGridTemplateColumn Header="轴卡" Width="150">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                              SelectedValue="{Binding CardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Key"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="轴号" Width="78">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding AxisNoOptions}"
+                                                              SelectedValue="{Binding AxisNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Value"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="点号" Width="82">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding PointNoOptions}"
+                                                              SelectedValue="{Binding PointNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Value"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridCheckBoxColumn Header="低有效" Binding="{Binding ActiveLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                        <DataGridTextColumn Header="说明" Binding="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                        <DataGridTemplateColumn Header="操作" Width="66">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button Command="{Binding DataContext.RemoveIoPointCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                            CommandParameter="{Binding}"
+                                                            Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                        <TextBlock Text="删除" />
+                                                    </Button>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Border>
+                    </TabItem>
+
+                    <TabItem Header="轴输出">
+                        <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Top"
+                                        Command="{Binding AddAxisOutputPointCommand}"
+                                        Style="{StaticResource ActionButtonStyle}"
+                                        HorizontalAlignment="Right"
+                                        Margin="0,0,0,10"
+                                        ToolTip="新增轴上输出点">
+                                    <TextBlock Text="新增轴输出" />
+                                </Button>
+
+                                <DataGrid ItemsSource="{Binding AxisOutputPoints}" AutoGenerateColumns="False" Style="{StaticResource ConfigDataGridStyle}">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                        <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                        <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                        <DataGridTextColumn Header="地址" Binding="{Binding Address}" IsReadOnly="True" Width="132" />
+                                        <DataGridTemplateColumn Header="轴卡" Width="150">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                              SelectedValue="{Binding CardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Key"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="轴号" Width="78">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding AxisNoOptions}"
+                                                              SelectedValue="{Binding AxisNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Value"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="点号" Width="82">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding PointNoOptions}"
+                                                              SelectedValue="{Binding PointNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Value"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridCheckBoxColumn Header="低有效" Binding="{Binding ActiveLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                        <DataGridTextColumn Header="说明" Binding="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                        <DataGridTemplateColumn Header="操作" Width="66">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button Command="{Binding DataContext.RemoveIoPointCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                            CommandParameter="{Binding}"
+                                                            Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                        <TextBlock Text="删除" />
+                                                    </Button>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Border>
+                    </TabItem>
+
+                    <TabItem Header="拓展输入">
+                        <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Top"
+                                        Command="{Binding AddExtendedInputPointCommand}"
+                                        Style="{StaticResource ActionButtonStyle}"
+                                        HorizontalAlignment="Right"
+                                        Margin="0,0,0,10"
+                                        ToolTip="新增拓展输入点">
+                                    <TextBlock Text="新增拓展输入" />
+                                </Button>
+
+                                <DataGrid ItemsSource="{Binding ExtendedInputPoints}" AutoGenerateColumns="False" Style="{StaticResource ConfigDataGridStyle}">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                        <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                        <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                        <DataGridTextColumn Header="地址" Binding="{Binding Address}" IsReadOnly="True" Width="124" />
+                                        <DataGridTemplateColumn Header="父卡" Width="150">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                              SelectedValue="{Binding ParentCardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Key"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="模块号" Width="78">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding ModuleNoOptions}"
+                                                              SelectedValue="{Binding ModuleNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Value"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="点号" Width="74">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding PointNoOptions}"
+                                                              SelectedValue="{Binding PointNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Value"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTextColumn Header="模块配置文件" Binding="{Binding ModuleConfigPath}" IsReadOnly="True" Width="220" />
+                                        <DataGridCheckBoxColumn Header="低有效" Binding="{Binding ActiveLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                        <DataGridTextColumn Header="说明" Binding="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                        <DataGridTemplateColumn Header="操作" Width="66">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button Command="{Binding DataContext.RemoveIoPointCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                            CommandParameter="{Binding}"
+                                                            Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                        <TextBlock Text="删除" />
+                                                    </Button>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Border>
+                    </TabItem>
+
+                    <TabItem Header="拓展输出">
+                        <Border Style="{StaticResource PanelBorderStyle}" Padding="14" Margin="0,10,0,0">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Top"
+                                        Command="{Binding AddExtendedOutputPointCommand}"
+                                        Style="{StaticResource ActionButtonStyle}"
+                                        HorizontalAlignment="Right"
+                                        Margin="0,0,0,10"
+                                        ToolTip="新增拓展输出点">
+                                    <TextBlock Text="新增拓展输出" />
+                                </Button>
+
+                                <DataGrid ItemsSource="{Binding ExtendedOutputPoints}" AutoGenerateColumns="False" Style="{StaticResource ConfigDataGridStyle}">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                                        <DataGridTextColumn Header="标识" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                        <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                                        <DataGridTextColumn Header="地址" Binding="{Binding Address}" IsReadOnly="True" Width="124" />
+                                        <DataGridTemplateColumn Header="父卡" Width="150">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding DataContext.AxisCardOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                              SelectedValue="{Binding ParentCardKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Key"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="模块号" Width="78">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding ModuleNoOptions}"
+                                                              SelectedValue="{Binding ModuleNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Value"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="点号" Width="74">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox ItemsSource="{Binding PointNoOptions}"
+                                                              SelectedValue="{Binding PointNo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              SelectedValuePath="Value"
+                                                              DisplayMemberPath="Text" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTextColumn Header="模块配置文件" Binding="{Binding ModuleConfigPath}" IsReadOnly="True" Width="220" />
+                                        <DataGridCheckBoxColumn Header="低有效" Binding="{Binding ActiveLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="72" />
+                                        <DataGridTextColumn Header="说明" Binding="{Binding Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                        <DataGridTemplateColumn Header="操作" Width="66">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button Command="{Binding DataContext.RemoveIoPointCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                            CommandParameter="{Binding}"
+                                                            Style="{StaticResource DestructiveInlineButtonStyle}">
+                                                        <TextBlock Text="删除" />
+                                                    </Button>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Border>
+                    </TabItem>
+                </TabControl>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</UserControl>

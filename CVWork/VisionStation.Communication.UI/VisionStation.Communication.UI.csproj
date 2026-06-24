@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\VisionStation.Application\VisionStation.Application.csproj" />
+    <ProjectReference Include="..\VisionStation.Communication\VisionStation.Communication.csproj" />
+    <ProjectReference Include="..\VisionStation.Devices\VisionStation.Devices.csproj" />
+    <ProjectReference Include="..\VisionStation.Domain\VisionStation.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Prism.Wpf" Version="9.0.537" />
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <AssemblyName>VisionStation.Communication.UI</AssemblyName>
+    <RootNamespace>VisionStation.Communication.UI</RootNamespace>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

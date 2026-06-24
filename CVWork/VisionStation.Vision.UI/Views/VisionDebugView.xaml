@@ -1,0 +1,687 @@
+<UserControl x:Class="VisionStation.Vision.UI.Views.VisionDebugView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:behaviors="clr-namespace:VisionStation.Vision.UI.Behaviors"
+             xmlns:controls="clr-namespace:VisionStation.Vision.UI.Controls"
+             xmlns:converters="clr-namespace:VisionStation.Vision.UI.Converters"
+             xmlns:prism="http://prismlibrary.com/"
+             xmlns:vm="clr-namespace:VisionStation.Vision.UI.ViewModels"
+             prism:ViewModelLocator.AutoWireViewModel="True">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <converters:ImageFrameToBitmapSourceConverter x:Key="ImageFrameToBitmapSourceConverter" />
+
+        <Style x:Key="TopMenuButtonStyle" TargetType="Button" BasedOn="{StaticResource ActionButtonStyle}">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="MinWidth" Value="58" />
+            <Setter Property="MinHeight" Value="26" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+        </Style>
+
+        <Style x:Key="CompactIconButtonStyle" TargetType="Button" BasedOn="{StaticResource ActionButtonStyle}">
+            <Setter Property="MinWidth" Value="30" />
+            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="Padding" Value="5,4" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+        </Style>
+
+        <Style x:Key="VisionToolbarButtonStyle" TargetType="Button" BasedOn="{StaticResource ActionButtonStyle}">
+            <Setter Property="MinWidth" Value="64" />
+            <Setter Property="MinHeight" Value="30" />
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Background" Value="#FF13242D" />
+            <Setter Property="BorderBrush" Value="#FF2B4350" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+
+        <Style x:Key="VisionPrimaryToolbarButtonStyle" TargetType="Button" BasedOn="{StaticResource VisionToolbarButtonStyle}">
+            <Setter Property="MinWidth" Value="76" />
+            <Setter Property="Background" Value="#FF123A35" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+        </Style>
+
+        <Style x:Key="VisionIconToolButtonStyle" TargetType="Button" BasedOn="{StaticResource VisionToolbarButtonStyle}">
+            <Setter Property="Width" Value="30" />
+            <Setter Property="MinWidth" Value="30" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="MinHeight" Value="30" />
+            <Setter Property="Padding" Value="0" />
+        </Style>
+
+        <Style x:Key="VisionToolbarGroupStyle" TargetType="Border">
+            <Setter Property="Padding" Value="2" />
+            <Setter Property="Background" Value="#BB0B151C" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="5" />
+        </Style>
+
+        <Style x:Key="ImageFlowTabItemStyle" TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="8,0,0,-1" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="TabRoot"
+                                Padding="16,6"
+                                Background="{StaticResource PanelHeaderBrush}"
+                                BorderBrush="{StaticResource BorderBrushStrong}"
+                                BorderThickness="1,1,1,0"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter VerticalAlignment="Center"
+                                              HorizontalAlignment="Center"
+                                              TextElement.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="TabRoot" Property="Background" Value="{StaticResource SurfaceBrush}" />
+                                <Setter TargetName="TabRoot" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TabRoot" Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <HierarchicalDataTemplate DataType="{x:Type vm:ToolboxTreeItem}" ItemsSource="{Binding Children}">
+            <StackPanel Orientation="Horizontal" Height="24">
+                <TextBlock Style="{StaticResource IconTextStyle}" Text="{Binding Icon}" Width="22" FontSize="13" />
+                <TextBlock Text="{Binding Name}" Margin="6,0,0,0" VerticalAlignment="Center" />
+            </StackPanel>
+        </HierarchicalDataTemplate>
+
+        <Style x:Key="FlowTreeItemContainerStyle" TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+            <Setter Property="IsExpanded" Value="True" />
+        </Style>
+
+        <HierarchicalDataTemplate DataType="{x:Type vm:FlowTreeItem}" ItemsSource="{Binding Children}">
+            <Grid Height="28"
+                  ClipToBounds="False"
+                  Background="Transparent"
+                  ContextMenuService.IsEnabled="{Binding HasContextOptions}">
+                <Grid.ContextMenu>
+                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
+                                 ItemsSource="{Binding ContextOptions}">
+                        <ContextMenu.ItemContainerStyle>
+                            <Style TargetType="{x:Type MenuItem}" BasedOn="{StaticResource {x:Type MenuItem}}">
+                                <Setter Property="Header" Value="{Binding Header}" />
+                                <Setter Property="Command" Value="{Binding Command}" />
+                            </Style>
+                        </ContextMenu.ItemContainerStyle>
+                    </ContextMenu>
+                </Grid.ContextMenu>
+                <StackPanel x:Name="NodePanel" Orientation="Horizontal" Height="26" VerticalAlignment="Center">
+                    <Rectangle x:Name="InputLinkLine"
+                               Height="1.5"
+                               Width="24"
+                               Margin="0,0,4,0"
+                               Fill="{StaticResource WarnBrush}"
+                               VerticalAlignment="Center"
+                               Visibility="Collapsed" />
+                    <TextBlock x:Name="NodeIcon" Style="{StaticResource IconTextStyle}" Text="{Binding Icon}" Width="22" FontSize="13" />
+                    <TextBlock x:Name="NodeText" Text="{Binding Name}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                    <Rectangle x:Name="OutputLine"
+                               Height="1.5"
+                               Width="118"
+                               Margin="8,0,0,0"
+                               Fill="{StaticResource AccentLineBrush}"
+                               VerticalAlignment="Center"
+                               Visibility="Collapsed" />
+                </StackPanel>
+
+                <Grid x:Name="ConnectorPanel" Height="34" Visibility="Collapsed" Margin="0,-2,0,0" Background="Transparent">
+                    <Canvas Height="34" VerticalAlignment="Center" IsHitTestVisible="False">
+                        <Line x:Name="ConnectorTopLine" X1="20" Y1="5" X2="312" Y2="5" Stroke="{StaticResource AccentLineBrush}" StrokeThickness="2" />
+                        <Line x:Name="ConnectorVerticalLine" X1="312" Y1="5" X2="312" Y2="26" Stroke="{StaticResource AccentLineBrush}" StrokeThickness="2" />
+                        <Line x:Name="ConnectorBottomLine" X1="312" Y1="26" X2="20" Y2="26" Stroke="{StaticResource AccentLineBrush}" StrokeThickness="2" />
+                        <Path x:Name="ConnectorArrow" Fill="{StaticResource AccentLineBrush}" Data="M 17,26 L 27,20 L 27,32 Z" />
+                    </Canvas>
+                    <TextBlock Text="{Binding Name}"
+                               Margin="34,11,0,0"
+                               Foreground="{StaticResource WarnBrush}"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Top" />
+                </Grid>
+            </Grid>
+            <HierarchicalDataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsConnector}" Value="True">
+                    <Setter TargetName="NodePanel" Property="Visibility" Value="Collapsed" />
+                    <Setter TargetName="ConnectorPanel" Property="Visibility" Value="Visible" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsInput}" Value="True">
+                    <Setter TargetName="NodeText" Property="Foreground" Value="{StaticResource WarnBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsOutput}" Value="True">
+                    <Setter TargetName="NodeText" Property="Foreground" Value="{StaticResource AccentBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsConnectedInput}" Value="True">
+                    <Setter TargetName="NodeText" Property="FontWeight" Value="SemiBold" />
+                    <Setter TargetName="InputLinkLine" Property="Visibility" Value="Visible" />
+                    <Setter TargetName="NodeIcon" Property="Foreground" Value="{StaticResource WarnBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsConnectedOutput}" Value="True">
+                    <Setter TargetName="OutputLine" Property="Visibility" Value="Visible" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=TreeViewItem}}" Value="True">
+                    <Setter TargetName="NodeText" Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                    <Setter TargetName="ConnectorPanel" Property="Background" Value="{StaticResource PanelHoverBrush}" />
+                    <Setter TargetName="OutputLine" Property="Fill" Value="{StaticResource AccentBrush}" />
+                    <Setter TargetName="ConnectorTopLine" Property="Stroke" Value="{StaticResource AccentBrush}" />
+                    <Setter TargetName="ConnectorVerticalLine" Property="Stroke" Value="{StaticResource AccentBrush}" />
+                    <Setter TargetName="ConnectorBottomLine" Property="Stroke" Value="{StaticResource AccentBrush}" />
+                    <Setter TargetName="ConnectorArrow" Property="Fill" Value="{StaticResource AccentBrush}" />
+                </DataTrigger>
+            </HierarchicalDataTemplate.Triggers>
+        </HierarchicalDataTemplate>
+
+        <Style x:Key="FlowCanvasNodeButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Cursor" Value="SizeAll" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <ContentPresenter />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <DataTemplate x:Key="FlowInputPortTemplate" DataType="{x:Type vm:FlowPortItem}">
+            <Border x:Name="PortRoot"
+                    Height="28"
+                    Padding="6,3"
+                    Margin="0,0,0,6"
+                    Background="Transparent"
+                    BorderBrush="Transparent"
+                    BorderThickness="1"
+                    ContextMenuService.IsEnabled="{Binding HasContextOptions}">
+                <Border.ContextMenu>
+                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
+                                 ItemsSource="{Binding ContextOptions}">
+                        <ContextMenu.ItemContainerStyle>
+                            <Style TargetType="{x:Type MenuItem}" BasedOn="{StaticResource {x:Type MenuItem}}">
+                                <Setter Property="Header" Value="{Binding Header}" />
+                                <Setter Property="Command" Value="{Binding Command}" />
+                            </Style>
+                        </ContextMenu.ItemContainerStyle>
+                    </ContextMenu>
+                </Border.ContextMenu>
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse x:Name="PortDot"
+                             Width="10"
+                             Height="10"
+                             Fill="{StaticResource SurfaceAltBrush}"
+                             Stroke="{StaticResource WarnBrush}"
+                             StrokeThickness="1.8"
+                             VerticalAlignment="Center" />
+                    <TextBlock x:Name="PortText"
+                               Text="{Binding Name}"
+                               Margin="8,0,0,0"
+                               Foreground="{StaticResource WarnBrush}"
+                               FontSize="14"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                    <Setter TargetName="PortRoot" Property="Background" Value="#22FFC95A" />
+                    <Setter TargetName="PortRoot" Property="BorderBrush" Value="{StaticResource WarnBrush}" />
+                    <Setter TargetName="PortText" Property="FontWeight" Value="SemiBold" />
+                    <Setter TargetName="PortDot" Property="Fill" Value="{StaticResource WarnBrush}" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <DataTemplate x:Key="FlowOutputPortTemplate" DataType="{x:Type vm:FlowPortItem}">
+            <Border x:Name="PortRoot"
+                    Height="28"
+                    Padding="6,3"
+                    Margin="0,0,0,6"
+                    Background="Transparent"
+                    BorderBrush="Transparent"
+                    BorderThickness="1"
+                    Cursor="Hand"
+                    ToolTip="拖拽到兼容输入端口建立连接">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <TextBlock x:Name="PortText"
+                               Text="{Binding Name}"
+                               Margin="0,0,8,0"
+                               Foreground="{StaticResource AccentBrush}"
+                               FontSize="14"
+                               VerticalAlignment="Center" />
+                    <Ellipse x:Name="PortDot"
+                             Width="10"
+                             Height="10"
+                             Fill="{StaticResource SurfaceAltBrush}"
+                             Stroke="{StaticResource AccentBrush}"
+                             StrokeThickness="1.8"
+                             VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                    <Setter TargetName="PortRoot" Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                    <Setter TargetName="PortRoot" Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
+                    <Setter TargetName="PortText" Property="FontWeight" Value="SemiBold" />
+                    <Setter TargetName="PortDot" Property="Fill" Value="{StaticResource AccentBrush}" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <DataTemplate x:Key="FlowResultInputSourceTemplate" DataType="{x:Type vm:FlowPortItem}">
+            <Border Height="28"
+                    Padding="6,3"
+                    Margin="0,0,0,6"
+                    Background="{Binding SoftFill}"
+                    BorderBrush="{Binding Stroke}"
+                    BorderThickness="1"
+                    ToolTip="{Binding SourceDisplayName}">
+                <TextBlock Text="{Binding SourceDisplayName}"
+                           Foreground="{Binding Stroke}"
+                           FontSize="12"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="FlowNodeTemplate" DataType="{x:Type vm:FlowNodeItem}">
+            <Button Command="{Binding DataContext.SelectFlowNodeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                    CommandParameter="{Binding}"
+                    Style="{StaticResource FlowCanvasNodeButtonStyle}"
+                    behaviors:FlowNodeDragBehavior.MoveCommand="{Binding DataContext.MoveFlowNodeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                    behaviors:ItemDoubleClickCommandBehavior.Command="{Binding DataContext.EditToolCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                    behaviors:ItemDoubleClickCommandBehavior.CommandParameter="{Binding Tool}">
+                <Border x:Name="NodeRoot"
+                        Width="{Binding Width}"
+                        Height="{Binding Height}"
+                        Background="{StaticResource SurfaceBrush}"
+                        BorderBrush="{StaticResource BorderBrushStrong}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        SnapsToDevicePixels="True">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="46" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0"
+                                Background="{StaticResource PanelHeaderBrush}"
+                                BorderBrush="{StaticResource BorderBrushStrong}"
+                                BorderThickness="0,0,0,1"
+                                CornerRadius="6,6,0,0"
+                                Padding="12,0">
+                            <Grid>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Style="{StaticResource IconTextStyle}" Text="{Binding Icon}" Width="24" FontSize="15" />
+                                    <TextBlock Text="{Binding Title}" Margin="8,0,0,0" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding StatusText}"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Center"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           FontSize="12" />
+                            </Grid>
+                        </Border>
+
+                        <Grid Grid.Row="1" Margin="12,10,12,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="32" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <ItemsControl Grid.Column="0"
+                                          ItemsSource="{Binding Inputs}"
+                                          ItemTemplate="{StaticResource FlowInputPortTemplate}" />
+                            <Border Grid.Column="1"
+                                    Width="1"
+                                    Margin="15,0"
+                                    Background="{StaticResource BorderBrushStrong}" />
+                            <ItemsControl Grid.Column="2"
+                                          ItemsSource="{Binding Outputs}"
+                                          ItemTemplate="{StaticResource FlowOutputPortTemplate}"
+                                          Visibility="{Binding ShowOutputPorts, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <ItemsControl Grid.Column="2"
+                                          ItemsSource="{Binding Inputs}"
+                                          ItemTemplate="{StaticResource FlowResultInputSourceTemplate}"
+                                          Visibility="{Binding ShowResultSourceSummaries, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Button>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                    <Setter TargetName="NodeRoot" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                    <Setter TargetName="NodeRoot" Property="Background" Value="#FF142229" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasPreflightIssue}" Value="True">
+                    <Setter TargetName="NodeRoot" Property="BorderBrush" Value="{StaticResource WarnBrush}" />
+                    <Setter TargetName="NodeRoot" Property="BorderThickness" Value="1.5" />
+                    <Setter TargetName="NodeRoot" Property="Background" Value="#FF1F1D12" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <DataTemplate x:Key="FlowConnectionTemplate" DataType="{x:Type vm:FlowConnectionItem}">
+            <Canvas Width="{Binding DataContext.FlowCanvasWidth, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                    Height="{Binding DataContext.FlowCanvasHeight, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                    IsHitTestVisible="False">
+                <Path Data="{Binding Geometry}"
+                      Stroke="#33000000"
+                      StrokeThickness="9"
+                      StrokeStartLineCap="Round"
+                      StrokeEndLineCap="Round" />
+                <Path Data="{Binding Geometry}"
+                      Stroke="{Binding Stroke}"
+                      StrokeThickness="3"
+                      StrokeStartLineCap="Round"
+                      StrokeEndLineCap="Round" />
+                <Ellipse Width="9"
+                         Height="9"
+                         Fill="{Binding Stroke}"
+                         Canvas.Left="{Binding TargetX}"
+                         Canvas.Top="{Binding TargetY}"
+                         Margin="-4.5,-4.5,0,0" />
+                <Border Canvas.Left="{Binding LabelX}"
+                        Canvas.Top="{Binding LabelY}"
+                        Background="#DD0B1117"
+                        BorderBrush="{StaticResource BorderBrushStrong}"
+                        BorderThickness="1"
+                        Padding="8,3">
+                    <TextBlock Text="{Binding Label}"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="12" />
+                </Border>
+            </Canvas>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource WorkbenchBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="42" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="24" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="{StaticResource PanelHeaderBrush}" BorderBrush="{StaticResource BorderBrushStrong}" BorderThickness="0,0,0,1">
+            <Grid Margin="6,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="4,0,14,0">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE713;" Width="24" FontSize="15" />
+                        <StackPanel Margin="7,0,0,0">
+                            <TextBlock Text="视觉流程编辑器" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" />
+                        </StackPanel>
+                    </StackPanel>
+                    <Button Command="{Binding SaveRecipeCommand}" Style="{StaticResource VisionPrimaryToolbarButtonStyle}" ToolTip="保存当前配方">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE74E;" Width="18" FontSize="13" Foreground="{StaticResource OkBrush}" />
+                            <TextBlock Text="保存" Margin="5,0,0,0" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding RecipeName, StringFormat=方案：{0}}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,16,0" />
+                    <TextBlock Text="{Binding FlowName, StringFormat=流程：{0}}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,16,0" />
+                    <TextBlock Text="{Binding DebugOutcome}" Foreground="{Binding DebugOutcomeBrush}" FontWeight="SemiBold" Margin="0,0,12,0" />
+                    <TextBlock Text="{Binding DebugCycleTimeText}" Foreground="{StaticResource AccentBrush}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="0" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="340" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource PanelBorderStyle}" Padding="0" Margin="0,0,1,0" Visibility="Collapsed">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="30" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="40" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Background="{StaticResource PanelHeaderBrush}" BorderBrush="{StaticResource BorderBrushStrong}" BorderThickness="0,0,0,1" Padding="8,0">
+                        <Grid>
+                            <TextBlock Text="工具箱" Style="{StaticResource SectionTitleStyle}" VerticalAlignment="Center" />
+                            <TextBlock Text="&#xE713;" Style="{StaticResource IconTextStyle}" HorizontalAlignment="Right" Width="24" />
+                        </Grid>
+                    </Border>
+
+                    <TreeView Grid.Row="1"
+                              ItemsSource="{Binding ToolboxCategories}"
+                              behaviors:TreeViewSelectedItemBehavior.SelectedItem="{Binding SelectedToolboxItem, Mode=TwoWay}"
+                              behaviors:ItemDoubleClickCommandBehavior.Command="{Binding AddToolboxItemCommand}"
+                              Margin="6"
+                              BorderThickness="0" />
+
+                    <Border Grid.Row="2" Background="{StaticResource PanelHeaderBrush}" BorderBrush="{StaticResource BorderBrushStrong}" BorderThickness="0,1,0,0" Padding="8,0">
+                        <Grid>
+                            <TextBlock Text="双击工具添加到流程" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                            <Button Command="{Binding AddToolCommand}" Style="{StaticResource CompactIconButtonStyle}" HorizontalAlignment="Right" MinWidth="64">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE710;" Width="16" FontSize="12" />
+                                    <TextBlock Text="添加" Margin="4,0,0,0" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Column="1" Margin="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="206" />
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Style="{StaticResource PanelBorderStyle}" Padding="0" Margin="0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="30" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Background="{StaticResource PanelHeaderBrush}" BorderBrush="{StaticResource BorderBrushStrong}" BorderThickness="0,0,0,1">
+                            <Grid>
+                                <ListBox ItemsSource="{Binding VisionFlows}"
+                                         SelectedItem="{Binding SelectedImageFlow, Mode=TwoWay}"
+                                         ItemContainerStyle="{StaticResource ImageFlowTabItemStyle}"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         Padding="0"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                         ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                         VerticalContentAlignment="Bottom">
+                                    <ListBox.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom" />
+                                        </ItemsPanelTemplate>
+                                    </ListBox.ItemsPanel>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:VisionFlowItem}">
+                                            <TextBlock Text="{Binding Name, StringFormat={}{0} 图像}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       MaxWidth="180" />
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <Border Style="{StaticResource VisionToolbarGroupStyle}"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        Margin="0,0,8,0">
+                                    <Button Command="{Binding RefreshImageCommand}" Style="{StaticResource VisionIconToolButtonStyle}" ToolTip="刷新图像">
+                                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE72C;" FontSize="13" />
+                                    </Button>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <controls:ZoomableImageSurface Grid.Row="1"
+                                                       ImageFrame="{Binding DisplayedFlowFrame}"
+                                                       OverlayItemsSource="{Binding DisplayedFlowOverlays}"
+                                                       Background="{StaticResource ImageSurfaceBackgroundBrush}">
+                            <Grid Background="{StaticResource ImageSurfaceBackgroundBrush}">
+                                <Image Source="{Binding DisplayedFlowFrame, Converter={StaticResource ImageFrameToBitmapSourceConverter}}" Stretch="Uniform" SnapsToDevicePixels="True" />
+                                <controls:ResultOverlayCanvas ImageFrame="{Binding DisplayedFlowFrame}" ItemsSource="{Binding DisplayedFlowOverlays}" IsHitTestVisible="False" />
+                            </Grid>
+                        </controls:ZoomableImageSurface>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="1" Style="{StaticResource PanelBorderStyle}" Padding="0" Margin="0,1,0,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="30" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Background="{StaticResource PanelHeaderBrush}" BorderBrush="{StaticResource BorderBrushStrong}" BorderThickness="0,0,0,1" Padding="8,0">
+                            <Grid>
+                                <TextBlock Text="日志" Style="{StaticResource SectionTitleStyle}" VerticalAlignment="Center" />
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                    <TextBlock Text="&#xE946;" Style="{StaticResource IconTextStyle}" Width="18" FontSize="12" Foreground="{StaticResource OkBrush}" />
+                                    <TextBlock Text="{Binding PromptCount, StringFormat=提示({0})}" Margin="4,0,12,0" />
+                                    <TextBlock Text="&#xE7BA;" Style="{StaticResource IconTextStyle}" Width="18" FontSize="12" Foreground="{StaticResource WarnBrush}" />
+                                    <TextBlock Text="{Binding WarningCount, StringFormat=警告({0})}" Margin="4,0,12,0" />
+                                    <TextBlock Text="&#xEA39;" Style="{StaticResource IconTextStyle}" Width="18" FontSize="12" Foreground="{StaticResource NgBrush}" />
+                                    <TextBlock Text="{Binding ErrorCount, StringFormat=错误({0})}" Margin="4,0,0,0" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <DataGrid Grid.Row="1" ItemsSource="{Binding DebugLogs}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="None">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Binding="{Binding Time}" Width="72" />
+                                <DataGridTextColumn Binding="{Binding Level}" Width="64" />
+                                <DataGridTextColumn Binding="{Binding Message}" Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <Border Grid.Column="2" Style="{StaticResource PanelBorderStyle}" Padding="0" Margin="1,0,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="36" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Background="{StaticResource PanelHeaderBrush}" BorderBrush="{StaticResource BorderBrushStrong}" BorderThickness="0,0,0,1" Padding="8,0">
+                        <Grid>
+                            <TextBlock Text="流程列表"
+                                       Style="{StaticResource SectionTitleStyle}"
+                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center" />
+                            <Border Style="{StaticResource VisionToolbarGroupStyle}"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal">
+                                <Button Command="{Binding OpenCalibrationCommand}"
+                                        Style="{StaticResource VisionToolbarButtonStyle}"
+                                        Margin="0,0,4,0"
+                                        ToolTip="相机内参与平面标定">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE7B7;" Width="16" FontSize="12" />
+                                        <TextBlock Text="标定" Margin="4,0,0,0" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Command="{Binding NewFlowCommand}"
+                                        Style="{StaticResource VisionPrimaryToolbarButtonStyle}"
+                                        ToolTip="新建流程">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE710;" Width="16" FontSize="12" />
+                                        <TextBlock Text="新建" Margin="4,0,0,0" />
+                                    </StackPanel>
+                                </Button>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </Border>
+
+                    <ListBox Grid.Row="1"
+                             ItemsSource="{Binding VisionFlows}"
+                             SelectedItem="{Binding SelectedVisionFlow, Mode=TwoWay}"
+                             behaviors:ItemDoubleClickCommandBehavior.Command="{Binding OpenFlowEditorCommand}"
+                             BorderThickness="0"
+                             HorizontalContentAlignment="Stretch"
+                             Background="{StaticResource SurfaceBrush}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:VisionFlowItem}">
+                                <Border Padding="10"
+                                        Margin="0,0,0,4"
+                                        Background="Transparent"
+                                        BorderBrush="{StaticResource BorderBrushStrong}"
+                                        BorderThickness="0,0,0,1"
+                                        ContextMenuService.IsEnabled="{Binding HasContextOptions}">
+                                    <Border.ContextMenu>
+                                        <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
+                                                     ItemsSource="{Binding ContextOptions}">
+                                            <ContextMenu.ItemContainerStyle>
+                                                <Style TargetType="{x:Type MenuItem}" BasedOn="{StaticResource {x:Type MenuItem}}">
+                                                    <Setter Property="Header" Value="{Binding Header}" />
+                                                    <Setter Property="Command" Value="{Binding Command}" />
+                                                </Style>
+                                            </ContextMenu.ItemContainerStyle>
+                                        </ContextMenu>
+                                    </Border.ContextMenu>
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE70F;" Width="24" Foreground="{StaticResource AccentBrush}" />
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Row="1"
+                                                   Text="{Binding UpdatedAt, StringFormat=更新时间：{0:yyyy-MM-dd HH:mm}}"
+                                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                                   FontSize="11"
+                                                   Margin="24,4,0,0" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="2" Background="{StaticResource PanelHeaderBrush}" BorderBrush="{StaticResource BorderBrushStrong}" BorderThickness="0,1,0,0" Padding="8,0">
+            <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+        </Border>
+
+        <controls:SimpleLoadingOverlay Grid.RowSpan="3"
+                                       Panel.ZIndex="20"
+                                       IsActive="{Binding IsDebugBusy}" />
+    </Grid>
+</UserControl>

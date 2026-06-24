@@ -1,0 +1,146 @@
+<UserControl x:Class="VisionStation.Client.Views.PermissionLoginView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:prism="http://prismlibrary.com/"
+             prism:ViewModelLocator.AutoWireViewModel="True">
+    <Grid Background="{StaticResource WorkbenchBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="58" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE77B;" Width="28" />
+                <StackPanel Margin="8,0,0,0">
+                    <TextBlock Text="权限登录" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="账号、角色、会话状态" Foreground="{StaticResource TextSecondaryBrush}" />
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="220" />
+                <RowDefinition Height="12" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="0.9*" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="1.1*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource PanelBorderStyle}" Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE72E;" Width="24" />
+                        <TextBlock Text="当前权限" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="40" />
+                            <RowDefinition Height="40" />
+                            <RowDefinition Height="40" />
+                            <RowDefinition Height="40" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="登录状态" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding LoginStatusText}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="当前账号" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding CurrentUser}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="当前角色" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding CurrentRole}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="会话超时" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SessionTimeoutText}" VerticalAlignment="Center" />
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="0" Grid.Column="2" Style="{StaticResource PanelBorderStyle}" Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8D7;" Width="24" />
+                        <TextBlock Text="登录入口" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="12" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Grid.Column="0">
+                            <TextBlock Text="账号" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,4" />
+                            <TextBox Text="{Binding UserName, UpdateSourceTrigger=PropertyChanged}" MinHeight="32" />
+                        </StackPanel>
+                        <StackPanel Grid.Row="0" Grid.Column="2">
+                            <TextBlock Text="角色" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,4" />
+                            <ComboBox ItemsSource="{Binding Roles}"
+                                      SelectedItem="{Binding SelectedRole}"
+                                      MinHeight="32" />
+                        </StackPanel>
+                        <StackPanel Grid.Row="2" Grid.ColumnSpan="3">
+                            <TextBlock Text="权限口令" Foreground="{StaticResource TextSecondaryBrush}" FontSize="12" Margin="0,0,0,4" />
+                            <TextBox Text="{Binding AccessCode, UpdateSourceTrigger=PropertyChanged}" MinHeight="32" />
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                        <TextBlock Text="{Binding LoginRequiredText, StringFormat=权限校验：{0}}"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,14,0" />
+                        <Button Command="{Binding LogoutCommand}" Style="{StaticResource ActionButtonStyle}" ToolTip="退出当前权限">
+                            <TextBlock Text="退出" />
+                        </Button>
+                        <Button Command="{Binding LoginCommand}" Style="{StaticResource ActionButtonStyle}" ToolTip="进入所选权限">
+                            <TextBlock Text="登录" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="2" Grid.ColumnSpan="3" Style="{StaticResource PanelBorderStyle}" Padding="14">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8D4;" Width="24" />
+                        <TextBlock Text="角色占位" Style="{StaticResource SectionTitleStyle}" Margin="8,0,0,0" />
+                    </StackPanel>
+
+                    <DataGrid ItemsSource="{Binding Roles}"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="标识" Binding="{Binding Key}" Width="180" />
+                            <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="180" />
+                            <DataGridTextColumn Header="说明" Binding="{Binding Description}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

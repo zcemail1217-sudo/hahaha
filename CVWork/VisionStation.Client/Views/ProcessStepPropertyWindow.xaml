@@ -1,0 +1,94 @@
+﻿<Window x:Class="VisionStation.Client.Views.ProcessStepPropertyWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:behaviors="clr-namespace:VisionStation.Vision.UI.Behaviors;assembly=VisionStation.Vision.UI"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:views="clr-namespace:VisionStation.Client.Views"
+        Title="步骤属性"
+        Width="720"
+        Height="760"
+        MinWidth="620"
+        MinHeight="560"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Background="{StaticResource WindowBrush}"
+        Foreground="{StaticResource TextPrimaryBrush}">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="46"
+                            CornerRadius="0"
+                            GlassFrameThickness="0"
+                            ResizeBorderThickness="6"
+                            UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
+
+    <Grid Background="{StaticResource WorkbenchBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="46" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="56" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Background="{StaticResource PanelHeaderBrush}"
+                BorderBrush="{StaticResource BorderBrushStrong}"
+                BorderThickness="0,0,0,1"
+                Padding="14,0">
+            <Grid>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8A5;" Width="24" />
+                    <TextBlock Text="步骤属性"
+                               FontSize="17"
+                               FontWeight="SemiBold"
+                               Margin="8,0,0,0" />
+                    <TextBlock Text="{Binding SelectedProcessStep.Name, StringFormat= - {0}}"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="13"
+                               Margin="8,2,0,0"
+                               MaxWidth="360" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <Button Style="{StaticResource CaptionButtonStyle}"
+                            behaviors:WindowCaptionActionBehavior.Action="Minimize"
+                            ToolTip="最小化">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE921;" FontSize="11" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                    </Button>
+                    <Button Style="{StaticResource CaptionButtonStyle}"
+                            behaviors:WindowCaptionActionBehavior.Action="ToggleMaximize"
+                            ToolTip="最大化/还原">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE922;" FontSize="11" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                    </Button>
+                    <Button Style="{StaticResource CloseCaptionButtonStyle}"
+                            behaviors:WindowCaptionActionBehavior.Action="Close"
+                            ToolTip="关闭">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8BB;" FontSize="11" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="1"
+                Style="{StaticResource PanelBorderStyle}"
+                Margin="12"
+                Padding="12">
+            <views:ProcessStepPropertyEditorView />
+        </Border>
+
+        <Border Grid.Row="2"
+                Background="{StaticResource PanelHeaderBrush}"
+                BorderBrush="{StaticResource BorderBrushStrong}"
+                BorderThickness="0,1,0,0"
+                Padding="12,0">
+            <Button Content="关闭"
+                    Width="96"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Center"
+                    IsCancel="True"
+                    Click="CloseButton_Click"
+                    Style="{StaticResource ActionButtonStyle}" />
+        </Border>
+    </Grid>
+</Window>

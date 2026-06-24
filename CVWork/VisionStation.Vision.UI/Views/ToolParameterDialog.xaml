@@ -1,0 +1,451 @@
+<Window x:Class="VisionStation.Vision.UI.Views.ToolParameterDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:behaviors="clr-namespace:VisionStation.Vision.UI.Behaviors"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="工具参数"
+        Width="560"
+        Height="560"
+        MinWidth="520"
+        MinHeight="520"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Background="{StaticResource WindowBrush}"
+        Foreground="{StaticResource TextPrimaryBrush}">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="54"
+                            CornerRadius="0"
+                            GlassFrameThickness="0"
+                            ResizeBorderThickness="6"
+                            UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+    </Window.Resources>
+
+    <Grid Background="{StaticResource WorkbenchBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="54" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="58" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Background="{StaticResource PanelHeaderBrush}"
+                BorderBrush="{StaticResource BorderBrushStrong}"
+                BorderThickness="0,0,0,1"
+                Padding="16,0">
+            <Grid>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE713;" Width="26" />
+                <TextBlock Text="工具参数配置" FontSize="18" FontWeight="SemiBold" Margin="8,0,0,0" />
+            </StackPanel>
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <Button Style="{StaticResource CaptionButtonStyle}"
+                            behaviors:WindowCaptionActionBehavior.Action="Minimize"
+                            ToolTip="最小化">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE921;" FontSize="11" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                    </Button>
+                    <Button Style="{StaticResource CaptionButtonStyle}"
+                            behaviors:WindowCaptionActionBehavior.Action="ToggleMaximize"
+                            ToolTip="最大化/还原">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE922;" FontSize="11" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                    </Button>
+                    <Button Style="{StaticResource CloseCaptionButtonStyle}"
+                            Command="{Binding CancelCommand}"
+                            ToolTip="关闭">
+                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8BB;" FontSize="11" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Border Style="{StaticResource PanelBorderStyle}"
+                    Margin="0,0,0,12"
+                    Padding="16,14"
+                    Visibility="{Binding ShowResultInputEditor, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="64" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="96" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0"
+                               Text="名称"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               VerticalAlignment="Center" />
+                    <TextBox Grid.Column="1"
+                             Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             Height="34"
+                             VerticalContentAlignment="Center" />
+                    <CheckBox Grid.Column="2"
+                              Content="启用"
+                              IsChecked="{Binding Enabled, Mode=TwoWay}"
+                              HorizontalAlignment="Right"
+                              VerticalAlignment="Center"
+                              Margin="16,0,0,0" />
+                </Grid>
+            </Border>
+
+            <Border Style="{StaticResource PanelBorderStyle}"
+                    Margin="0,0,0,12"
+                    Visibility="{Binding ShowGenericToolHeader, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="38" />
+                        <RowDefinition Height="38" />
+                        <RowDefinition Height="38" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="82" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="82" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="名称" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                    <TextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                    <TextBlock Grid.Row="1"
+                               Grid.Column="0"
+                               Text="类型"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               VerticalAlignment="Center"
+                               Visibility="{Binding ShowToolKindSelector, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <ComboBox Grid.Row="1" Grid.Column="1"
+                              ItemsSource="{Binding ToolKinds}"
+                              SelectedItem="{Binding Kind, Mode=TwoWay}"
+                              Height="30"
+                              Visibility="{Binding ShowToolKindSelector, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="2" Text="启用" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="16,0,0,0" />
+                    <CheckBox Grid.Row="1" Grid.Column="3" IsChecked="{Binding Enabled, Mode=TwoWay}" VerticalAlignment="Center" />
+                    <Border Grid.Row="1"
+                            Grid.Column="0"
+                            Background="{StaticResource SurfaceBrush}"
+                            Visibility="{Binding HideToolKindSelector, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="绑定ROI" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                    <Border Grid.Row="2"
+                            Grid.ColumnSpan="4"
+                            Background="{StaticResource SurfaceBrush}"
+                            Panel.ZIndex="2"
+                            Visibility="{Binding HideRoiSelector, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <StackPanel Grid.Row="2"
+                                Grid.Column="1"
+                                Grid.ColumnSpan="3"
+                                Orientation="Horizontal"
+                                Visibility="{Binding RequiresRoi, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <ComboBox ItemsSource="{Binding RoiChoices}"
+                                  SelectedValue="{Binding RoiId, Mode=TwoWay}"
+                                  SelectedValuePath="Id"
+                                  DisplayMemberPath="Name"
+                                  Width="172"
+                                  Height="30" />
+                        <ComboBox ItemsSource="{Binding RoiShapeOptions}"
+                                  SelectedItem="{Binding SelectedRoiShape, Mode=TwoWay}"
+                                  DisplayMemberPath="Name"
+                                  Width="138"
+                                  Height="30"
+                                  Margin="8,0,0,0" />
+                        <Button Command="{Binding CreateRoiCommand}"
+                                Style="{StaticResource ActionButtonStyle}"
+                                Content="新建ROI"
+                                MinWidth="92"
+                                Height="30"
+                                Margin="8,0,0,0"
+                                ToolTip="按选择的形状创建ROI，并绑定到当前工具" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1"
+                    Style="{StaticResource PanelBorderStyle}"
+                    Margin="0,0,0,12"
+                    Visibility="{Binding ShowInputBindingsPanel, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <TextBlock Text="输入项" Style="{StaticResource SectionTitleStyle}" VerticalAlignment="Center" />
+                        <Button Command="{Binding AddResultInputCommand}"
+                                Style="{StaticResource ActionButtonStyle}"
+                                MinWidth="72"
+                                Padding="10,5"
+                                HorizontalAlignment="Right"
+                                Visibility="{Binding ShowResultInputEditor, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                ToolTip="添加一个结果输入项">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE710;" Width="16" FontSize="12" />
+                                <TextBlock Text="添加" Margin="4,0,0,0" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                    <ItemsControl ItemsSource="{Binding InputBindings}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="92" />
+                                        <ColumnDefinition Width="112" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="36" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Padding="8,4"
+                                            Background="{Binding SoftFill}"
+                                            BorderBrush="{Binding Stroke}"
+                                            BorderThickness="1"
+                                            CornerRadius="3"
+                                            Margin="0,0,8,0">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Ellipse Width="8"
+                                                     Height="8"
+                                                     Fill="{Binding Stroke}"
+                                                     Margin="0,0,6,0"
+                                                     VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding TargetName}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <ComboBox Grid.Column="1"
+                                              ItemsSource="{Binding DataTypeOptions}"
+                                              SelectedValue="{Binding DataType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              SelectedValuePath="Value"
+                                              DisplayMemberPath="Text"
+                                              Height="30"
+                                              Margin="0,0,8,0"
+                                              Visibility="{Binding IsTypeEditable, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    <ComboBox Grid.Column="2"
+                                              ItemsSource="{Binding Options}"
+                                              SelectedItem="{Binding SelectedOption, Mode=TwoWay}"
+                                              DisplayMemberPath="Name"
+                                              Height="30">
+                                        <ComboBox.Style>
+                                            <Style TargetType="{x:Type ComboBox}" BasedOn="{StaticResource {x:Type ComboBox}}">
+                                                <Setter Property="Grid.Column" Value="2" />
+                                                <Setter Property="Grid.ColumnSpan" Value="1" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsTypeEditable}" Value="False">
+                                                        <Setter Property="Grid.Column" Value="1" />
+                                                        <Setter Property="Grid.ColumnSpan" Value="2" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ComboBox.Style>
+                                    </ComboBox>
+                                    <Button Grid.Column="3"
+                                            Command="{Binding DataContext.DeleteResultInputCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            CommandParameter="{Binding}"
+                                            Style="{StaticResource ActionButtonStyle}"
+                                            Width="30"
+                                            MinWidth="30"
+                                            Height="30"
+                                            MinHeight="30"
+                                            Padding="0"
+                                            Margin="6,0,0,0"
+                                            Visibility="{Binding CanDelete, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                            ToolTip="删除这个输入项">
+                                        <TextBlock Style="{StaticResource IconTextStyle}"
+                                                   Text="&#xE74D;"
+                                                   Width="16"
+                                                   FontSize="12"
+                                                   TextAlignment="Center"
+                                                   Foreground="{StaticResource NgBrush}" />
+                                    </Button>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="2"
+                    Style="{StaticResource PanelBorderStyle}"
+                    Margin="0,0,0,12"
+                    Visibility="{Binding HasOutputOptions, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <StackPanel>
+                    <TextBlock Text="输出项" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,10" />
+                    <ItemsControl ItemsSource="{Binding OutputOptions}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                          Margin="0,0,10,8">
+                                    <Border Padding="9,4"
+                                            Background="{Binding SoftFill}"
+                                            BorderBrush="{Binding Stroke}"
+                                            BorderThickness="1"
+                                            CornerRadius="3">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Ellipse Width="8"
+                                                     Height="8"
+                                                     Fill="{Binding Stroke}"
+                                                     Margin="0,0,6,0"
+                                                     VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding Name}" />
+                                        </StackPanel>
+                                    </Border>
+                                </CheckBox>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="3"
+                    Style="{StaticResource PanelBorderStyle}"
+                    Margin="0,0,0,12"
+                    Visibility="{Binding ShowCommunicationParameters, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="10" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="8" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="8" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="120" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0"
+                               Grid.ColumnSpan="3"
+                               Text="{Binding CommunicationPanelTitle}"
+                               Style="{StaticResource SectionTitleStyle}" />
+
+                    <StackPanel Grid.Row="2" Grid.ColumnSpan="3">
+                        <TextBlock Text="{Binding CommunicationChannelLabel}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,5" />
+                        <ComboBox ItemsSource="{Binding CommunicationChannelOptions}"
+                                  SelectedValue="{Binding CommunicationChannelKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Key"
+                                  DisplayMemberPath="DisplayName"
+                                  Height="32" />
+                        <TextBlock Text="{Binding SelectedCommunicationChannelDescription}"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,6,0,0" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="4" Grid.Column="0">
+                        <TextBlock Text="发送内容" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,5" />
+                        <TextBox Text="{Binding CommunicationPayload, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 MinHeight="70"
+                                 AcceptsReturn="True"
+                                 VerticalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas"
+                                 Padding="8" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="4" Grid.Column="2">
+                        <TextBlock Text="内容格式" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,5" />
+                        <ComboBox ItemsSource="{Binding CommunicationPayloadModeOptions}"
+                                  SelectedValue="{Binding CommunicationPayloadMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Text"
+                                  Height="32" />
+                        <CheckBox Content="等待响应"
+                                  IsChecked="{Binding CommunicationWaitResponse, Mode=TwoWay}"
+                                  Margin="0,10,0,0" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="6" Grid.ColumnSpan="3">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="超时(ms)" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,5" />
+                            <TextBox Text="{Binding CommunicationTimeoutMs, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     Height="32"
+                                     Padding="8,5" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="响应包含" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,5" />
+                            <TextBox Text="{Binding CommunicationExpectedContains, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     Height="32"
+                                     Padding="8,5" />
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="4"
+                    Style="{StaticResource PanelBorderStyle}"
+                    Padding="0"
+                    Visibility="{Binding ShowParameterTable, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="40" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0"
+                            Background="{StaticResource PanelHeaderBrush}"
+                            BorderBrush="{StaticResource BorderBrushStrong}"
+                            BorderThickness="0,0,0,1"
+                            Padding="12,0">
+                        <Grid>
+                            <TextBlock Text="参数表" Style="{StaticResource SectionTitleStyle}" VerticalAlignment="Center" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Button Command="{Binding AddParameterCommand}" Style="{StaticResource ActionButtonStyle}" MinWidth="72" Padding="10,5" ToolTip="添加一行参数">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE710;" Width="16" FontSize="12" />
+                                        <TextBlock Text="添加" Margin="4,0,0,0" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Command="{Binding DeleteParameterCommand}" Style="{StaticResource ActionButtonStyle}" MinWidth="72" Padding="10,5" ToolTip="删除选中的参数" Margin="0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE74D;" Width="16" FontSize="12" Foreground="{StaticResource NgBrush}" />
+                                        <TextBlock Text="删除" Margin="4,0,0,0" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <DataGrid Grid.Row="1"
+                              ItemsSource="{Binding Parameters}"
+                              SelectedItem="{Binding SelectedParameter, Mode=TwoWay}"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="参数名" Binding="{Binding Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="180" />
+                            <DataGridTextColumn Header="参数值" Binding="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="2"
+                Background="{StaticResource PanelHeaderBrush}"
+                BorderBrush="{StaticResource BorderBrushStrong}"
+                BorderThickness="0,1,0,0"
+                Padding="16,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <Button Command="{Binding CancelCommand}" Style="{StaticResource ActionButtonStyle}" Content="取消" MinWidth="88" ToolTip="放弃本次修改" />
+                <Button Command="{Binding ConfirmCommand}" Style="{StaticResource ActionButtonStyle}" Content="确定" MinWidth="88" ToolTip="应用参数并关闭" Margin="0" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

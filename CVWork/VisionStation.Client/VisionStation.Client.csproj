@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\VisionStation.Application\VisionStation.Application.csproj" />
+    <ProjectReference Include="..\VisionStation.Communication\VisionStation.Communication.csproj" />
+    <ProjectReference Include="..\VisionStation.Communication.UI\VisionStation.Communication.UI.csproj" />
+    <ProjectReference Include="..\VisionStation.Domain\VisionStation.Domain.csproj" />
+    <ProjectReference Include="..\VisionStation.Devices\VisionStation.Devices.csproj" />
+    <ProjectReference Include="..\VisionStation.Devices.CvCommunication\VisionStation.Devices.CvCommunication.csproj" />
+    <ProjectReference Include="..\VisionStation.Infrastructure\VisionStation.Infrastructure.csproj" />
+    <ProjectReference Include="..\VisionStation.Vision\VisionStation.Vision.csproj" />
+    <ProjectReference Include="..\VisionStation.Devices.UI\VisionStation.Devices.UI.csproj" />
+    <ProjectReference Include="..\VisionStation.Vision.UI\VisionStation.Vision.UI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="gts.dll" CopyToOutputDirectory="Always" CopyToPublishDirectory="Always" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Prism.DryIoc" Version="9.0.537" />
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <AssemblyName>VisionStation.Client</AssemblyName>
+    <RootNamespace>VisionStation.Client</RootNamespace>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+</Project>

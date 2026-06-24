@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\VisionStation.Domain\VisionStation.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="MvCameraControl.Net">
+      <HintPath>C:\Program Files (x86)\MVS\Development\DotNet\win64\MvCameraControl.Net.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="AdvMotAPI">
+      <HintPath>..\ThirdParty\Advantech\AdvMotAPI.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <AssemblyName>VisionStation.Devices</AssemblyName>
+    <RootNamespace>VisionStation.Devices</RootNamespace>
+    <TargetFramework>net8.0</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

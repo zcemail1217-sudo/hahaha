@@ -1,0 +1,387 @@
+<UserControl x:Class="VisionStation.Vision.UI.Controls.TechLoadingOverlay"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root"
+             HorizontalAlignment="Stretch"
+             VerticalAlignment="Stretch"
+             IsHitTestVisible="{Binding IsOverlayVisible, ElementName=Root}">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="TechLoadingBooleanToVisibilityConverter" />
+        <QuadraticEase x:Key="TechLoadingEaseInOut" EasingMode="EaseInOut" />
+    </UserControl.Resources>
+
+    <UserControl.Triggers>
+        <EventTrigger RoutedEvent="Loaded">
+            <BeginStoryboard>
+                <Storyboard RepeatBehavior="Forever">
+                    <DoubleAnimation Storyboard.TargetName="OuterRingRotate"
+                                     Storyboard.TargetProperty="Angle"
+                                     From="0"
+                                     To="360"
+                                     Duration="0:0:4.2" />
+                    <DoubleAnimation Storyboard.TargetName="InnerRingRotate"
+                                     Storyboard.TargetProperty="Angle"
+                                     From="360"
+                                     To="0"
+                                     Duration="0:0:2.8" />
+                    <DoubleAnimation Storyboard.TargetName="ScannerRotate"
+                                     Storyboard.TargetProperty="Angle"
+                                     From="0"
+                                     To="360"
+                                     Duration="0:0:1.9" />
+                    <DoubleAnimation Storyboard.TargetName="CoreScale"
+                                     Storyboard.TargetProperty="ScaleX"
+                                     From="0.86"
+                                     To="1.18"
+                                     AutoReverse="True"
+                                     Duration="0:0:0.9"
+                                     EasingFunction="{StaticResource TechLoadingEaseInOut}" />
+                    <DoubleAnimation Storyboard.TargetName="CoreScale"
+                                     Storyboard.TargetProperty="ScaleY"
+                                     From="0.86"
+                                     To="1.18"
+                                     AutoReverse="True"
+                                     Duration="0:0:0.9"
+                                     EasingFunction="{StaticResource TechLoadingEaseInOut}" />
+                    <DoubleAnimation Storyboard.TargetName="CoreGlow"
+                                     Storyboard.TargetProperty="Opacity"
+                                     From="0.28"
+                                     To="0.88"
+                                     AutoReverse="True"
+                                     Duration="0:0:0.9"
+                                     EasingFunction="{StaticResource TechLoadingEaseInOut}" />
+                    <DoubleAnimation Storyboard.TargetName="ScanBand"
+                                     Storyboard.TargetProperty="(Canvas.Top)"
+                                     From="-18"
+                                     To="198"
+                                     Duration="0:0:1.7"
+                                     EasingFunction="{StaticResource TechLoadingEaseInOut}" />
+                    <DoubleAnimation Storyboard.TargetName="DataBarA"
+                                     Storyboard.TargetProperty="Width"
+                                     From="38"
+                                     To="114"
+                                     AutoReverse="True"
+                                     Duration="0:0:0.72"
+                                     EasingFunction="{StaticResource TechLoadingEaseInOut}" />
+                    <DoubleAnimation Storyboard.TargetName="DataBarB"
+                                     Storyboard.TargetProperty="Width"
+                                     From="94"
+                                     To="44"
+                                     AutoReverse="True"
+                                     Duration="0:0:0.9"
+                                     EasingFunction="{StaticResource TechLoadingEaseInOut}" />
+                    <DoubleAnimation Storyboard.TargetName="DataBarC"
+                                     Storyboard.TargetProperty="Width"
+                                     From="58"
+                                     To="132"
+                                     AutoReverse="True"
+                                     Duration="0:0:1.05"
+                                     EasingFunction="{StaticResource TechLoadingEaseInOut}" />
+                    <DoubleAnimation Storyboard.TargetName="PulseDotA"
+                                     Storyboard.TargetProperty="Opacity"
+                                     From="0.25"
+                                     To="1"
+                                     AutoReverse="True"
+                                     Duration="0:0:0.46" />
+                    <DoubleAnimation Storyboard.TargetName="PulseDotB"
+                                     Storyboard.TargetProperty="Opacity"
+                                     BeginTime="0:0:0.16"
+                                     From="0.25"
+                                     To="1"
+                                     AutoReverse="True"
+                                     Duration="0:0:0.46" />
+                    <DoubleAnimation Storyboard.TargetName="PulseDotC"
+                                     Storyboard.TargetProperty="Opacity"
+                                     BeginTime="0:0:0.32"
+                                     From="0.25"
+                                     To="1"
+                                     AutoReverse="True"
+                                     Duration="0:0:0.46" />
+                    <DoubleAnimation Storyboard.TargetName="PulseDotD"
+                                     Storyboard.TargetProperty="Opacity"
+                                     BeginTime="0:0:0.48"
+                                     From="0.25"
+                                     To="1"
+                                     AutoReverse="True"
+                                     Duration="0:0:0.46" />
+                </Storyboard>
+            </BeginStoryboard>
+        </EventTrigger>
+    </UserControl.Triggers>
+
+    <Grid Visibility="{Binding IsOverlayVisible, ElementName=Root, Converter={StaticResource TechLoadingBooleanToVisibilityConverter}}">
+        <Grid.Background>
+            <RadialGradientBrush Center="0.5,0.44"
+                                 GradientOrigin="0.5,0.44"
+                                 RadiusX="0.78"
+                                 RadiusY="0.78">
+                <GradientStop Color="#E805090D" Offset="0" />
+                <GradientStop Color="#D9071118" Offset="0.48" />
+                <GradientStop Color="#F4030609" Offset="1" />
+            </RadialGradientBrush>
+        </Grid.Background>
+
+        <Border Width="520"
+                MinHeight="376"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Padding="26,24"
+                Background="#EE0A1118"
+                BorderBrush="{StaticResource AccentLineBrush}"
+                BorderThickness="1"
+                CornerRadius="16"
+                SnapsToDevicePixels="True">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="30"
+                                  ShadowDepth="0"
+                                  Opacity="0.48"
+                                  Color="#FF33D6A6" />
+            </Border.Effect>
+
+            <Grid ClipToBounds="True">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="172" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Canvas Grid.Row="0"
+                        Width="344"
+                        Height="172"
+                        HorizontalAlignment="Center"
+                        ClipToBounds="True">
+                    <Rectangle Width="344"
+                               Height="172"
+                               RadiusX="12"
+                               RadiusY="12"
+                               Stroke="#2233D6A6"
+                               StrokeThickness="1"
+                               Fill="#16000000" />
+                    <Line X1="0" Y1="34" X2="344" Y2="34" Stroke="#1933D6A6" StrokeThickness="1" />
+                    <Line X1="0" Y1="68" X2="344" Y2="68" Stroke="#1933D6A6" StrokeThickness="1" />
+                    <Line X1="0" Y1="102" X2="344" Y2="102" Stroke="#1933D6A6" StrokeThickness="1" />
+                    <Line X1="0" Y1="136" X2="344" Y2="136" Stroke="#1933D6A6" StrokeThickness="1" />
+                    <Line X1="43" Y1="0" X2="43" Y2="172" Stroke="#1533D6A6" StrokeThickness="1" />
+                    <Line X1="86" Y1="0" X2="86" Y2="172" Stroke="#1533D6A6" StrokeThickness="1" />
+                    <Line X1="129" Y1="0" X2="129" Y2="172" Stroke="#1533D6A6" StrokeThickness="1" />
+                    <Line X1="215" Y1="0" X2="215" Y2="172" Stroke="#1533D6A6" StrokeThickness="1" />
+                    <Line X1="258" Y1="0" X2="258" Y2="172" Stroke="#1533D6A6" StrokeThickness="1" />
+                    <Line X1="301" Y1="0" X2="301" Y2="172" Stroke="#1533D6A6" StrokeThickness="1" />
+
+                    <Rectangle x:Name="ScanBand"
+                               Width="344"
+                               Height="24"
+                               Canvas.Top="-18"
+                               Fill="#2633D6A6"
+                               RadiusX="12"
+                               RadiusY="12"
+                               IsHitTestVisible="False" />
+
+                    <Grid Width="152"
+                          Height="152"
+                          Canvas.Left="96"
+                          Canvas.Top="10">
+                        <Ellipse Stroke="#2233D6A6" StrokeThickness="1" />
+                        <Ellipse Width="134"
+                                 Height="134"
+                                 Stroke="{StaticResource AccentLineBrush}"
+                                 StrokeThickness="2"
+                                 StrokeDashArray="18 8"
+                                 RenderTransformOrigin="0.5,0.5">
+                            <Ellipse.RenderTransform>
+                                <RotateTransform x:Name="OuterRingRotate" />
+                            </Ellipse.RenderTransform>
+                        </Ellipse>
+                        <Ellipse Width="96"
+                                 Height="96"
+                                 Stroke="#CC5CE08A"
+                                 StrokeThickness="2"
+                                 StrokeDashArray="3 7"
+                                 RenderTransformOrigin="0.5,0.5">
+                            <Ellipse.RenderTransform>
+                                <RotateTransform x:Name="InnerRingRotate" />
+                            </Ellipse.RenderTransform>
+                        </Ellipse>
+                        <Line X1="76"
+                              Y1="18"
+                              X2="76"
+                              Y2="134"
+                              Stroke="#B033D6A6"
+                              StrokeThickness="2"
+                              StrokeStartLineCap="Round"
+                              StrokeEndLineCap="Round"
+                              RenderTransformOrigin="0.5,0.5">
+                            <Line.RenderTransform>
+                                <RotateTransform x:Name="ScannerRotate" CenterX="76" CenterY="76" />
+                            </Line.RenderTransform>
+                        </Line>
+                        <Ellipse x:Name="CoreGlow"
+                                 Width="58"
+                                 Height="58"
+                                 Fill="#3333D6A6"
+                                 RenderTransformOrigin="0.5,0.5">
+                            <Ellipse.RenderTransform>
+                                <ScaleTransform x:Name="CoreScale" ScaleX="1" ScaleY="1" />
+                            </Ellipse.RenderTransform>
+                        </Ellipse>
+                        <Ellipse Width="34"
+                                 Height="34"
+                                 Fill="{StaticResource AccentBrush}"
+                                 Opacity="0.9" />
+                        <TextBlock Text="V"
+                                   FontSize="20"
+                                   FontWeight="Bold"
+                                   Foreground="#FF04100D"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+
+                    <StackPanel Canvas.Left="22" Canvas.Top="22">
+                        <Rectangle x:Name="DataBarA"
+                                   Height="4"
+                                   Width="82"
+                                   Fill="{StaticResource AccentBrush}"
+                                   RadiusX="2"
+                                   RadiusY="2"
+                                   Margin="0,0,0,10" />
+                        <Rectangle x:Name="DataBarB"
+                                   Height="4"
+                                   Width="54"
+                                   Fill="#AA5CE08A"
+                                   RadiusX="2"
+                                   RadiusY="2"
+                                   Margin="0,0,0,10" />
+                        <Rectangle x:Name="DataBarC"
+                                   Height="4"
+                                   Width="108"
+                                   Fill="#88FFC95A"
+                                   RadiusX="2"
+                                   RadiusY="2" />
+                    </StackPanel>
+
+                    <StackPanel Canvas.Left="236"
+                                Canvas.Top="120"
+                                Orientation="Horizontal">
+                        <Ellipse x:Name="PulseDotA" Width="8" Height="8" Fill="{StaticResource AccentBrush}" Margin="0,0,8,0" />
+                        <Ellipse x:Name="PulseDotB" Width="8" Height="8" Fill="{StaticResource AccentBrush}" Margin="0,0,8,0" />
+                        <Ellipse x:Name="PulseDotC" Width="8" Height="8" Fill="{StaticResource AccentBrush}" Margin="0,0,8,0" />
+                        <Ellipse x:Name="PulseDotD" Width="8" Height="8" Fill="{StaticResource AccentBrush}" />
+                    </StackPanel>
+                </Canvas>
+
+                <StackPanel Grid.Row="1"
+                            HorizontalAlignment="Center"
+                            Margin="0,18,0,0">
+                    <TextBlock Text="{Binding Message, ElementName=Root}"
+                               FontSize="19"
+                               FontWeight="SemiBold"
+                               Foreground="{StaticResource TextPrimaryBrush}"
+                               HorizontalAlignment="Center"
+                               TextAlignment="Center" />
+                    <TextBlock Text="{Binding Detail, ElementName=Root}"
+                               Margin="0,7,0,0"
+                               FontSize="12.5"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               HorizontalAlignment="Center"
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"
+                               MaxWidth="340" />
+
+                    <ScrollViewer Width="448"
+                                  MaxHeight="304"
+                                  Margin="0,18,0,0"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding StepsSource, ElementName=Root}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="0,0,0,7"
+                                            Padding="10,7"
+                                            Background="#66101820"
+                                            BorderBrush="#2233D6A6"
+                                            BorderThickness="1"
+                                            CornerRadius="8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="18" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="86" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <Ellipse Width="8"
+                                                     Height="8"
+                                                     Fill="{Binding StateBrush}"
+                                                     VerticalAlignment="Center" />
+
+                                            <StackPanel Grid.Column="1"
+                                                        Margin="8,0,10,0">
+                                                <TextBlock Text="{Binding Name}"
+                                                           FontSize="12.5"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{StaticResource TextPrimaryBrush}" />
+                                                <TextBlock Text="{Binding Detail}"
+                                                           Margin="0,2,0,0"
+                                                           FontSize="10.5"
+                                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                                           TextWrapping="Wrap" />
+                                            </StackPanel>
+
+                                            <TextBlock Grid.Column="2"
+                                                       Text="{Binding StateText}"
+                                                       Foreground="{Binding StateBrush}"
+                                                       FontSize="11"
+                                                       FontWeight="SemiBold"
+                                                       HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </StackPanel>
+
+                <Grid Grid.Row="2"
+                      Height="28"
+                      Margin="0,18,0,0"
+                      HorizontalAlignment="Center"
+                      Width="268">
+                    <Border Height="1"
+                            Background="#2633D6A6"
+                            VerticalAlignment="Center" />
+                    <Border Width="76"
+                            Height="2"
+                            Background="{StaticResource AccentBrush}"
+                            VerticalAlignment="Center"
+                            HorizontalAlignment="Left">
+                        <Border.RenderTransform>
+                            <TranslateTransform x:Name="FooterBeam" X="0" />
+                        </Border.RenderTransform>
+                        <Border.Triggers>
+                            <EventTrigger RoutedEvent="Loaded">
+                                <BeginStoryboard>
+                                    <Storyboard RepeatBehavior="Forever">
+                                        <DoubleAnimation Storyboard.TargetName="FooterBeam"
+                                                         Storyboard.TargetProperty="X"
+                                                         From="0"
+                                                         To="192"
+                                                         AutoReverse="True"
+                                                         Duration="0:0:1.35"
+                                                         EasingFunction="{StaticResource TechLoadingEaseInOut}" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                        </Border.Triggers>
+                    </Border>
+                    <TextBlock Text="N E U R A L   V I S I O N   L I N K"
+                               Foreground="{StaticResource AccentBrush}"
+                               FontSize="10"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Background="#EE0A1118"
+                               Padding="10,0" />
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

@@ -1,0 +1,1247 @@
+<UserControl x:Class="VisionStation.Vision.UI.Views.FlowEditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:behaviors="clr-namespace:VisionStation.Vision.UI.Behaviors"
+             xmlns:controls="clr-namespace:VisionStation.Vision.UI.Controls"
+             xmlns:converters="clr-namespace:VisionStation.Vision.UI.Converters"
+             xmlns:vm="clr-namespace:VisionStation.Vision.UI.ViewModels">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <converters:ImageFrameToBitmapSourceConverter x:Key="ImageFrameToBitmapSourceConverter" />
+
+        <DrawingBrush x:Key="FlowCanvasGridBrush"
+                      Viewport="0,0,80,80"
+                      ViewportUnits="Absolute"
+                      TileMode="Tile"
+                      Stretch="None">
+            <DrawingBrush.Drawing>
+                <DrawingGroup>
+                    <GeometryDrawing Brush="#FF020506">
+                        <GeometryDrawing.Geometry>
+                            <RectangleGeometry Rect="0,0,80,80" />
+                        </GeometryDrawing.Geometry>
+                    </GeometryDrawing>
+                    <GeometryDrawing Geometry="M 20,0 L 20,80 M 40,0 L 40,80 M 60,0 L 60,80 M 0,20 L 80,20 M 0,40 L 80,40 M 0,60 L 80,60">
+                        <GeometryDrawing.Pen>
+                            <Pen Brush="#1824E8C5" Thickness="0.7" />
+                        </GeometryDrawing.Pen>
+                    </GeometryDrawing>
+                    <GeometryDrawing Geometry="M 0.5,0 L 0.5,80 M 79.5,0 L 79.5,80 M 0,0.5 L 80,0.5 M 0,79.5 L 80,79.5">
+                        <GeometryDrawing.Pen>
+                            <Pen Brush="#2A35FFD6" Thickness="1" />
+                        </GeometryDrawing.Pen>
+                    </GeometryDrawing>
+                </DrawingGroup>
+            </DrawingBrush.Drawing>
+        </DrawingBrush>
+
+        <Style x:Key="CompactIconButtonStyle" TargetType="Button" BasedOn="{StaticResource ActionButtonStyle}">
+            <Setter Property="MinWidth" Value="30" />
+            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="Padding" Value="5,4" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+        </Style>
+
+        <Style x:Key="PanelCaptionStyle" TargetType="TextBlock" BasedOn="{StaticResource SectionTitleStyle}">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="ToolPaneShellStyle" TargetType="Border" BasedOn="{StaticResource PanelBorderStyle}">
+            <Setter Property="Width" Value="330" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,0,1,0" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsToolboxPaneExpanded}" Value="False">
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="Width" To="42" Duration="0:0:0.18" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="Width" To="330" Duration="0:0:0.18" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.ExitActions>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ResultPaneShellStyle" TargetType="Border" BasedOn="{StaticResource PanelBorderStyle}">
+            <Setter Property="Width" Value="380" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="1,0,0,0" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsResultImagePaneExpanded}" Value="False">
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="Width" To="42" Duration="0:0:0.18" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="Width" To="380" Duration="0:0:0.18" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.ExitActions>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ToolPaneContentStyle" TargetType="Grid">
+            <Setter Property="Visibility" Value="Visible" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsToolboxPaneExpanded}" Value="False">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ToolPaneRailStyle" TargetType="Grid">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsToolboxPaneExpanded}" Value="False">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ResultPaneContentStyle" TargetType="Grid">
+            <Setter Property="Visibility" Value="Visible" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsResultImagePaneExpanded}" Value="False">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ResultPaneRailStyle" TargetType="Grid">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsResultImagePaneExpanded}" Value="False">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ToolOutputPaneShellStyle" TargetType="Border" BasedOn="{StaticResource PanelBorderStyle}">
+            <Setter Property="Height" Value="210" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,1,0,0" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsToolOutputPaneExpanded}" Value="False">
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="Height" To="36" Duration="0:0:0.16" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="Height" To="210" Duration="0:0:0.16" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.ExitActions>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ToolOutputPaneContentStyle" TargetType="Grid">
+            <Setter Property="Visibility" Value="Visible" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsToolOutputPaneExpanded}" Value="False">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <DataTemplate x:Key="ToolOutputValueTemplate" DataType="{x:Type vm:ToolOutputValueItem}">
+            <Border Height="30"
+                    Margin="0,0,0,4"
+                    Padding="8,0"
+                    Background="{Binding SoftFill}"
+                    BorderBrush="{Binding Stroke}"
+                    BorderThickness="1">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="130" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse Width="7"
+                                 Height="7"
+                                 Fill="{Binding Stroke}"
+                                 Margin="0,0,7,0" />
+                        <TextBlock Text="{Binding Name}"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding Value}"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"
+                               ToolTip="{Binding Value}" />
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <Style x:Key="PaletteToolButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="66" />
+            <Setter Property="Height" Value="62" />
+            <Setter Property="Margin" Value="2,2,2,4" />
+            <Setter Property="Padding" Value="3" />
+            <Setter Property="Background" Value="#FF101A20" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Foreground" Value="#FF00C8F8" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="0"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#FF163137" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#FF163137" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#FF12483F" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.38" />
+                                <Setter Property="Foreground" Value="#FF365E6A" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PaletteGroupHeaderStyle" TargetType="ToggleButton">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#FF174D45" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="False">
+                                <Setter TargetName="Root" Property="Background" Value="#FF102C2E" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="FlowCanvasNodeButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Cursor" Value="SizeAll" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <ContentPresenter />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <DataTemplate x:Key="ToolboxItemTemplate" DataType="{x:Type vm:ToolboxTreeItem}">
+            <StackPanel Orientation="Horizontal" Height="26">
+                <TextBlock Style="{StaticResource IconTextStyle}" Text="{Binding Icon}" Width="24" FontSize="14" />
+                <TextBlock Text="{Binding Name}" Margin="7,0,0,0" VerticalAlignment="Center" />
+            </StackPanel>
+        </DataTemplate>
+
+        <HierarchicalDataTemplate DataType="{x:Type vm:ToolboxTreeItem}"
+                                  ItemsSource="{Binding Children}">
+            <StackPanel Orientation="Horizontal" Height="26">
+                <TextBlock Style="{StaticResource IconTextStyle}" Text="{Binding Icon}" Width="24" FontSize="14" />
+                <TextBlock Text="{Binding Name}" Margin="7,0,0,0" VerticalAlignment="Center" />
+            </StackPanel>
+        </HierarchicalDataTemplate>
+
+        <DataTemplate x:Key="ToolListItemTemplate" DataType="{x:Type vm:VisionToolItem}">
+            <Grid Height="32" Margin="0,0,0,3">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0"
+                           Style="{StaticResource IconTextStyle}"
+                           Text="&#xE713;"
+                           Width="24"
+                           Foreground="{StaticResource AccentBrush}" />
+                <TextBlock Grid.Column="1"
+                           Text="{Binding Name}"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="2"
+                           Text="{Binding Kind}"
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           FontSize="11"
+                           VerticalAlignment="Center" />
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="PaletteGroupTemplate" DataType="{x:Type vm:ToolboxTreeItem}">
+            <Border Margin="0,0,0,1" Background="{StaticResource SurfaceBrush}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="34" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <ToggleButton Grid.Row="0"
+                                  IsChecked="{Binding IsExpanded, Mode=TwoWay}"
+                                  Style="{StaticResource PaletteGroupHeaderStyle}"
+                                  Background="#FF123A3A"
+                                  BorderBrush="{StaticResource AccentBrush}"
+                                  BorderThickness="0,0,0,1"
+                                  Padding="8,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Border Width="21"
+                                    Height="21"
+                                    CornerRadius="10.5"
+                                    BorderThickness="1.4"
+                                    BorderBrush="{StaticResource AccentBrush}"
+                                    Margin="0,0,7,0">
+                                <TextBlock Text="⌃"
+                                           Foreground="{StaticResource AccentBrush}"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           FontSize="13"
+                                           FontWeight="Bold" />
+                            </Border>
+                            <TextBlock Text="{Binding Name}"
+                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       FontSize="13.5"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                    </ToggleButton>
+                    <ItemsControl Grid.Row="1"
+                                  ItemsSource="{Binding Children}"
+                                  Visibility="{Binding IsChildrenVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                  Margin="6,5,6,6">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:ToolboxTreeItem}">
+                                <Button Command="{Binding DataContext.AddToolboxItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        CommandParameter="{Binding}"
+                                        IsEnabled="{Binding IsTool}"
+                                        Style="{StaticResource PaletteToolButtonStyle}"
+                                        ToolTip="{Binding Name}">
+                                    <StackPanel>
+                                        <Viewbox Width="26"
+                                                 Height="24"
+                                                 HorizontalAlignment="Center"
+                                                 Margin="0,0,0,3">
+                                            <Path Data="{Binding IconGeometry}"
+                                                  Stretch="Uniform"
+                                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                  StrokeThickness="1.85"
+                                                  StrokeStartLineCap="Round"
+                                                  StrokeEndLineCap="Round"
+                                                  StrokeLineJoin="Round"
+                                                  Fill="Transparent" />
+                                        </Viewbox>
+                                        <TextBlock Text="{Binding Name}"
+                                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                                   FontSize="11"
+                                                   TextAlignment="Center"
+                                                   TextWrapping="Wrap"
+                                                   MaxHeight="28" />
+                                    </StackPanel>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="FlowInputPortTemplate" DataType="{x:Type vm:FlowPortItem}">
+            <Border x:Name="PortRoot"
+                    Height="16"
+                    Padding="3,0"
+                    Margin="0,0,0,2"
+                    Background="{Binding SoftFill}"
+                    BorderBrush="{Binding Stroke}"
+                    BorderThickness="1"
+                    ContextMenuService.IsEnabled="{Binding HasContextOptions}">
+                <Border.ContextMenu>
+                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
+                                 ItemsSource="{Binding ContextOptions}">
+                        <ContextMenu.ItemContainerStyle>
+                            <Style TargetType="{x:Type MenuItem}" BasedOn="{StaticResource {x:Type MenuItem}}">
+                                <Setter Property="Header" Value="{Binding Header}" />
+                                <Setter Property="Command" Value="{Binding Command}" />
+                            </Style>
+                        </ContextMenu.ItemContainerStyle>
+                    </ContextMenu>
+                </Border.ContextMenu>
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse x:Name="PortDot"
+                             Width="6"
+                             Height="6"
+                             Fill="{Binding Stroke}"
+                             Stroke="{Binding Stroke}"
+                             StrokeThickness="1.2"
+                             VerticalAlignment="Center" />
+                    <TextBlock x:Name="PortText"
+                               Text="{Binding Name}"
+                               Margin="4,0,0,0"
+                               Foreground="{Binding Stroke}"
+                               FontSize="10"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                    <Setter TargetName="PortText" Property="FontWeight" Value="SemiBold" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <DataTemplate x:Key="FlowOutputPortTemplate" DataType="{x:Type vm:FlowPortItem}">
+            <Border x:Name="PortRoot"
+                    Height="16"
+                    Padding="3,0"
+                    Margin="0,0,0,2"
+                    Background="{Binding SoftFill}"
+                    BorderBrush="{Binding Stroke}"
+                    BorderThickness="1"
+                    Cursor="Hand"
+                    ContextMenuService.IsEnabled="{Binding HasContextOptions}"
+                    ToolTip="拖到兼容输入端口建立连接">
+                <Border.ContextMenu>
+                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
+                                 ItemsSource="{Binding ContextOptions}">
+                        <ContextMenu.ItemContainerStyle>
+                            <Style TargetType="{x:Type MenuItem}" BasedOn="{StaticResource {x:Type MenuItem}}">
+                                <Setter Property="Header" Value="{Binding Header}" />
+                                <Setter Property="Command" Value="{Binding Command}" />
+                            </Style>
+                        </ContextMenu.ItemContainerStyle>
+                    </ContextMenu>
+                </Border.ContextMenu>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <TextBlock x:Name="PortText"
+                               Text="{Binding Name}"
+                               Margin="0,0,4,0"
+                               Foreground="{Binding Stroke}"
+                               FontSize="10"
+                               VerticalAlignment="Center" />
+                    <Ellipse x:Name="PortDot"
+                             Width="6"
+                             Height="6"
+                             Fill="{Binding Stroke}"
+                             Stroke="{Binding Stroke}"
+                             StrokeThickness="1.2"
+                             VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                    <Setter TargetName="PortText" Property="FontWeight" Value="SemiBold" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <DataTemplate x:Key="FlowResultInputSourceTemplate" DataType="{x:Type vm:FlowPortItem}">
+            <Border Height="16"
+                    Padding="3,0"
+                    Margin="0,0,0,2"
+                    Background="{Binding SoftFill}"
+                    BorderBrush="{Binding Stroke}"
+                    BorderThickness="1"
+                    ToolTip="{Binding SourceDisplayName}">
+                <TextBlock Text="{Binding SourceDisplayName}"
+                           Foreground="{Binding Stroke}"
+                           FontSize="9.5"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="FlowNodeTemplate" DataType="{x:Type vm:FlowNodeItem}">
+            <Button Command="{Binding DataContext.SelectFlowNodeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                    CommandParameter="{Binding}"
+                    Style="{StaticResource FlowCanvasNodeButtonStyle}"
+                    ToolTip="{Binding ResultSummary}"
+                    behaviors:ItemDoubleClickCommandBehavior.Command="{Binding DataContext.EditToolCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                    behaviors:ItemDoubleClickCommandBehavior.CommandParameter="{Binding Tool}">
+                <Button.ContextMenu>
+                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
+                                 ItemsSource="{Binding ContextOptions}">
+                        <ContextMenu.ItemContainerStyle>
+                            <Style TargetType="{x:Type MenuItem}" BasedOn="{StaticResource {x:Type MenuItem}}">
+                                <Setter Property="Header" Value="{Binding Header}" />
+                                <Setter Property="Command" Value="{Binding Command}" />
+                            </Style>
+                        </ContextMenu.ItemContainerStyle>
+                    </ContextMenu>
+                </Button.ContextMenu>
+                <Border x:Name="NodeRoot"
+                        Width="{Binding Width}"
+                        Height="{Binding Height}"
+                        Background="{StaticResource SurfaceBrush}"
+                        BorderBrush="{StaticResource BorderBrushStrong}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        SnapsToDevicePixels="True">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="28" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0"
+                                Background="{StaticResource PanelHeaderBrush}"
+                                BorderBrush="{StaticResource BorderBrushStrong}"
+                                BorderThickness="0,0,0,1"
+                                CornerRadius="6,6,0,0"
+                                Padding="6,0">
+                            <Grid>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Style="{StaticResource IconTextStyle}" Text="{Binding Icon}" Width="15" FontSize="10" />
+                                    <TextBlock Text="{Binding Title}" Margin="4,0,0,0" FontWeight="SemiBold" FontSize="10.8" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding StatusText}"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Center"
+                                           Foreground="{Binding StatusBrush}"
+                                           FontSize="9" />
+                            </Grid>
+                        </Border>
+
+                        <Grid Grid.Row="1" Margin="6,3,6,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="14" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <ItemsControl Grid.Column="0"
+                                          ItemsSource="{Binding Inputs}"
+                                          ItemTemplate="{StaticResource FlowInputPortTemplate}" />
+                            <Border Grid.Column="1"
+                                    Width="1"
+                                    Margin="6,0"
+                                    Background="{StaticResource BorderBrushStrong}" />
+                            <ItemsControl Grid.Column="2"
+                                          ItemsSource="{Binding Outputs}"
+                                          ItemTemplate="{StaticResource FlowOutputPortTemplate}"
+                                          Visibility="{Binding ShowOutputPorts, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <ItemsControl Grid.Column="2"
+                                          ItemsSource="{Binding Inputs}"
+                                          ItemTemplate="{StaticResource FlowResultInputSourceTemplate}"
+                                          Visibility="{Binding ShowResultSourceSummaries, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Button>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                    <Setter TargetName="NodeRoot" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                    <Setter TargetName="NodeRoot" Property="Background" Value="#FF142229" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasFailure}" Value="True">
+                    <Setter TargetName="NodeRoot" Property="BorderBrush" Value="{StaticResource NgBrush}" />
+                    <Setter TargetName="NodeRoot" Property="BorderThickness" Value="1.5" />
+                    <Setter TargetName="NodeRoot" Property="Background" Value="#FF21141A" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasPreflightIssue}" Value="True">
+                    <Setter TargetName="NodeRoot" Property="BorderBrush" Value="{StaticResource WarnBrush}" />
+                    <Setter TargetName="NodeRoot" Property="BorderThickness" Value="1.5" />
+                    <Setter TargetName="NodeRoot" Property="Background" Value="#FF1F1D12" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <DataTemplate x:Key="FlowConnectionTemplate" DataType="{x:Type vm:FlowConnectionItem}">
+            <Canvas Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                    Height="{Binding ActualHeight, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                    IsHitTestVisible="False">
+                <Path Data="{Binding Geometry}"
+                      Stroke="#33000000"
+                      StrokeThickness="7"
+                      StrokeLineJoin="Round"
+                      StrokeStartLineCap="Round"
+                      StrokeEndLineCap="Round" />
+                <Path Data="{Binding Geometry}"
+                      Stroke="{Binding Stroke}"
+                      StrokeThickness="2.4"
+                      StrokeLineJoin="Round"
+                      StrokeStartLineCap="Round"
+                      StrokeEndLineCap="Round" />
+                <Ellipse Width="7"
+                         Height="7"
+                         Fill="{Binding Stroke}"
+                         Canvas.Left="{Binding TargetX}"
+                         Canvas.Top="{Binding TargetY}"
+                         Margin="-3.5,-3.5,0,0" />
+            </Canvas>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource WorkbenchBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="46" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Background="{StaticResource PanelHeaderBrush}"
+                BorderBrush="{StaticResource BorderBrushStrong}"
+                BorderThickness="0,0,0,1"
+                Padding="10,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="流程编辑"
+                               FontSize="16"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding RecipeName, StringFormat=方案：{0}}"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               Margin="18,0,0,0"
+                               VerticalAlignment="Center" />
+                    <TextBlock Text="流程："
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               Margin="16,0,0,0"
+                               VerticalAlignment="Center" />
+                    <TextBox Text="{Binding FlowName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             Width="170"
+                             Height="28"
+                             Margin="4,0,0,0"
+                             Padding="8,3"
+                             VerticalContentAlignment="Center"
+                             ToolTip="编辑当前流程名称" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Command="{Binding AutoLayoutFlowCommand}" Style="{StaticResource ActionButtonStyle}" MinWidth="86" ToolTip="自动整理节点位置">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8A7;" Margin="0,0,6,0" />
+                            <TextBlock Text="整理画布" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding SaveRecipeCommand}" Style="{StaticResource ActionButtonStyle}" MinWidth="74" ToolTip="保存当前流程">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE74E;" Margin="0,0,6,0" />
+                            <TextBlock Text="保存" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding RunDebugCommand}" Style="{StaticResource ActionButtonStyle}" MinWidth="86" ToolTip="运行当前流程">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE768;" Margin="0,0,6,0" />
+                            <TextBlock Text="运行" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="0,1,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource ToolPaneShellStyle}">
+                <Grid ClipToBounds="True">
+                    <Grid Style="{StaticResource ToolPaneContentStyle}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="44" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0"
+                                Background="#FF1B1D20"
+                                BorderBrush="{StaticResource BorderBrushStrong}"
+                                BorderThickness="0,0,0,1"
+                                Padding="8,5">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="34" />
+                                </Grid.ColumnDefinitions>
+                                <Grid>
+                                    <TextBox x:Name="ToolSearchBox"
+                                             Text="{Binding ToolboxSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Height="30"
+                                             Padding="9,3,28,3"
+                                             BorderThickness="1"
+                                             Background="#FF111519"
+                                             BorderBrush="{StaticResource BorderBrushStrong}" />
+                                    <TextBlock Text="请输入搜索工具名称"
+                                               Margin="11,0,0,0"
+                                               Foreground="{StaticResource TextSecondaryBrush}"
+                                               VerticalAlignment="Center"
+                                               IsHitTestVisible="False">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Text, ElementName=ToolSearchBox}" Value="">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="×"
+                                               Foreground="{StaticResource TextSecondaryBrush}"
+                                               FontSize="24"
+                                               HorizontalAlignment="Right"
+                                               VerticalAlignment="Center"
+                                               Margin="0,0,8,1"
+                                               IsHitTestVisible="False" />
+                                </Grid>
+                                <Button Grid.Column="1"
+                                        Command="{Binding ToggleToolboxPaneCommand}"
+                                        Style="{StaticResource CompactIconButtonStyle}"
+                                        Margin="4,0,0,0"
+                                        ToolTip="收缩工具栏">
+                                    <TextBlock Text="{Binding ToolboxPaneToggleText}" FontWeight="Bold" />
+                                </Button>
+                            </Grid>
+                        </Border>
+
+                        <ScrollViewer Grid.Row="1"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      Background="#FF202124">
+                            <ItemsControl ItemsSource="{Binding VisibleToolboxCategories}"
+                                          ItemTemplate="{StaticResource PaletteGroupTemplate}" />
+                        </ScrollViewer>
+                    </Grid>
+
+                    <Grid Style="{StaticResource ToolPaneRailStyle}"
+                          Background="{StaticResource PanelHeaderBrush}">
+                        <Button Command="{Binding ToggleToolboxPaneCommand}"
+                                Style="{StaticResource CompactIconButtonStyle}"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch"
+                                Margin="3"
+                                ToolTip="展开工具栏">
+                            <StackPanel>
+                                <TextBlock Text=">"
+                                           FontWeight="Bold"
+                                           HorizontalAlignment="Center"
+                                           Margin="0,0,0,10" />
+                                <TextBlock Text="工具"
+                                           TextAlignment="Center"
+                                           TextWrapping="Wrap"
+                                           FontWeight="SemiBold" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="0" Style="{StaticResource PanelBorderStyle}" Padding="0" Margin="0,0,1,0" Visibility="Collapsed">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="126" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="220" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Background="{StaticResource PanelHeaderBrush}" BorderBrush="{StaticResource BorderBrushStrong}" BorderThickness="0,0,0,1" Padding="10">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="28" />
+                                <RowDefinition Height="34" />
+                                <RowDefinition Height="34" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="流程" Style="{StaticResource PanelCaptionStyle}" />
+                            <ComboBox Grid.Row="1"
+                                      ItemsSource="{Binding VisionFlows}"
+                                      SelectedItem="{Binding SelectedVisionFlow, Mode=TwoWay}"
+                                      DisplayMemberPath="Name"
+                                      Margin="0,4,0,0" />
+                            <StackPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Bottom">
+                                <Button Command="{Binding NewFlowCommand}" Style="{StaticResource CompactIconButtonStyle}" ToolTip="新建流程">
+                                    <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE710;" />
+                                </Button>
+                                <Button Command="{Binding DuplicateFlowCommand}" Style="{StaticResource CompactIconButtonStyle}" ToolTip="复制流程">
+                                    <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8C8;" />
+                                </Button>
+                                <Button Command="{Binding DeleteFlowCommand}" Style="{StaticResource CompactIconButtonStyle}" ToolTip="删除流程">
+                                    <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE74D;" Foreground="{StaticResource NgBrush}" />
+                                </Button>
+                                <TextBox Text="{Binding FlowName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Margin="8,0,0,0"
+                                         MinWidth="150" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="1" BorderBrush="{StaticResource BorderBrushStrong}" BorderThickness="0,0,0,1">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="34" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="44" />
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0" Background="{StaticResource PanelHeaderBrush}" Padding="10,0">
+                                <TextBlock Text="工具箱" Style="{StaticResource PanelCaptionStyle}" />
+                            </Border>
+                            <TreeView Grid.Row="1"
+                                      ItemsSource="{Binding ToolboxCategories}"
+                                      behaviors:TreeViewSelectedItemBehavior.SelectedItem="{Binding SelectedToolboxItem, Mode=TwoWay}"
+                                      behaviors:ItemDoubleClickCommandBehavior.Command="{Binding AddToolboxItemCommand}"
+                                      BorderThickness="0" />
+                            <Border Grid.Row="2" Background="{StaticResource PanelHeaderBrush}" Padding="10,6">
+                                <Button Command="{Binding AddToolCommand}" Style="{StaticResource ActionButtonStyle}" MinWidth="92">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE710;" Margin="0,0,6,0" />
+                                        <TextBlock Text="添加工具" />
+                                    </StackPanel>
+                                </Button>
+                            </Border>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="34" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0" Background="{StaticResource PanelHeaderBrush}" Padding="10,0">
+                                <TextBlock Text="当前工具" Style="{StaticResource PanelCaptionStyle}" />
+                            </Border>
+                            <ListBox Grid.Row="1"
+                                     ItemsSource="{Binding Tools}"
+                                     SelectedItem="{Binding SelectedTool, Mode=TwoWay}"
+                                     ItemTemplate="{StaticResource ToolListItemTemplate}"
+                                     behaviors:ItemDoubleClickCommandBehavior.Command="{Binding EditToolCommand}"
+                                     BorderThickness="0" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Style="{StaticResource PanelBorderStyle}" Padding="0" Margin="1,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="38" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Background="{StaticResource PanelHeaderBrush}" BorderBrush="{StaticResource BorderBrushStrong}" BorderThickness="0,0,0,1" Padding="10,0">
+                        <Grid>
+                            <TextBlock Text="流程画布" Style="{StaticResource PanelCaptionStyle}" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Border Background="#22FF5C7A"
+                                        BorderBrush="{StaticResource NgBrush}"
+                                        BorderThickness="1"
+                                        Padding="7,2"
+                                        Margin="0,0,12,0"
+                                        MaxWidth="560"
+                                        Visibility="{Binding HasDebugFailure, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                        ToolTip="{Binding DebugFailureSummary}">
+                                    <TextBlock Text="{Binding DebugFailureSummary}"
+                                               Foreground="{StaticResource NgBrush}"
+                                               FontSize="10.5"
+                                               FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis" />
+                                </Border>
+                                <TextBlock Text="{Binding DebugOutcome}" Foreground="{Binding DebugOutcomeBrush}" FontWeight="SemiBold" Margin="0,0,12,0" />
+                                <TextBlock Text="{Binding DebugCycleTimeText}" Foreground="{StaticResource AccentBrush}" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <ScrollViewer x:Name="FlowCanvasScroller"
+                                  Grid.Row="1"
+                                  Margin="10"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Auto"
+                                  Background="{StaticResource FlowCanvasGridBrush}">
+                        <Canvas x:Name="FlowCanvasRoot"
+                                Width="{Binding FlowCanvasWidth}"
+                                Height="{Binding FlowCanvasHeight}"
+                                MinWidth="{Binding ViewportWidth, ElementName=FlowCanvasScroller}"
+                                MinHeight="{Binding ViewportHeight, ElementName=FlowCanvasScroller}"
+                                Background="{StaticResource FlowCanvasGridBrush}"
+                                SnapsToDevicePixels="True"
+                                RenderOptions.EdgeMode="Aliased"
+                                behaviors:FlowNodeDragBehavior.MoveCommand="{Binding MoveFlowNodeCommand}"
+                                behaviors:FlowPortDragDropBehavior.ConnectionCommand="{Binding ConnectFlowPortsCommand}"
+                                behaviors:FlowNodeSelectionBehavior.SelectionCommand="{Binding SelectFlowNodesCommand}">
+                            <ItemsControl Width="{Binding ActualWidth, ElementName=FlowCanvasRoot}"
+                                          Height="{Binding ActualHeight, ElementName=FlowCanvasRoot}"
+                                          ItemsSource="{Binding FlowConnections}"
+                                          ItemTemplate="{StaticResource FlowConnectionTemplate}"
+                                          IsHitTestVisible="False">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <Canvas />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                            </ItemsControl>
+
+                            <ItemsControl Width="{Binding ActualWidth, ElementName=FlowCanvasRoot}"
+                                          Height="{Binding ActualHeight, ElementName=FlowCanvasRoot}"
+                                          ItemsSource="{Binding FlowNodes}"
+                                          ItemTemplate="{StaticResource FlowNodeTemplate}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <Canvas />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemContainerStyle>
+                                    <Style TargetType="{x:Type ContentPresenter}">
+                                        <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                        <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                    </Style>
+                                </ItemsControl.ItemContainerStyle>
+                            </ItemsControl>
+                        </Canvas>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="2" Style="{StaticResource ResultPaneShellStyle}">
+                <Grid ClipToBounds="True">
+                    <Grid Style="{StaticResource ResultPaneContentStyle}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="38" />
+                            <RowDefinition Height="42" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="32" />
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0"
+                                Background="{StaticResource PanelHeaderBrush}"
+                                BorderBrush="{StaticResource BorderBrushStrong}"
+                                BorderThickness="0,0,0,1"
+                                Padding="9,0">
+                            <Grid>
+                                <TextBlock Text="结果图像"
+                                           Style="{StaticResource PanelCaptionStyle}"
+                                           HorizontalAlignment="Left" />
+                                <Button Command="{Binding ToggleResultImagePaneCommand}"
+                                        Style="{StaticResource CompactIconButtonStyle}"
+                                        HorizontalAlignment="Right"
+                                        ToolTip="收缩结果显示">
+                                    <TextBlock Text="{Binding ResultImagePaneToggleText}" FontWeight="Bold" />
+                                </Button>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Row="1"
+                                Background="{StaticResource SurfaceBrush}"
+                                BorderBrush="{StaticResource BorderBrushStrong}"
+                                BorderThickness="0,0,0,1"
+                                Padding="8,6">
+                            <ComboBox ItemsSource="{Binding FlowResultImages}"
+                                      SelectedItem="{Binding SelectedFlowResultImage, Mode=TwoWay}"
+                                      DisplayMemberPath="DisplayName"
+                                      Height="28" />
+                        </Border>
+
+                        <Border Grid.Row="2"
+                                Margin="8"
+                                Background="{StaticResource ImageSurfaceBackgroundBrush}"
+                                BorderBrush="{StaticResource BorderBrushStrong}"
+                                BorderThickness="1">
+                            <Grid>
+                                <TextBlock Text="运行流程后选择工具图像"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SelectedFlowResultImage}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <controls:ZoomableImageSurface ImageFrame="{Binding SelectedFlowResultImage.Frame}"
+                                                               OverlayItemsSource="{Binding SelectedFlowResultImage.Overlays}"
+                                                               CanOpenFullscreen="True"
+                                                               Background="{StaticResource ImageSurfaceBackgroundBrush}">
+                                    <Grid Background="{StaticResource ImageSurfaceBackgroundBrush}">
+                                        <Image Source="{Binding SelectedFlowResultImage.Frame, Converter={StaticResource ImageFrameToBitmapSourceConverter}}"
+                                               Stretch="Uniform"
+                                               SnapsToDevicePixels="True" />
+                                        <controls:ResultOverlayCanvas ImageFrame="{Binding SelectedFlowResultImage.Frame}"
+                                                                      ItemsSource="{Binding SelectedFlowResultImage.Overlays}"
+                                                                      IsHitTestVisible="False" />
+                                    </Grid>
+                                </controls:ZoomableImageSurface>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Row="3"
+                                Padding="8,0"
+                                Background="{StaticResource PanelHeaderBrush}"
+                                BorderBrush="{StaticResource BorderBrushStrong}"
+                                BorderThickness="0,1,0,0">
+                            <TextBlock Text="{Binding FlowResultImages.Count, StringFormat=图像结果 {0} 项}"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       VerticalAlignment="Center" />
+                        </Border>
+                    </Grid>
+
+                    <Grid Style="{StaticResource ResultPaneRailStyle}"
+                          Background="{StaticResource PanelHeaderBrush}">
+                        <Button Command="{Binding ToggleResultImagePaneCommand}"
+                                Style="{StaticResource CompactIconButtonStyle}"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch"
+                                Margin="3"
+                                ToolTip="展开结果显示">
+                            <StackPanel>
+                                <TextBlock Text="&lt;"
+                                           FontWeight="Bold"
+                                           HorizontalAlignment="Center"
+                                           Margin="0,0,0,10" />
+                                <TextBlock Text="图像"
+                                           TextAlignment="Center"
+                                           TextWrapping="Wrap"
+                                           FontWeight="SemiBold" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1"
+                    Grid.Column="0"
+                    Grid.ColumnSpan="3"
+                    Style="{StaticResource ToolOutputPaneShellStyle}"
+                    ClipToBounds="True">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="36" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0"
+                            Background="{StaticResource PanelHeaderBrush}"
+                            BorderBrush="{StaticResource BorderBrushStrong}"
+                            BorderThickness="0,0,0,1"
+                            Padding="10,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Text="工具输出"
+                                       Style="{StaticResource PanelCaptionStyle}" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding ToolOutputTitle}"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       Margin="16,0,0,0"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis"
+                                       MaxWidth="260" />
+                            <Border Grid.Column="2"
+                                    Margin="14,0,0,0"
+                                    Padding="8,2"
+                                    Background="#221D2A33"
+                                    BorderBrush="{Binding ToolOutputStatusBrush}"
+                                    BorderThickness="1"
+                                    VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse Width="7"
+                                             Height="7"
+                                             Fill="{Binding ToolOutputStatusBrush}"
+                                             Margin="0,0,6,0"
+                                             VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding ToolOutputStatus}"
+                                               Foreground="{Binding ToolOutputStatusBrush}"
+                                               FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Border>
+                            <StackPanel Grid.Column="3"
+                                        Orientation="Horizontal"
+                                        VerticalAlignment="Center"
+                                        Margin="14,0,0,0">
+                                <TextBlock Text="{Binding ToolOutputDuration}"
+                                           Foreground="{StaticResource AccentBrush}"
+                                           Margin="0,0,14,0" />
+                                <TextBlock Text="{Binding ToolOutputMessage}"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding ToolOutputMessage}" />
+                            </StackPanel>
+                            <Button Grid.Column="4"
+                                    Command="{Binding ToggleToolOutputPaneCommand}"
+                                    Style="{StaticResource CompactIconButtonStyle}"
+                                    HorizontalAlignment="Right"
+                                    ToolTip="展开/收起工具输出">
+                                <TextBlock Text="{Binding ToolOutputPaneToggleText}" FontWeight="Bold" />
+                            </Button>
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="1"
+                          Style="{StaticResource ToolOutputPaneContentStyle}"
+                          Background="{StaticResource SurfaceBrush}"
+                          Margin="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="0" />
+                            <ColumnDefinition Width="0" />
+                        </Grid.ColumnDefinitions>
+
+                        <Grid Grid.Column="0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="24" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0"
+                                    BorderBrush="{StaticResource BorderBrushStrong}"
+                                    BorderThickness="1"
+                                    Background="#AA0B1117"
+                                    Padding="8"
+                                    Margin="0,0,0,8"
+                                    Visibility="{Binding ShowSelectedToolMatchPoints, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="104" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="{Binding SelectedToolMatchPointTitle}"
+                                               Foreground="{StaticResource TextPrimaryBrush}"
+                                               FontWeight="SemiBold"
+                                               Margin="0,0,0,6" />
+                                    <DataGrid Grid.Row="1"
+                                              ItemsSource="{Binding SelectedToolMatchPoints}"
+                                              AutoGenerateColumns="False"
+                                              CanUserAddRows="False"
+                                              CanUserDeleteRows="False"
+                                              IsReadOnly="True"
+                                              RowHeaderWidth="0"
+                                              HeadersVisibility="Column"
+                                              GridLinesVisibility="Horizontal"
+                                              BorderThickness="0"
+                                              Background="Transparent"
+                                              Foreground="{StaticResource TextPrimaryBrush}"
+                                              HorizontalScrollBarVisibility="Auto"
+                                              VerticalScrollBarVisibility="Auto">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="#" Binding="{Binding Index}" Width="46" />
+                                            <DataGridTextColumn Header="X" Binding="{Binding X}" Width="80" />
+                                            <DataGridTextColumn Header="Y" Binding="{Binding Y}" Width="80" />
+                                            <DataGridTextColumn Header="角度" Binding="{Binding Angle}" Width="68" />
+                                            <DataGridTextColumn Header="分数" Binding="{Binding Score}" Width="68" />
+                                            <DataGridTextColumn Header="尺寸" Binding="{Binding SizeText}" Width="94" />
+                                            <DataGridTextColumn Header="形状" Binding="{Binding Shape}" Width="82" />
+                                            <DataGridTextColumn Header="半径" Binding="{Binding RadiusText}" Width="70" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </Grid>
+                            </Border>
+
+                            <TextBlock Grid.Row="1"
+                                       Text="{Binding SelectedToolOutputPorts.Count, StringFormat=输出端口 {0}}"
+                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center" />
+                            <ScrollViewer Grid.Row="2"
+                                          VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled"
+                                          Margin="0,6,0,0">
+                                <ItemsControl ItemsSource="{Binding SelectedToolOutputPorts}"
+                                              ItemTemplate="{StaticResource ToolOutputValueTemplate}" />
+                            </ScrollViewer>
+                        </Grid>
+
+                        <Border Grid.Column="1"
+                                Background="{StaticResource BorderBrushStrong}"
+                                Margin="2,0"
+                                Visibility="Collapsed" />
+
+                        <Grid Grid.Column="2"
+                              Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="24" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="{Binding SelectedToolRawData.Count, StringFormat=原始数据 {0}}"
+                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center" />
+                            <ScrollViewer Grid.Row="1"
+                                          VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled"
+                                          Margin="8,6,0,0">
+                                <ItemsControl ItemsSource="{Binding SelectedToolRawData}"
+                                              ItemTemplate="{StaticResource ToolOutputValueTemplate}" />
+                            </ScrollViewer>
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </Border>
+
+        </Grid>
+    </Grid>
+</UserControl>
