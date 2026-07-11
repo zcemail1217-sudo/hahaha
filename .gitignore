@@ -57,3 +57,4 @@ secrets.json
 
 # Codex / agent scratch output
 .superpowers/
+.worktrees/
