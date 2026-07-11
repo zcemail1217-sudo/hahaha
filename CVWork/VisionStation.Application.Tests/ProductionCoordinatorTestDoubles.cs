@@ -181,6 +181,73 @@ internal sealed class BlockingRejectedInspectionExecution : IInspectionExecution
     }
 }
 
+internal sealed class DisposeAfterReleaseFailingInspectionExecution : IInspectionExecution
+{
+    private readonly IInspectionExecution _inner;
+    private readonly Action? _afterRelease;
+
+    public DisposeAfterReleaseFailingInspectionExecution(
+        IInspectionExecution inner,
+        Action? afterRelease = null)
+    {
+        _inner = inner;
+        _afterRelease = afterRelease;
+    }
+
+    public ActiveInspectionRun? Current => _inner.Current;
+
+    public event EventHandler<InspectionExecutionChangedEventArgs>? Changed
+    {
+        add => _inner.Changed += value;
+        remove => _inner.Changed -= value;
+    }
+
+    public event EventHandler<InspectionRunResult>? RunCompleted
+    {
+        add => _inner.RunCompleted += value;
+        remove => _inner.RunCompleted -= value;
+    }
+
+    public RunAdmission TryBegin(InspectionRunIntent intent)
+    {
+        var admission = _inner.TryBegin(intent);
+        return admission is RunAdmission.Acquired acquired
+            ? new RunAdmission.Acquired(
+                new DisposeAfterReleaseFailingSession(acquired.Session, _afterRelease))
+            : admission;
+    }
+
+    private sealed class DisposeAfterReleaseFailingSession : IInspectionSession
+    {
+        private readonly IInspectionSession _inner;
+        private readonly Action? _afterRelease;
+
+        public DisposeAfterReleaseFailingSession(
+            IInspectionSession inner,
+            Action? afterRelease)
+        {
+            _inner = inner;
+            _afterRelease = afterRelease;
+        }
+
+        public ActiveInspectionRun Run => _inner.Run;
+
+        public Task<InspectionRunResult> ExecuteAsync(
+            InspectionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return _inner.ExecuteAsync(request, cancellationToken);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await _inner.DisposeAsync();
+            _afterRelease?.Invoke();
+            throw new InvalidOperationException("session-dispose-failure");
+        }
+    }
+}
+
 internal sealed class DistinctStateRecorder : IDisposable
 {
     private readonly object _syncRoot = new();
@@ -297,6 +364,13 @@ internal sealed class FakePlcClient : IPlcClient
 
     public ConcurrentQueue<bool> BusyWrites { get; } = new();
 
+    public Func<bool, CancellationToken, Task> SetBusyHandler { get; set; } =
+        static (_, cancellationToken) =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        };
+
     public Task ConnectAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -322,9 +396,8 @@ internal sealed class FakePlcClient : IPlcClient
 
     public Task SetInspectionBusyAsync(bool busy, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         BusyWrites.Enqueue(busy);
-        return Task.CompletedTask;
+        return SetBusyHandler(busy, cancellationToken);
     }
 
     public Task<string> ReadAddressAsync(string address, CancellationToken cancellationToken = default)
@@ -491,6 +564,13 @@ internal sealed class FakeCommunicationChannels : ICommunicationChannelRuntime
 
     public int DisconnectCount => Volatile.Read(ref _disconnectCount);
 
+    public Func<CancellationToken, Task> DisconnectHandler { get; set; } =
+        static cancellationToken =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        };
+
     public Task ConnectAsync(string connectionPolicy, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -500,9 +580,8 @@ internal sealed class FakeCommunicationChannels : ICommunicationChannelRuntime
 
     public Task DisconnectAsync(string connectionPolicy, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         Interlocked.Increment(ref _disconnectCount);
-        return Task.CompletedTask;
+        return DisconnectHandler(cancellationToken);
     }
 
     public Task<CommunicationChannelRuntimeSnapshot> GetTcpSnapshotAsync(

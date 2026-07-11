@@ -114,7 +114,6 @@ public sealed class ProductionCoordinator
                     Rejection: rejected.Rejection);
             }
 
-            var session = ((RunAdmission.Acquired)admission).Session;
             await InitializeProductionAsync(operation.Token).ConfigureAwait(false);
             if (!TryTransitionToRunning(operation))
             {
@@ -122,7 +121,7 @@ public sealed class ProductionCoordinator
                     ProductionCommandDisposition.Canceled);
             }
 
-            var result = await RunSingleCoreAsync(session, operation.Token).ConfigureAwait(false);
+            var result = await RunSingleCoreAsync(operation).ConfigureAwait(false);
             return new ProductionCommandResult<InspectionRunResult>(
                 ProductionCommandDisposition.Completed,
                 result);
@@ -140,7 +139,8 @@ public sealed class ProductionCoordinator
         }
         finally
         {
-            await CompleteOperationAsync(operation, finalFaulted).ConfigureAwait(false);
+            var cleanup = await CompleteOperationAsync(operation, finalFaulted).ConfigureAwait(false);
+            cleanup.ThrowIfFailed();
         }
     }
 
@@ -158,6 +158,7 @@ public sealed class ProductionCoordinator
                 localRejection);
         }
 
+        CleanupOutcome? completedBeforeRunning = null;
         try
         {
             var admission = await AcquireSessionAsync(operation).ConfigureAwait(false);
@@ -171,27 +172,34 @@ public sealed class ProductionCoordinator
             await InitializeProductionAsync(operation.Token).ConfigureAwait(false);
             if (!TryTransitionToRunning(operation))
             {
-                await CompleteOperationAsync(operation, false).ConfigureAwait(false);
-                return new ProductionCommandResult(ProductionCommandDisposition.Canceled);
+                completedBeforeRunning = await CompleteOperationAsync(operation, false)
+                    .ConfigureAwait(false);
             }
-
-            _ = Task.Run(
-                () => RunContinuousAsync(operation),
-                CancellationToken.None);
-            LogInfoSafely("Continuous production started.");
-            return new ProductionCommandResult(ProductionCommandDisposition.Completed);
+            else
+            {
+                _ = Task.Run(
+                    () => RunContinuousAsync(operation),
+                    CancellationToken.None);
+                LogInfoSafely("Continuous production started.");
+                return new ProductionCommandResult(ProductionCommandDisposition.Completed);
+            }
         }
         catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
         {
-            await CompleteOperationAsync(operation, false).ConfigureAwait(false);
+            var cleanup = await CompleteOperationAsync(operation, false).ConfigureAwait(false);
+            cleanup.ThrowIfFailed();
             return new ProductionCommandResult(ProductionCommandDisposition.Canceled);
         }
         catch (Exception exception)
         {
             RaiseContinuousFailure(exception);
-            await CompleteOperationAsync(operation, true).ConfigureAwait(false);
+            var cleanup = await CompleteOperationAsync(operation, true).ConfigureAwait(false);
+            cleanup.ThrowIfFailed();
             throw;
         }
+
+        completedBeforeRunning!.ThrowIfFailed();
+        return new ProductionCommandResult(ProductionCommandDisposition.Canceled);
     }
 
     public async Task<ProductionCommandResult> StopAsync(
@@ -215,7 +223,8 @@ public sealed class ProductionCoordinator
 
         PublishSnapshot(TryCommitStopping(operation));
         operation.RequestCancellation();
-        await operation.Completion.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var cleanup = await operation.Completion.WaitAsync(cancellationToken).ConfigureAwait(false);
+        cleanup.ThrowIfFailed();
         LogInfoSafely("Continuous production stopped.");
         return new ProductionCommandResult(ProductionCommandDisposition.Completed);
     }
@@ -237,8 +246,7 @@ public sealed class ProductionCoordinator
                 return null;
             }
 
-            var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
-            var operation = new ActiveProductionOperation(intent, linkedCancellation);
+            var operation = new ActiveProductionOperation(intent, callerToken);
             _activeOperation = operation;
             rejection = null;
             return operation;
@@ -316,7 +324,7 @@ public sealed class ProductionCoordinator
         finally
         {
             operation.DisposeCancellation();
-            operation.CompletionSource.TrySetResult();
+            operation.CompletionSource.TrySetResult(CleanupOutcome.Success);
         }
     }
 
@@ -337,9 +345,11 @@ public sealed class ProductionCoordinator
     }
 
     private async Task<InspectionRunResult> RunSingleCoreAsync(
-        IInspectionSession session,
-        CancellationToken cancellationToken)
+        ActiveProductionOperation operation)
     {
+        var session = operation.Session ?? throw new InvalidOperationException(
+            "Production inspection started without an inspection session.");
+        var cancellationToken = operation.Token;
         try
         {
             await _plc.SetInspectionBusyAsync(true, cancellationToken).ConfigureAwait(false);
@@ -358,7 +368,11 @@ public sealed class ProductionCoordinator
         }
         finally
         {
-            await ClearInspectionBusyAsync().ConfigureAwait(false);
+            var cleanupFailure = await ClearInspectionBusyAsync().ConfigureAwait(false);
+            if (cleanupFailure is not null)
+            {
+                operation.RecordCleanupFailure(cleanupFailure);
+            }
         }
     }
 
@@ -368,13 +382,17 @@ public sealed class ProductionCoordinator
         var consecutiveFailures = 0;
         try
         {
-            var session = operation.Session ?? throw new InvalidOperationException(
-                "Continuous production started without an inspection session.");
             while (!operation.Token.IsCancellationRequested)
             {
                 try
                 {
-                    await RunSingleCoreAsync(session, operation.Token).ConfigureAwait(false);
+                    await RunSingleCoreAsync(operation).ConfigureAwait(false);
+                    if (operation.HasCleanupFailures)
+                    {
+                        finalFaulted = true;
+                        break;
+                    }
+
                     consecutiveFailures = 0;
                     await Task.Delay(
                             TimeSpan.FromMilliseconds(_productionSettings.CycleDelayMs),
@@ -388,6 +406,12 @@ public sealed class ProductionCoordinator
                 catch (Exception exception)
                 {
                     RaiseContinuousFailure(exception);
+                    if (operation.HasCleanupFailures)
+                    {
+                        finalFaulted = true;
+                        break;
+                    }
+
                     consecutiveFailures++;
                     if (_productionSettings.AutoStopOnAlarm ||
                         consecutiveFailures >= _productionSettings.MaxConsecutiveFailures)
@@ -413,62 +437,71 @@ public sealed class ProductionCoordinator
         }
         finally
         {
-            await CompleteOperationAsync(operation, finalFaulted).ConfigureAwait(false);
+            _ = await CompleteOperationAsync(operation, finalFaulted).ConfigureAwait(false);
         }
     }
 
-    private async Task CompleteOperationAsync(
+    private async Task<CleanupOutcome> CompleteOperationAsync(
         ActiveProductionOperation operation,
         bool finalFaulted)
     {
         if (!operation.TryBeginCompletion())
         {
-            await operation.Completion.ConfigureAwait(false);
-            return;
+            return await operation.Completion.ConfigureAwait(false);
+        }
+
+        PublishSnapshot(TryCommitStopping(operation));
+        var disconnectFailure = await DisconnectProductionSafelyAsync().ConfigureAwait(false);
+        if (disconnectFailure is not null)
+        {
+            operation.RecordCleanupFailure(disconnectFailure);
+        }
+
+        if (operation.Session is not null)
+        {
+            try
+            {
+                await operation.Session.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                operation.RecordCleanupFailure(exception);
+                LogWarningSafely($"Failed to release inspection session: {exception.Message}");
+            }
+        }
+
+        var outcome = operation.CaptureCleanupOutcome();
+        if (outcome.HasFailures)
+        {
+            ReportCleanupFailureSafely(outcome.ToException());
         }
 
         try
         {
-            PublishSnapshot(TryCommitStopping(operation));
-            try
+            SnapshotUpdate? update = null;
+            lock (_syncRoot)
             {
-                await DisconnectProductionSafelyAsync().ConfigureAwait(false);
-                if (operation.Session is not null)
+                if (ReferenceEquals(_activeOperation, operation))
                 {
-                    await operation.Session.DisposeAsync().ConfigureAwait(false);
+                    _activeOperation = null;
+                    var finalState = operation.StopTimedOut ||
+                                     finalFaulted ||
+                                     outcome.HasFailures
+                        ? ProductionState.Faulted
+                        : ProductionState.Stopped;
+                    update = CommitStateLocked(finalState, null);
                 }
             }
-            catch (Exception exception)
-            {
-                finalFaulted = true;
-                ReportCleanupFailureSafely(exception);
-            }
+
+            PublishSnapshot(update);
         }
         finally
         {
-            try
-            {
-                SnapshotUpdate? update = null;
-                lock (_syncRoot)
-                {
-                    if (ReferenceEquals(_activeOperation, operation))
-                    {
-                        _activeOperation = null;
-                        var finalState = operation.StopTimedOut || finalFaulted
-                            ? ProductionState.Faulted
-                            : ProductionState.Stopped;
-                        update = CommitStateLocked(finalState, null);
-                    }
-                }
-
-                PublishSnapshot(update);
-            }
-            finally
-            {
-                operation.DisposeCancellation();
-                operation.CompletionSource.TrySetResult();
-            }
+            operation.DisposeCancellation();
+            operation.CompletionSource.TrySetResult(outcome);
         }
+
+        return outcome;
     }
 
     private SnapshotUpdate? TryCommitStopping(ActiveProductionOperation operation)
@@ -621,20 +654,22 @@ public sealed class ProductionCoordinator
         PublishSafely(DeviceStateChanged, snapshot, nameof(DeviceStateChanged));
     }
 
-    private async Task ClearInspectionBusyAsync()
+    private async Task<Exception?> ClearInspectionBusyAsync()
     {
         try
         {
             using var cleanup = CreateCleanupCancellation();
             await _plc.SetInspectionBusyAsync(false, cleanup.Token).ConfigureAwait(false);
+            return null;
         }
         catch (Exception exception)
         {
             LogWarningSafely($"Failed to clear inspection busy flag: {exception.Message}");
+            return exception;
         }
     }
 
-    private async Task DisconnectProductionSafelyAsync()
+    private async Task<Exception?> DisconnectProductionSafelyAsync()
     {
         try
         {
@@ -642,10 +677,12 @@ public sealed class ProductionCoordinator
             await _communicationChannels
                 .DisconnectAsync(CommunicationChannelConnectionPolicies.Production, cleanup.Token)
                 .ConfigureAwait(false);
+            return null;
         }
         catch (Exception exception)
         {
             LogWarningSafely($"Failed to disconnect production channels: {exception.Message}");
+            return exception;
         }
     }
 
@@ -787,25 +824,67 @@ public sealed class ProductionCoordinator
         ProductionSnapshot Snapshot,
         long Revision);
 
+    private sealed record CleanupOutcome(IReadOnlyList<Exception> Failures)
+    {
+        public static CleanupOutcome Success { get; } = new(Array.Empty<Exception>());
+
+        public bool HasFailures => Failures.Count != 0;
+
+        public AggregateException ToException()
+        {
+            return new AggregateException("Production cleanup failed.", Failures);
+        }
+
+        public void ThrowIfFailed()
+        {
+            if (HasFailures)
+            {
+                throw ToException();
+            }
+        }
+    }
+
     private sealed class ActiveProductionOperation
     {
         private readonly object _cancellationRoot = new();
-        private readonly CancellationTokenSource _linkedCancellation;
+        private readonly object _cleanupRoot = new();
+        private readonly CancellationTokenSource _cancellation = new();
+        private readonly List<Exception> _cleanupFailures = [];
+        private CancellationTokenRegistration _callerCancellationRegistration;
         private int _completionStarted;
         private bool _cancellationRequested;
-        private bool _cancellationDisposed;
+        private bool _cancelInProgress;
+        private bool _disposeRequested;
+        private bool _disposed;
 
         public ActiveProductionOperation(
             InspectionRunIntent intent,
-            CancellationTokenSource linkedCancellation)
+            CancellationToken callerToken)
         {
             Intent = intent;
-            _linkedCancellation = linkedCancellation;
-            Token = linkedCancellation.Token;
+            Token = _cancellation.Token;
             ReservationRun = new ActiveInspectionRun(
                 Guid.NewGuid(),
                 intent,
                 DateTimeOffset.UtcNow);
+
+            if (callerToken.IsCancellationRequested)
+            {
+                RequestCancellation();
+            }
+            else if (callerToken.CanBeCanceled)
+            {
+                _callerCancellationRegistration = callerToken.UnsafeRegister(
+                    static state =>
+                    {
+                        var operation = (ActiveProductionOperation)state!;
+                        _ = ThreadPool.UnsafeQueueUserWorkItem(
+                            static queuedState =>
+                                ((ActiveProductionOperation)queuedState!).RequestCancellation(),
+                            operation);
+                    },
+                    this);
+            }
         }
 
         public InspectionRunIntent Intent { get; }
@@ -818,10 +897,10 @@ public sealed class ProductionCoordinator
 
         public ActiveInspectionRun ActiveRun => Session?.Run ?? ReservationRun;
 
-        public TaskCompletionSource CompletionSource { get; } = new(
+        public TaskCompletionSource<CleanupOutcome> CompletionSource { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task Completion => CompletionSource.Task;
+        public Task<CleanupOutcome> Completion => CompletionSource.Task;
 
         public bool StopTimedOut { get; set; }
 
@@ -841,46 +920,122 @@ public sealed class ProductionCoordinator
             return Interlocked.CompareExchange(ref _completionStarted, 1, 0) == 0;
         }
 
+        public bool HasCleanupFailures
+        {
+            get
+            {
+                lock (_cleanupRoot)
+                {
+                    return _cleanupFailures.Count != 0;
+                }
+            }
+        }
+
+        public void RecordCleanupFailure(Exception exception)
+        {
+            lock (_cleanupRoot)
+            {
+                _cleanupFailures.Add(exception);
+            }
+        }
+
+        public CleanupOutcome CaptureCleanupOutcome()
+        {
+            lock (_cleanupRoot)
+            {
+                return _cleanupFailures.Count == 0
+                    ? CleanupOutcome.Success
+                    : new CleanupOutcome(_cleanupFailures.ToArray());
+            }
+        }
+
         public void RequestCancellation()
         {
+            var cancel = false;
             lock (_cancellationRoot)
             {
-                if (_cancellationRequested || _cancellationDisposed)
+                if (_cancellationRequested || _disposed)
                 {
                     return;
                 }
 
                 _cancellationRequested = true;
-                try
+                _cancelInProgress = true;
+                cancel = true;
+            }
+
+            if (!cancel)
+            {
+                return;
+            }
+
+            try
+            {
+                _cancellation.Cancel();
+            }
+            catch (Exception)
+            {
+            }
+            finally
+            {
+                var dispose = false;
+                lock (_cancellationRoot)
                 {
-                    _linkedCancellation.Cancel();
+                    _cancelInProgress = false;
+                    if (_disposeRequested && !_disposed)
+                    {
+                        _disposed = true;
+                        dispose = true;
+                    }
                 }
-                catch (ObjectDisposedException)
+
+                if (dispose)
                 {
-                }
-                catch (AggregateException)
-                {
+                    DisposeCancellationResources();
                 }
             }
         }
 
         public void DisposeCancellation()
         {
+            var dispose = false;
             lock (_cancellationRoot)
             {
-                if (_cancellationDisposed)
+                if (_disposeRequested || _disposed)
                 {
                     return;
                 }
 
-                _cancellationDisposed = true;
-                try
+                _disposeRequested = true;
+                if (!_cancelInProgress)
                 {
-                    _linkedCancellation.Dispose();
+                    _disposed = true;
+                    dispose = true;
                 }
-                catch (ObjectDisposedException)
-                {
-                }
+            }
+
+            if (dispose)
+            {
+                DisposeCancellationResources();
+            }
+        }
+
+        private void DisposeCancellationResources()
+        {
+            try
+            {
+                _callerCancellationRegistration.Dispose();
+            }
+            catch (Exception)
+            {
+            }
+
+            try
+            {
+                _cancellation.Dispose();
+            }
+            catch (Exception)
+            {
             }
         }
     }
