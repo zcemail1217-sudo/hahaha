@@ -68,9 +68,12 @@ public sealed class ProductionDashboardViewModel : BindableBase
 
         AddDisplayPaneCommand = new DelegateCommand(AddDisplayPane);
         RemoveDisplayPaneCommand = new DelegateCommand<InspectionDisplayPaneItem>(RemoveDisplayPane, CanRemoveDisplayPane);
-        RunSingleCommand = new AsyncDelegateCommand(RunSingleAsync, CanRunSingle);
-        StartCommand = new AsyncDelegateCommand(StartAsync, CanStart);
-        StopCommand = new AsyncDelegateCommand(StopAsync, CanStop);
+        RunSingleCommand = new AsyncDelegateCommand(RunSingleAsync, CanRunSingle)
+            .Catch(ReportCommandFailureSafely);
+        StartCommand = new AsyncDelegateCommand(StartAsync, CanStart)
+            .Catch(ReportCommandFailureSafely);
+        StopCommand = new AsyncDelegateCommand(StopAsync, CanStop)
+            .Catch(ReportCommandFailureSafely);
 
         foreach (var entry in _log.Recent(80).Reverse())
         {
@@ -225,26 +228,45 @@ public sealed class ProductionDashboardViewModel : BindableBase
     private async Task ExecuteProductionCommandAsync(Func<Task<ProductionCommandResult>> execute)
     {
         Interlocked.Increment(ref _activeCommandCount);
-        _uiDispatcher.Invoke(RefreshCommandActivity);
+        Exception? reportedFailure = null;
         try
         {
-            var result = await execute();
-            _uiDispatcher.Invoke(() =>
+            if (!TryInvokeUi(RefreshCommandActivity, out var refreshFailure))
             {
-                ApplyCommandResult(result);
-                RefreshExecutionPresentation();
-            });
-        }
-        catch (Exception ex)
-        {
-            var message = $"生产命令失败：{ex.Message}";
-            _uiDispatcher.Invoke(() => LastMessage = message);
-            _log.Error("Production", message);
+                reportedFailure = refreshFailure;
+                ReportCommandFailureSafely(refreshFailure!);
+                return;
+            }
+
+            try
+            {
+                var result = await execute();
+                if (!TryInvokeUi(() => ApplyCommandResult(result), out var resultFailure))
+                {
+                    reportedFailure = resultFailure;
+                    ReportCommandFailureSafely(resultFailure!);
+                }
+            }
+            catch (Exception ex)
+            {
+                reportedFailure = ex;
+                ReportCommandFailureSafely(ex);
+            }
         }
         finally
         {
             Interlocked.Decrement(ref _activeCommandCount);
-            _uiDispatcher.Invoke(RefreshCommandActivity);
+            if (!TryInvokeUi(RefreshCommandActivity, out var refreshFailure))
+            {
+                if (reportedFailure is null)
+                {
+                    ReportCommandFailureSafely(refreshFailure!);
+                }
+                else
+                {
+                    LogErrorSafely($"生产命令状态刷新失败：{refreshFailure!.Message}");
+                }
+            }
         }
     }
 
@@ -272,7 +294,7 @@ public sealed class ProductionDashboardViewModel : BindableBase
     private void RefreshCommandActivity()
     {
         IsBusy = Volatile.Read(ref _activeCommandCount) > 0;
-        RefreshExecutionPresentation();
+        RaiseProductionCommandCanExecuteChanged();
     }
 
     private void RefreshExecutionPresentation()
@@ -297,6 +319,11 @@ public sealed class ProductionDashboardViewModel : BindableBase
             _occupancyMessageVisible = false;
         }
 
+        RaiseProductionCommandCanExecuteChanged();
+    }
+
+    private void RaiseProductionCommandCanExecuteChanged()
+    {
         RunSingleCommand.RaiseCanExecuteChanged();
         StartCommand.RaiseCanExecuteChanged();
         StopCommand.RaiseCanExecuteChanged();
@@ -313,6 +340,44 @@ public sealed class ProductionDashboardViewModel : BindableBase
         else if (result.Disposition == ProductionCommandDisposition.Canceled)
         {
             LastMessage = "生产检测已取消";
+        }
+    }
+
+    private void ReportCommandFailureSafely(Exception exception)
+    {
+        var message = $"生产命令失败：{exception.Message}";
+        InvokeUiSafely(() => LastMessage = message);
+        LogErrorSafely(message);
+    }
+
+    private bool TryInvokeUi(Action action, out Exception? failure)
+    {
+        try
+        {
+            _uiDispatcher.Invoke(action);
+            failure = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+            return false;
+        }
+    }
+
+    private void InvokeUiSafely(Action action)
+    {
+        _ = TryInvokeUi(action, out _);
+    }
+
+    private void LogErrorSafely(string message)
+    {
+        try
+        {
+            _log.Error("Production", message);
+        }
+        catch
+        {
         }
     }
 

@@ -41,6 +41,22 @@ public sealed class ProductionRunUiStateTests
         Assert.False(uiState.CanStop);
     }
 
+    [Theory]
+    [InlineData(ProductionState.Stopped)]
+    [InlineData(ProductionState.Faulted)]
+    public void Create_UnreleasedProductionSessionBlocksNewStartAfterExecutionClears(ProductionState state)
+    {
+        var uiState = ProductionRunUiState.Create(
+            state,
+            current: null,
+            productionSessionId: Guid.Parse("33333333-3333-3333-3333-333333333333"),
+            commandBusy: false);
+
+        Assert.False(uiState.CanRunSingle);
+        Assert.False(uiState.CanStart);
+        Assert.False(uiState.CanStop);
+    }
+
     [Fact]
     public void Create_StoppedAndAvailableAllowsEitherProductionStart()
     {

@@ -20,7 +20,7 @@ internal sealed record ProductionRunUiState(
     {
         var ownsExecution = current is not null && productionSessionId == current.SessionId;
         var externallyOccupied = current is not null && !ownsExecution;
-        var canBegin = current is null && !commandBusy &&
+        var canBegin = current is null && productionSessionId is null && !commandBusy &&
                        state is ProductionState.Stopped or ProductionState.Faulted;
         var occupancyText = current is null ? string.Empty : FormatOccupancy(current);
 
