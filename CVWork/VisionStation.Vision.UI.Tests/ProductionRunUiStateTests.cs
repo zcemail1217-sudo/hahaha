@@ -25,6 +25,74 @@ public sealed class ProductionRunUiStateTests
         Assert.Equal(expectedBrush, uiState.StateBrush);
     }
 
+    [Theory]
+    [InlineData(ProductionState.Stopped)]
+    [InlineData(ProductionState.Faulted)]
+    public void Create_CommandInProgressBlocksAnotherStartWhileExecutionIsAvailable(ProductionState state)
+    {
+        var uiState = ProductionRunUiState.Create(
+            state,
+            current: null,
+            productionSessionId: null,
+            commandBusy: true);
+
+        Assert.False(uiState.CanRunSingle);
+        Assert.False(uiState.CanStart);
+        Assert.False(uiState.CanStop);
+    }
+
+    [Fact]
+    public void Create_StoppedAndAvailableAllowsEitherProductionStart()
+    {
+        var uiState = ProductionRunUiState.Create(
+            ProductionState.Stopped,
+            current: null,
+            productionSessionId: null,
+            commandBusy: false);
+
+        Assert.True(uiState.CanRunSingle);
+        Assert.True(uiState.CanStart);
+        Assert.False(uiState.CanStop);
+    }
+
+    [Theory]
+    [InlineData(ProductionState.Starting)]
+    [InlineData(ProductionState.Running)]
+    [InlineData(ProductionState.Stopping)]
+    [InlineData(ProductionState.Paused)]
+    public void Create_NonTerminalStateBlocksNewRunWhileExecutionIsAvailable(ProductionState state)
+    {
+        var uiState = ProductionRunUiState.Create(
+            state,
+            current: null,
+            productionSessionId: null,
+            commandBusy: false);
+
+        Assert.False(uiState.CanRunSingle);
+        Assert.False(uiState.CanStart);
+        Assert.False(uiState.CanStop);
+    }
+
+    [Fact]
+    public void Create_DifferentProductionSessionIsTreatedAsExternalOwnership()
+    {
+        var current = CreateActiveRun(
+            "配方试运行",
+            "配方管理",
+            Guid.Parse("11111111-1111-1111-1111-111111111111"));
+
+        var uiState = ProductionRunUiState.Create(
+            ProductionState.Running,
+            current,
+            Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            commandBusy: false);
+
+        Assert.True(uiState.IsExternallyOccupied);
+        Assert.False(uiState.CanRunSingle);
+        Assert.False(uiState.CanStart);
+        Assert.False(uiState.CanStop);
+    }
+
     [Fact]
     public void Create_ExternalOwnerDisablesProductionCommandsAndExplainsOccupancy()
     {
@@ -108,10 +176,13 @@ public sealed class ProductionRunUiStateTests
         Assert.False(uiState.CanStop);
     }
 
-    private static ActiveInspectionRun CreateActiveRun(string displayName, string entryPoint)
+    private static ActiveInspectionRun CreateActiveRun(
+        string displayName,
+        string entryPoint,
+        Guid? sessionId = null)
     {
         return new ActiveInspectionRun(
-            Guid.NewGuid(),
+            sessionId ?? Guid.NewGuid(),
             new InspectionRunIntent(new InspectionRunMode("test.mode", displayName), entryPoint),
             DateTimeOffset.UtcNow);
     }
