@@ -10,11 +10,14 @@ public sealed record ProductionSnapshot(
     int NgCount,
     double YieldRate,
     TimeSpan LastCycleTime,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    Guid? ActiveSessionId = null);
 
 public sealed class ProductionCoordinator
 {
-    private readonly IInspectionRunner _runner;
+    private const string LogSource = "Production";
+
+    private readonly IInspectionExecution _inspectionExecution;
     private readonly ICameraDevice _camera;
     private readonly IPlcClient _plc;
     private readonly IAxisController _axis;
@@ -23,13 +26,24 @@ public sealed class ProductionCoordinator
     private readonly ICommunicationChannelRuntime _communicationChannels;
     private readonly ProductionSettingsConfiguration _productionSettings;
     private readonly object _syncRoot = new();
+    private readonly object _snapshotQueueRoot = new();
+    private readonly SortedDictionary<long, SnapshotUpdate> _snapshotQueue = [];
 
-    private CancellationTokenSource? _loopCancellation;
-    private Task? _loopTask;
-    private ProductionSnapshot _snapshot = new(ProductionState.Stopped, 0, 0, 0, 100, TimeSpan.Zero, DateTimeOffset.Now);
+    private ActiveProductionOperation? _activeOperation;
+    private ProductionSnapshot _snapshot = new(
+        ProductionState.Stopped,
+        0,
+        0,
+        0,
+        100,
+        TimeSpan.Zero,
+        DateTimeOffset.Now);
+    private long _snapshotRevision;
+    private long _nextSnapshotRevisionToPublish = 1;
+    private bool _publishingSnapshots;
 
     public ProductionCoordinator(
-        IInspectionRunner runner,
+        IInspectionExecution inspectionExecution,
         ICameraDevice camera,
         IPlcClient plc,
         IAxisController axis,
@@ -38,7 +52,7 @@ public sealed class ProductionCoordinator
         ICommunicationChannelRuntime communicationChannels,
         DeviceConfiguration configuration)
     {
-        _runner = runner;
+        _inspectionExecution = inspectionExecution;
         _camera = camera;
         _plc = plc;
         _axis = axis;
@@ -71,20 +85,264 @@ public sealed class ProductionCoordinator
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        await _camera.ConnectAsync(cancellationToken);
-        await _plc.ConnectAsync(cancellationToken);
-        await _axis.ConnectAsync(cancellationToken);
-        _log.Info("Production", "设备模拟层初始化完成");
+        await ConnectDevicesAsync(cancellationToken).ConfigureAwait(false);
+        LogInfoSafely("Production devices initialized.");
     }
 
-    public async Task<InspectionRunResult> RunSingleAsync(CancellationToken cancellationToken = default)
+    public async Task<ProductionCommandResult<InspectionRunResult>> RunSingleAsync(
+        CancellationToken cancellationToken = default)
     {
-        await InitializeAsync(cancellationToken);
-        await _communicationChannels.ConnectAsync(CommunicationChannelConnectionPolicies.Production, cancellationToken);
-        await _plc.SetInspectionBusyAsync(true, cancellationToken);
+        var intent = new InspectionRunIntent(
+            InspectionRunModes.ManualSingle,
+            nameof(ProductionCoordinator));
+        var operation = TryReserveOperation(intent, cancellationToken, out var localRejection);
+        if (operation is null)
+        {
+            return new ProductionCommandResult<InspectionRunResult>(
+                ProductionCommandDisposition.Rejected,
+                Rejection: localRejection);
+        }
+
+        var finalFaulted = false;
+        try
+        {
+            var admission = await AcquireSessionAsync(operation).ConfigureAwait(false);
+            if (admission is RunAdmission.Rejected rejected)
+            {
+                return new ProductionCommandResult<InspectionRunResult>(
+                    ProductionCommandDisposition.Rejected,
+                    Rejection: rejected.Rejection);
+            }
+
+            var session = ((RunAdmission.Acquired)admission).Session;
+            await InitializeProductionAsync(operation.Token).ConfigureAwait(false);
+            if (!TryTransitionToRunning(operation))
+            {
+                return new ProductionCommandResult<InspectionRunResult>(
+                    ProductionCommandDisposition.Canceled);
+            }
+
+            var result = await RunSingleCoreAsync(session, operation.Token).ConfigureAwait(false);
+            return new ProductionCommandResult<InspectionRunResult>(
+                ProductionCommandDisposition.Completed,
+                result);
+        }
+        catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+        {
+            return new ProductionCommandResult<InspectionRunResult>(
+                ProductionCommandDisposition.Canceled);
+        }
+        catch (Exception exception)
+        {
+            finalFaulted = true;
+            RaiseSingleRunFailure(exception);
+            throw;
+        }
+        finally
+        {
+            await CompleteOperationAsync(operation, finalFaulted).ConfigureAwait(false);
+        }
+    }
+
+    public async Task<ProductionCommandResult> StartAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var intent = new InspectionRunIntent(
+            InspectionRunModes.Continuous,
+            nameof(ProductionCoordinator));
+        var operation = TryReserveOperation(intent, cancellationToken, out var localRejection);
+        if (operation is null)
+        {
+            return new ProductionCommandResult(
+                ProductionCommandDisposition.Rejected,
+                localRejection);
+        }
 
         try
         {
+            var admission = await AcquireSessionAsync(operation).ConfigureAwait(false);
+            if (admission is RunAdmission.Rejected rejected)
+            {
+                return new ProductionCommandResult(
+                    ProductionCommandDisposition.Rejected,
+                    MapStartRejection(rejected.Rejection));
+            }
+
+            await InitializeProductionAsync(operation.Token).ConfigureAwait(false);
+            if (!TryTransitionToRunning(operation))
+            {
+                await CompleteOperationAsync(operation, false).ConfigureAwait(false);
+                return new ProductionCommandResult(ProductionCommandDisposition.Canceled);
+            }
+
+            _ = Task.Run(
+                () => RunContinuousAsync(operation),
+                CancellationToken.None);
+            LogInfoSafely("Continuous production started.");
+            return new ProductionCommandResult(ProductionCommandDisposition.Completed);
+        }
+        catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+        {
+            await CompleteOperationAsync(operation, false).ConfigureAwait(false);
+            return new ProductionCommandResult(ProductionCommandDisposition.Canceled);
+        }
+        catch (Exception exception)
+        {
+            RaiseContinuousFailure(exception);
+            await CompleteOperationAsync(operation, true).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public async Task<ProductionCommandResult> StopAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ActiveProductionOperation? operation;
+        lock (_syncRoot)
+        {
+            operation = _activeOperation;
+        }
+
+        if (operation is null)
+        {
+            var current = _inspectionExecution.Current;
+            return current is null
+                ? new ProductionCommandResult(ProductionCommandDisposition.NoOp)
+                : new ProductionCommandResult(
+                    ProductionCommandDisposition.Rejected,
+                    new RunRejection(RunRejectionReason.NotOwner, current));
+        }
+
+        PublishSnapshot(TryCommitStopping(operation));
+        operation.RequestCancellation();
+        await operation.Completion.WaitAsync(cancellationToken).ConfigureAwait(false);
+        LogInfoSafely("Continuous production stopped.");
+        return new ProductionCommandResult(ProductionCommandDisposition.Completed);
+    }
+
+    private ActiveProductionOperation? TryReserveOperation(
+        InspectionRunIntent intent,
+        CancellationToken callerToken,
+        out RunRejection? rejection)
+    {
+        lock (_syncRoot)
+        {
+            if (_activeOperation is not null)
+            {
+                var reason = IsCoordinatorContinuous(intent) &&
+                             IsCoordinatorContinuous(_activeOperation.ActiveRun.Intent)
+                    ? RunRejectionReason.AlreadyRunning
+                    : RunRejectionReason.Busy;
+                rejection = new RunRejection(reason, _activeOperation.ActiveRun);
+                return null;
+            }
+
+            var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
+            var operation = new ActiveProductionOperation(intent, linkedCancellation);
+            _activeOperation = operation;
+            rejection = null;
+            return operation;
+        }
+    }
+
+    private async Task<RunAdmission> AcquireSessionAsync(ActiveProductionOperation operation)
+    {
+        var admission = _inspectionExecution.TryBegin(operation.Intent);
+        if (admission is RunAdmission.Rejected)
+        {
+            CompleteRejectedReservation(operation);
+            return admission;
+        }
+
+        var acquired = (RunAdmission.Acquired)admission;
+        SnapshotUpdate? update = null;
+        var attached = false;
+        lock (_syncRoot)
+        {
+            if (ReferenceEquals(_activeOperation, operation))
+            {
+                operation.AttachSession(acquired.Session);
+                update = CommitStateLocked(
+                    operation.StopTimedOut ? ProductionState.Faulted : ProductionState.Starting,
+                    acquired.Session.Run.SessionId);
+                attached = true;
+            }
+        }
+
+        if (!attached)
+        {
+            try
+            {
+                await acquired.Session.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                ReportCleanupFailureSafely(exception);
+            }
+
+            CompleteRejectedReservation(operation);
+            throw new InvalidOperationException(
+                "Production reservation was lost before inspection ownership could be attached.");
+        }
+
+        PublishSnapshot(update);
+        return admission;
+    }
+
+    private void CompleteRejectedReservation(ActiveProductionOperation operation)
+    {
+        if (!operation.TryBeginCompletion())
+        {
+            return;
+        }
+
+        SnapshotUpdate? update = null;
+        lock (_syncRoot)
+        {
+            if (ReferenceEquals(_activeOperation, operation))
+            {
+                _activeOperation = null;
+                if (operation.StopTimedOut)
+                {
+                    update = CommitStateLocked(ProductionState.Faulted, null);
+                }
+            }
+        }
+
+        try
+        {
+            PublishSnapshot(update);
+        }
+        finally
+        {
+            operation.DisposeCancellation();
+            operation.CompletionSource.TrySetResult();
+        }
+    }
+
+    private async Task ConnectDevicesAsync(CancellationToken cancellationToken)
+    {
+        await _camera.ConnectAsync(cancellationToken).ConfigureAwait(false);
+        await _plc.ConnectAsync(cancellationToken).ConfigureAwait(false);
+        await _axis.ConnectAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task InitializeProductionAsync(CancellationToken cancellationToken)
+    {
+        await ConnectDevicesAsync(cancellationToken).ConfigureAwait(false);
+        await _communicationChannels
+            .ConnectAsync(CommunicationChannelConnectionPolicies.Production, cancellationToken)
+            .ConfigureAwait(false);
+        LogInfoSafely("Production runtime initialized.");
+    }
+
+    private async Task<InspectionRunResult> RunSingleCoreAsync(
+        IInspectionSession session,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _plc.SetInspectionBusyAsync(true, cancellationToken).ConfigureAwait(false);
             var request = new InspectionRequest
             {
                 RecipeId = string.Empty,
@@ -92,135 +350,179 @@ public sealed class ProductionCoordinator
                 OperatorName = Environment.UserName,
                 TriggeredByPlc = false
             };
-            var result = await _runner.RunAsync(request, cancellationToken);
-            await _plc.WriteInspectionResultAsync(result.Result, cancellationToken);
+            var result = await session.ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
+            await _plc.WriteInspectionResultAsync(result.Result, cancellationToken).ConfigureAwait(false);
             ApplyResult(result.Result);
-            InspectionCompleted?.Invoke(this, result);
+            PublishInspectionCompleted(result);
             return result;
-        }
-        catch (Exception ex)
-        {
-            SetState(ProductionState.Faulted);
-            _log.Error("Production", ex.Message);
-            _alarms.Raise(
-                AlarmSeverity.Error,
-                "Production",
-                $"Single inspection failed: {ex.Message}",
-                ex.ToString(),
-                "production:single-run");
-            throw;
         }
         finally
         {
-            await ClearInspectionBusyAsync();
+            await ClearInspectionBusyAsync().ConfigureAwait(false);
         }
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken = default)
+    private async Task RunContinuousAsync(ActiveProductionOperation operation)
     {
-        if (_loopTask is { IsCompleted: false })
+        var finalFaulted = false;
+        var consecutiveFailures = 0;
+        try
         {
+            var session = operation.Session ?? throw new InvalidOperationException(
+                "Continuous production started without an inspection session.");
+            while (!operation.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    await RunSingleCoreAsync(session, operation.Token).ConfigureAwait(false);
+                    consecutiveFailures = 0;
+                    await Task.Delay(
+                            TimeSpan.FromMilliseconds(_productionSettings.CycleDelayMs),
+                            operation.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    RaiseContinuousFailure(exception);
+                    consecutiveFailures++;
+                    if (_productionSettings.AutoStopOnAlarm ||
+                        consecutiveFailures >= _productionSettings.MaxConsecutiveFailures)
+                    {
+                        finalFaulted = true;
+                        break;
+                    }
+
+                    await Task.Delay(
+                            TimeSpan.FromMilliseconds(_productionSettings.CycleDelayMs),
+                            operation.Token)
+                        .ConfigureAwait(false);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            finalFaulted = true;
+            RaiseContinuousFailure(exception);
+        }
+        finally
+        {
+            await CompleteOperationAsync(operation, finalFaulted).ConfigureAwait(false);
+        }
+    }
+
+    private async Task CompleteOperationAsync(
+        ActiveProductionOperation operation,
+        bool finalFaulted)
+    {
+        if (!operation.TryBeginCompletion())
+        {
+            await operation.Completion.ConfigureAwait(false);
             return;
         }
 
-        await InitializeAsync(cancellationToken);
-        await _communicationChannels.ConnectAsync(CommunicationChannelConnectionPolicies.Production, cancellationToken);
-        _loopCancellation = new CancellationTokenSource();
-        SetState(ProductionState.Running);
-        _log.Info("Production", "连续生产启动");
-
-        _loopTask = Task.Run(async () =>
+        try
         {
-            var consecutiveFailures = 0;
+            PublishSnapshot(TryCommitStopping(operation));
             try
             {
-                while (!_loopCancellation.IsCancellationRequested)
+                await DisconnectProductionSafelyAsync().ConfigureAwait(false);
+                if (operation.Session is not null)
                 {
-                    try
+                    await operation.Session.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+            catch (Exception exception)
+            {
+                finalFaulted = true;
+                ReportCleanupFailureSafely(exception);
+            }
+        }
+        finally
+        {
+            try
+            {
+                SnapshotUpdate? update = null;
+                lock (_syncRoot)
+                {
+                    if (ReferenceEquals(_activeOperation, operation))
                     {
-                        await RunSingleAsync(_loopCancellation.Token);
-                        consecutiveFailures = 0;
-                        await Task.Delay(TimeSpan.FromMilliseconds(_productionSettings.CycleDelayMs), _loopCancellation.Token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        SetState(ProductionState.Faulted);
-                        _log.Error("Production", $"连续生产异常：{ex.Message}");
-                        _alarms.Raise(
-                            AlarmSeverity.Critical,
-                            "Production",
-                            $"Continuous production stopped: {ex.Message}",
-                            ex.ToString(),
-                            "production:continuous-run");
-                        consecutiveFailures++;
-                        if (_productionSettings.AutoStopOnAlarm ||
-                            consecutiveFailures >= _productionSettings.MaxConsecutiveFailures)
-                        {
-                            break;
-                        }
-
-                        SetState(ProductionState.Running);
-                        await Task.Delay(TimeSpan.FromMilliseconds(_productionSettings.CycleDelayMs), _loopCancellation.Token);
+                        _activeOperation = null;
+                        var finalState = operation.StopTimedOut || finalFaulted
+                            ? ProductionState.Faulted
+                            : ProductionState.Stopped;
+                        update = CommitStateLocked(finalState, null);
                     }
                 }
+
+                PublishSnapshot(update);
             }
             finally
             {
-                await DisconnectProductionAsync();
+                operation.DisposeCancellation();
+                operation.CompletionSource.TrySetResult();
             }
-        }, _loopCancellation.Token);
+        }
     }
 
-    public async Task StopAsync()
+    private SnapshotUpdate? TryCommitStopping(ActiveProductionOperation operation)
     {
-        _loopCancellation?.Cancel();
-        if (_loopTask is not null)
+        lock (_syncRoot)
         {
-            try
+            if (!ReferenceEquals(_activeOperation, operation) ||
+                operation.StopTimedOut ||
+                _snapshot.State is not (ProductionState.Starting or
+                    ProductionState.Running or
+                    ProductionState.Paused))
             {
-                await _loopTask;
+                return null;
             }
-            catch (OperationCanceledException)
+
+            var sessionId = operation.Session?.Run.SessionId ?? _snapshot.ActiveSessionId;
+            return CommitStateLocked(ProductionState.Stopping, sessionId);
+        }
+    }
+
+    private bool TryTransitionToRunning(ActiveProductionOperation operation)
+    {
+        SnapshotUpdate? update = null;
+        lock (_syncRoot)
+        {
+            if (ReferenceEquals(_activeOperation, operation) &&
+                operation.Session is not null &&
+                !operation.Token.IsCancellationRequested &&
+                _snapshot.State == ProductionState.Starting)
             {
-                // The loop is expected to cancel during stop.
+                update = CommitStateLocked(
+                    ProductionState.Running,
+                    operation.Session.Run.SessionId);
             }
         }
 
-        SetState(ProductionState.Stopped);
-        await DisconnectProductionAsync();
-        _log.Info("Production", "连续生产停止");
+        PublishSnapshot(update);
+        return update is not null;
     }
 
-    private async Task ClearInspectionBusyAsync()
+    private SnapshotUpdate CommitStateLocked(ProductionState state, Guid? activeSessionId)
     {
-        try
+        _snapshot = _snapshot with
         {
-            using var cleanup = CreateCleanupCancellation();
-            await _plc.SetInspectionBusyAsync(false, cleanup.Token);
-        }
-        catch (Exception ex)
-        {
-            _log.Warning("Production", $"Failed to clear inspection busy flag: {ex.Message}");
-        }
-    }
-
-    private async Task DisconnectProductionAsync()
-    {
-        using var cleanup = CreateCleanupCancellation();
-        await _communicationChannels.DisconnectAsync(CommunicationChannelConnectionPolicies.Production, cleanup.Token);
-    }
-
-    private CancellationTokenSource CreateCleanupCancellation()
-    {
-        return new CancellationTokenSource(TimeSpan.FromMilliseconds(_productionSettings.CleanupTimeoutMs));
+            State = state,
+            ActiveSessionId = activeSessionId,
+            UpdatedAt = DateTimeOffset.Now
+        };
+        return new SnapshotUpdate(_snapshot, ++_snapshotRevision);
     }
 
     private void ApplyResult(InspectionResult result)
     {
+        SnapshotUpdate update;
         lock (_syncRoot)
         {
             var total = _snapshot.TotalCount + 1;
@@ -235,51 +537,351 @@ public sealed class ProductionCoordinator
                 LastCycleTime = result.CycleTime,
                 UpdatedAt = DateTimeOffset.Now
             };
+            update = new SnapshotUpdate(_snapshot, ++_snapshotRevision);
         }
 
-        SnapshotChanged?.Invoke(this, Snapshot);
+        PublishSnapshot(update);
     }
 
-    private void SetState(ProductionState state)
+    private void PublishSnapshot(SnapshotUpdate? update)
     {
-        lock (_syncRoot)
+        if (update is null)
         {
-            _snapshot = _snapshot with
-            {
-                State = state,
-                UpdatedAt = DateTimeOffset.Now
-            };
+            return;
         }
 
-        SnapshotChanged?.Invoke(this, Snapshot);
+        lock (_snapshotQueueRoot)
+        {
+            _snapshotQueue.Add(update.Value.Revision, update.Value);
+            if (_publishingSnapshots)
+            {
+                return;
+            }
+
+            _publishingSnapshots = true;
+        }
+
+        while (true)
+        {
+            SnapshotUpdate next;
+            lock (_snapshotQueueRoot)
+            {
+                if (!_snapshotQueue.TryGetValue(_nextSnapshotRevisionToPublish, out next))
+                {
+                    _publishingSnapshots = false;
+                    return;
+                }
+
+                _snapshotQueue.Remove(_nextSnapshotRevisionToPublish);
+                _nextSnapshotRevisionToPublish++;
+            }
+
+            PublishSafely(SnapshotChanged, next.Snapshot, nameof(SnapshotChanged));
+        }
+    }
+
+    private void PublishInspectionCompleted(InspectionRunResult result)
+    {
+        PublishSafely(InspectionCompleted, result, nameof(InspectionCompleted));
     }
 
     private void OnDeviceStateChanged(object? sender, DeviceSnapshot snapshot)
     {
-        var alarmId = $"device:{snapshot.Name}";
-        switch (snapshot.State)
+        try
         {
-            case DeviceConnectionState.Faulted:
-                _alarms.Raise(
-                    AlarmSeverity.Critical,
-                    snapshot.Name,
-                    snapshot.Message,
-                    $"Device {snapshot.Name} is faulted.",
-                    alarmId);
-                break;
-            case DeviceConnectionState.Disconnected:
-                _alarms.Raise(
-                    AlarmSeverity.Warning,
-                    snapshot.Name,
-                    snapshot.Message,
-                    $"Device {snapshot.Name} is disconnected.",
-                    alarmId);
-                break;
-            case DeviceConnectionState.Connected:
-                _alarms.Clear(alarmId);
-                break;
+            var alarmId = $"device:{snapshot.Name}";
+            switch (snapshot.State)
+            {
+                case DeviceConnectionState.Faulted:
+                    _alarms.Raise(
+                        AlarmSeverity.Critical,
+                        snapshot.Name,
+                        snapshot.Message,
+                        $"Device {snapshot.Name} is faulted.",
+                        alarmId);
+                    break;
+                case DeviceConnectionState.Disconnected:
+                    _alarms.Raise(
+                        AlarmSeverity.Warning,
+                        snapshot.Name,
+                        snapshot.Message,
+                        $"Device {snapshot.Name} is disconnected.",
+                        alarmId);
+                    break;
+                case DeviceConnectionState.Connected:
+                    _alarms.Clear(alarmId);
+                    break;
+            }
+        }
+        catch (Exception exception)
+        {
+            LogWarningSafely($"Device alarm update failed: {exception.Message}");
         }
 
-        DeviceStateChanged?.Invoke(this, snapshot);
+        PublishSafely(DeviceStateChanged, snapshot, nameof(DeviceStateChanged));
+    }
+
+    private async Task ClearInspectionBusyAsync()
+    {
+        try
+        {
+            using var cleanup = CreateCleanupCancellation();
+            await _plc.SetInspectionBusyAsync(false, cleanup.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            LogWarningSafely($"Failed to clear inspection busy flag: {exception.Message}");
+        }
+    }
+
+    private async Task DisconnectProductionSafelyAsync()
+    {
+        try
+        {
+            using var cleanup = CreateCleanupCancellation();
+            await _communicationChannels
+                .DisconnectAsync(CommunicationChannelConnectionPolicies.Production, cleanup.Token)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            LogWarningSafely($"Failed to disconnect production channels: {exception.Message}");
+        }
+    }
+
+    private CancellationTokenSource CreateCleanupCancellation()
+    {
+        return new CancellationTokenSource(
+            TimeSpan.FromMilliseconds(_productionSettings.CleanupTimeoutMs));
+    }
+
+    private void RaiseSingleRunFailure(Exception exception)
+    {
+        LogErrorSafely(exception.Message);
+        RaiseAlarmSafely(
+            AlarmSeverity.Error,
+            $"Single inspection failed: {exception.Message}",
+            exception.ToString(),
+            "production:single-run");
+    }
+
+    private void RaiseContinuousFailure(Exception exception)
+    {
+        LogErrorSafely($"Continuous production failure: {exception.Message}");
+        RaiseAlarmSafely(
+            AlarmSeverity.Critical,
+            $"Continuous production stopped: {exception.Message}",
+            exception.ToString(),
+            "production:continuous-run");
+    }
+
+    private void ReportCleanupFailureSafely(Exception exception)
+    {
+        try
+        {
+            _log.Critical(LogSource, $"Production cleanup failed: {exception.Message}");
+        }
+        catch
+        {
+        }
+
+        RaiseAlarmSafely(
+            AlarmSeverity.Critical,
+            $"Production cleanup failed: {exception.Message}",
+            exception.ToString(),
+            "production:cleanup");
+    }
+
+    private void RaiseAlarmSafely(
+        AlarmSeverity severity,
+        string message,
+        string details,
+        string alarmId)
+    {
+        try
+        {
+            _alarms.Raise(severity, LogSource, message, details, alarmId);
+        }
+        catch
+        {
+        }
+    }
+
+    private void LogInfoSafely(string message)
+    {
+        try
+        {
+            _log.Info(LogSource, message);
+        }
+        catch
+        {
+        }
+    }
+
+    private void LogWarningSafely(string message)
+    {
+        try
+        {
+            _log.Warning(LogSource, message);
+        }
+        catch
+        {
+        }
+    }
+
+    private void LogErrorSafely(string message)
+    {
+        try
+        {
+            _log.Error(LogSource, message);
+        }
+        catch
+        {
+        }
+    }
+
+    private void PublishSafely<T>(
+        EventHandler<T>? handlers,
+        T value,
+        string eventName)
+    {
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (EventHandler<T> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(this, value);
+            }
+            catch (Exception exception)
+            {
+                LogWarningSafely(
+                    $"{eventName} event subscriber failure: {exception.Message}");
+            }
+        }
+    }
+
+    private static RunRejection MapStartRejection(RunRejection rejection)
+    {
+        return IsCoordinatorContinuous(rejection.Active.Intent)
+            ? rejection with { Reason = RunRejectionReason.AlreadyRunning }
+            : rejection;
+    }
+
+    private static bool IsCoordinatorContinuous(InspectionRunIntent intent)
+    {
+        return string.Equals(
+                   intent.Mode.Key,
+                   InspectionRunModes.Continuous.Key,
+                   StringComparison.Ordinal) &&
+               string.Equals(
+                   intent.EntryPoint,
+                   nameof(ProductionCoordinator),
+                   StringComparison.Ordinal);
+    }
+
+    private readonly record struct SnapshotUpdate(
+        ProductionSnapshot Snapshot,
+        long Revision);
+
+    private sealed class ActiveProductionOperation
+    {
+        private readonly object _cancellationRoot = new();
+        private readonly CancellationTokenSource _linkedCancellation;
+        private int _completionStarted;
+        private bool _cancellationRequested;
+        private bool _cancellationDisposed;
+
+        public ActiveProductionOperation(
+            InspectionRunIntent intent,
+            CancellationTokenSource linkedCancellation)
+        {
+            Intent = intent;
+            _linkedCancellation = linkedCancellation;
+            Token = linkedCancellation.Token;
+            ReservationRun = new ActiveInspectionRun(
+                Guid.NewGuid(),
+                intent,
+                DateTimeOffset.UtcNow);
+        }
+
+        public InspectionRunIntent Intent { get; }
+
+        public ActiveInspectionRun ReservationRun { get; }
+
+        public CancellationToken Token { get; }
+
+        public IInspectionSession? Session { get; private set; }
+
+        public ActiveInspectionRun ActiveRun => Session?.Run ?? ReservationRun;
+
+        public TaskCompletionSource CompletionSource { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Completion => CompletionSource.Task;
+
+        public bool StopTimedOut { get; set; }
+
+        public void AttachSession(IInspectionSession session)
+        {
+            if (Session is not null)
+            {
+                throw new InvalidOperationException(
+                    "An inspection session is already attached to this production operation.");
+            }
+
+            Session = session;
+        }
+
+        public bool TryBeginCompletion()
+        {
+            return Interlocked.CompareExchange(ref _completionStarted, 1, 0) == 0;
+        }
+
+        public void RequestCancellation()
+        {
+            lock (_cancellationRoot)
+            {
+                if (_cancellationRequested || _cancellationDisposed)
+                {
+                    return;
+                }
+
+                _cancellationRequested = true;
+                try
+                {
+                    _linkedCancellation.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+                catch (AggregateException)
+                {
+                }
+            }
+        }
+
+        public void DisposeCancellation()
+        {
+            lock (_cancellationRoot)
+            {
+                if (_cancellationDisposed)
+                {
+                    return;
+                }
+
+                _cancellationDisposed = true;
+                try
+                {
+                    _linkedCancellation.Dispose();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            }
+        }
     }
 }

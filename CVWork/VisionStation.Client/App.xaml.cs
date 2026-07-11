@@ -100,6 +100,7 @@ public partial class App : PrismApplication
             VisionPipelineFactory.CreateDefault(deviceConfigurationRepository, communicationChannels));
 
         containerRegistry.RegisterSingleton<IInspectionRunner, InspectionRunner>();
+        containerRegistry.RegisterSingleton<IInspectionExecution, InspectionExecution>();
         containerRegistry.RegisterSingleton<ProductionCoordinator>();
 
         containerRegistry.RegisterForNavigation<ProductionDashboardView>(NavigationKeys.ProductionDashboard);

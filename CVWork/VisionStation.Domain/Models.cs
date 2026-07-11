@@ -21,7 +21,9 @@ public enum ProductionState
     Stopped,
     Running,
     Paused,
-    Faulted
+    Faulted,
+    Starting,
+    Stopping
 }
 
 public enum RoiShapeKind

@@ -28,6 +28,11 @@ public sealed class InspectionExecution : IInspectionExecution
         _log = log;
     }
 
+    public InspectionExecution(IInspectionRunner runner, IAppLogService log)
+        : this(new LegacyInspectionRunnerExecutor(runner), log)
+    {
+    }
+
     public ActiveInspectionRun? Current
     {
         get
@@ -342,5 +347,22 @@ public sealed class InspectionExecution : IInspectionExecution
 
         public TaskCompletionSource DisposeCompletion { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private sealed class LegacyInspectionRunnerExecutor : IInspectionExecutor
+    {
+        private readonly IInspectionRunner _runner;
+
+        public LegacyInspectionRunnerExecutor(IInspectionRunner runner)
+        {
+            _runner = runner ?? throw new ArgumentNullException(nameof(runner));
+        }
+
+        public Task<InspectionRunResult> ExecuteAsync(
+            InspectionRequest request,
+            CancellationToken cancellationToken)
+        {
+            return _runner.RunAsync(request, cancellationToken);
+        }
     }
 }
