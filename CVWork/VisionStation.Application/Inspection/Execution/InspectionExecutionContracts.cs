@@ -78,6 +78,16 @@ public interface IInspectionSession : IAsyncDisposable
 /// <summary>
 /// Identifies an inspection execution mode by a stable key and a user-facing display name.
 /// </summary>
+/// <remarks>
+/// Valid modes must be created through <see cref="InspectionRunMode(string, string)" />.
+/// <c>default(InspectionRunMode)</c> is an invalid sentinel that
+/// <see cref="IInspectionExecution.TryBegin" /> rejects.
+/// <para>
+/// <see cref="Key" /> is the stable mode identity. Because <see cref="DisplayName" /> may be
+/// localized or changed, callers should compare <see cref="Key" /> values and must not treat the
+/// synthesized record equality as key-only equality.
+/// </para>
+/// </remarks>
 public readonly record struct InspectionRunMode
 {
     private static readonly Regex KeyPattern = new(
