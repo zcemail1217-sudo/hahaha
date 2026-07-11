@@ -259,6 +259,8 @@ public sealed record ProductionSettingsConfiguration
     public bool AutoStopOnAlarm { get; init; } = true;
 
     public int CleanupTimeoutMs { get; init; } = 2000;
+
+    public int StopWaitTimeoutMs { get; init; } = 10000;
 }
 
 public sealed record AppLoggingSettingsConfiguration
