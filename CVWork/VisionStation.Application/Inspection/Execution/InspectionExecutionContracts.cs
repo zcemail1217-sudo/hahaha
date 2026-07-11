@@ -16,12 +16,16 @@ public interface IInspectionExecution
 
     /// <summary>
     /// Occurs whenever <see cref="Current" /> changes after a run is acquired or released.
+    /// Each subscriber is isolated so an exception from one subscriber does not prevent the
+    /// remaining subscribers from being notified.
     /// </summary>
     event EventHandler<InspectionExecutionChangedEventArgs>? Changed;
 
     /// <summary>
-    /// Occurs after an admitted session completes an inspection and supplies the same result
-    /// returned by that session.
+    /// Occurs only after an admitted session successfully completes one inspection and supplies
+    /// the same result returned by that session. Cancellation or an execution exception does not
+    /// publish this event. Each subscriber is isolated so an exception from one subscriber does
+    /// not prevent the remaining subscribers from being notified.
     /// </summary>
     event EventHandler<InspectionRunResult>? RunCompleted;
 
@@ -30,6 +34,9 @@ public interface IInspectionExecution
     /// </summary>
     /// <param name="intent">The mode and entry point requesting execution.</param>
     /// <returns>An acquired session, or a rejection describing the active run.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="intent" /> specifies an invalid mode or entry point.
+    /// </exception>
     /// <remarks>
     /// This method returns immediately. It never waits for the current run and never queues the request.
     /// </remarks>
@@ -60,7 +67,8 @@ public interface IInspectionSession : IAsyncDisposable
     /// Thrown when another call to this method is already in progress for the session.
     /// </exception>
     /// <exception cref="ObjectDisposedException">
-    /// Thrown when the session has already been asynchronously disposed.
+    /// Thrown when asynchronous release has been requested for the session or the session has
+    /// already been released.
     /// </exception>
     Task<InspectionRunResult> ExecuteAsync(
         InspectionRequest request,
