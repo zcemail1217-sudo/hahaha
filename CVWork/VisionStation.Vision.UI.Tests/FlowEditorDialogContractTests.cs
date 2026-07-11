@@ -1,3 +1,6 @@
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using Prism.Commands;
 using VisionStation.Client.ViewModels;
 using VisionStation.Vision.UI.Services;
 using VisionStation.Vision.UI.ViewModels;
@@ -33,5 +36,30 @@ public sealed class FlowEditorDialogContractTests
         Assert.DoesNotContain(
             recipeConstructor.GetParameters(),
             parameter => parameter.ParameterType == typeof(VisionDebugViewModel));
+
+        Assert.Equal(
+            typeof(AsyncDelegateCommand),
+            typeof(RecipeManagementViewModel)
+                .GetProperty(nameof(RecipeManagementViewModel.OpenFlowEditorCommand))!
+                .PropertyType);
+        Assert.Equal(
+            typeof(AsyncDelegateCommand<object>),
+            typeof(VisionDebugViewModel)
+                .GetProperty(nameof(VisionDebugViewModel.OpenFlowEditorCommand))!
+                .PropertyType);
+
+        var uninitializedDebugViewModel =
+            (VisionDebugViewModel)RuntimeHelpers.GetUninitializedObject(
+                typeof(VisionDebugViewModel));
+        var createOptions = typeof(VisionDebugViewModel).GetMethod(
+            "CreateVisionFlowContextOptions",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var options = Assert.IsAssignableFrom<IReadOnlyList<FlowConnectionOptionItem>>(
+            createOptions.Invoke(
+                uninitializedDebugViewModel,
+                [new VisionFlowItem("flow", "Flow", string.Empty, DateTimeOffset.UtcNow)]));
+
+        Assert.IsType<AsyncDelegateCommand>(
+            Assert.Single(options, option => option.Header == "编辑流程").Command);
     }
 }

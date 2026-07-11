@@ -132,7 +132,8 @@ public sealed class VisionDebugViewModel : BindableBase
         EditToolCommand = new DelegateCommand<object>(async item => await EditToolAsync(item));
         SelectFlowNodeCommand = new DelegateCommand<object>(SelectFlowNode);
         MoveFlowNodeCommand = new DelegateCommand<FlowNodeMoveRequest>(MoveFlowNode);
-        OpenFlowEditorCommand = new AsyncDelegateCommand<object>(OpenFlowEditorAsync);
+        OpenFlowEditorCommand = new AsyncDelegateCommand<object>(OpenFlowEditorAsync)
+            .Catch(ReportFlowEditorFailureSafely);
         AutoLayoutFlowCommand = new DelegateCommand(AutoLayoutFlow);
         ConnectFlowPortsCommand = new DelegateCommand<CanvasFlowPortConnectionRequest>(ConnectFlowPorts, CanConnectFlowPorts);
         SelectFlowNodesCommand = new DelegateCommand<FlowNodeSelectionRequest>(ProcessFlowNodeSelection);
@@ -642,7 +643,7 @@ public sealed class VisionDebugViewModel : BindableBase
         }
         catch (Exception ex)
         {
-            _log.Error("VisionDebug", $"Initial recipe load failed: {ex.Message}");
+            LogErrorSafely($"Initial recipe load failed: {ex.Message}");
         }
     }
 
@@ -1160,7 +1161,8 @@ public sealed class VisionDebugViewModel : BindableBase
                 new DelegateCommand(async () => await RunVisionFlowAsync(flow), () => !IsDebugBusy)),
             new FlowConnectionOptionItem(
                 "编辑流程",
-                new AsyncDelegateCommand(async () => await OpenFlowEditorAsync(flow))),
+                new AsyncDelegateCommand(async () => await OpenFlowEditorAsync(flow))
+                    .Catch(ReportFlowEditorFailureSafely)),
             new FlowConnectionOptionItem(
                 "复制流程",
                 new DelegateCommand(() => RunSelectedFlowAction(flow, DuplicateFlow))),
@@ -1424,6 +1426,35 @@ public sealed class VisionDebugViewModel : BindableBase
         if (_currentRecipe is not null)
         {
             await _flowEditorDialog.ShowEditorAsync();
+        }
+    }
+
+    private void ReportFlowEditorFailureSafely(Exception exception)
+    {
+        var message = $"打开流程编辑器失败：{exception.Message}";
+        try
+        {
+            _uiDispatcher.Invoke(() =>
+            {
+                StatusText = message;
+                AddDebugLog("错误", message);
+            });
+        }
+        catch
+        {
+        }
+
+        LogErrorSafely(message);
+    }
+
+    private void LogErrorSafely(string message)
+    {
+        try
+        {
+            _log.Error("VisionDebug", message);
+        }
+        catch
+        {
         }
     }
 

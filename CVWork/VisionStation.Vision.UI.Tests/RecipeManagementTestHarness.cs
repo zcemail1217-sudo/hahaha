@@ -23,7 +23,9 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
         FakeInspectionExecution execution,
         RecordingInspectionSession session,
         RecordingCommunicationChannels channels,
-        RecordingRunControl runControl)
+        RecordingRunControl runControl,
+        ConfigurableFlowEditorDialogService flowEditor,
+        ConfigurableAppLogService log)
     {
         _root = root;
         _events = events;
@@ -33,6 +35,8 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
         Session = session;
         Channels = channels;
         RunControl = runControl;
+        FlowEditor = flowEditor;
+        Log = log;
     }
 
     public RecipeManagementViewModel ViewModel { get; }
@@ -41,6 +45,8 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
     public RecordingInspectionSession Session { get; }
     public RecordingCommunicationChannels Channels { get; }
     public RecordingRunControl RunControl { get; }
+    public ConfigurableFlowEditorDialogService FlowEditor { get; }
+    public ConfigurableAppLogService Log { get; }
 
     public static async Task<RecipeManagementTestHarness> CreateAsync()
     {
@@ -58,6 +64,8 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
         var execution = new FakeInspectionExecution(session);
         var channels = new RecordingCommunicationChannels();
         var runControl = new RecordingRunControl();
+        var flowEditor = new ConfigurableFlowEditorDialogService();
+        var log = new ConfigurableAppLogService();
         EventAggregator events;
         RecipeManagementViewModel viewModel;
         var previousContext = SynchronizationContext.Current;
@@ -69,8 +77,8 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
             viewModel = new RecipeManagementViewModel(
                 recipes,
                 paths,
-                new NullFlowEditorDialogService(),
-                new NullAppLogService(),
+                flowEditor,
+                log,
                 events,
                 new FakeDeviceConfigurationRepository(),
                 execution,
@@ -93,7 +101,9 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
             execution,
             session,
             channels,
-            runControl);
+            runControl,
+            flowEditor,
+            log);
     }
 
     public static ActiveInspectionRun Active(InspectionRunMode mode, string entryPoint) =>
@@ -248,6 +258,8 @@ internal static class RecipeRunResults
 
 internal sealed class RecordingRecipeRepository : IRecipeRepository
 {
+    private readonly object _savedSyncRoot = new();
+    private readonly List<Recipe> _savedRecipes = [];
     private Recipe _recipe;
     private int _getAsyncCount;
 
@@ -256,8 +268,20 @@ internal sealed class RecordingRecipeRepository : IRecipeRepository
     public int SaveCount { get; private set; }
     public int SetCurrentCount { get; private set; }
     public int GetAsyncCount => Volatile.Read(ref _getAsyncCount);
+    public IReadOnlyList<Recipe> SavedRecipes
+    {
+        get
+        {
+            lock (_savedSyncRoot)
+            {
+                return _savedRecipes.ToArray();
+            }
+        }
+    }
+
     public Func<Recipe, CancellationToken, Task> SaveHandler { get; set; } =
         static (_, _) => Task.CompletedTask;
+    public Func<string, Recipe?, CancellationToken, Task<Recipe?>>? GetAsyncHandler { get; set; }
 
     public Task<Recipe> GetCurrentAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(Volatile.Read(ref _recipe));
@@ -277,7 +301,10 @@ internal sealed class RecordingRecipeRepository : IRecipeRepository
     {
         Interlocked.Increment(ref _getAsyncCount);
         var current = Volatile.Read(ref _recipe);
-        return Task.FromResult<Recipe?>(current.Id == recipeId ? current : null);
+        var handler = GetAsyncHandler;
+        return handler is null
+            ? Task.FromResult<Recipe?>(current.Id == recipeId ? current : null)
+            : handler(recipeId, current, cancellationToken);
     }
 
     public void ReplaceCurrent(Recipe recipe) => Volatile.Write(ref _recipe, recipe);
@@ -289,6 +316,11 @@ internal sealed class RecordingRecipeRepository : IRecipeRepository
     {
         SaveCount++;
         await SaveHandler(recipe, cancellationToken);
+        lock (_savedSyncRoot)
+        {
+            _savedRecipes.Add(recipe);
+        }
+
         Volatile.Write(ref _recipe, recipe);
     }
 
@@ -300,16 +332,25 @@ internal sealed class RecordingRunControl : IInspectionRunControl
 {
     public bool IsPaused { get; private set; }
     public int BeginCount { get; private set; }
+    public int EndCount { get; private set; }
+    public Action EndRunHandler { get; set; } = static () => { };
+    public Action RequestResetHandler { get; set; } = static () => { };
     public void BeginRun()
     {
         BeginCount++;
         IsPaused = false;
     }
 
-    public void EndRun() => IsPaused = false;
+    public void EndRun()
+    {
+        EndCount++;
+        IsPaused = false;
+        EndRunHandler();
+    }
+
     public void Pause() => IsPaused = true;
     public void Resume() => IsPaused = false;
-    public void RequestReset() { }
+    public void RequestReset() => RequestResetHandler();
     public Task WaitIfPausedOrResetAsync(CancellationToken cancellationToken) =>
         Task.CompletedTask;
 }
@@ -328,12 +369,15 @@ internal sealed class ImmediateSynchronizationContext : SynchronizationContext
         callback(state);
 }
 
-internal sealed class NullFlowEditorDialogService : IFlowEditorDialogService
+internal sealed class ConfigurableFlowEditorDialogService : IFlowEditorDialogService
 {
+    public Func<string?, CancellationToken, Task> Handler { get; set; } =
+        static (_, _) => Task.CompletedTask;
+
     public Task ShowEditorAsync(
         string? recipeId = null,
         CancellationToken cancellationToken = default) =>
-        Task.CompletedTask;
+        Handler(recipeId, cancellationToken);
 }
 
 internal sealed class FakeDeviceConfigurationRepository : IDeviceConfigurationRepository
@@ -352,8 +396,11 @@ internal sealed class FakeDeviceConfigurationRepository : IDeviceConfigurationRe
     }
 }
 
-internal sealed class NullAppLogService : IAppLogService
+internal sealed class ConfigurableAppLogService : IAppLogService
 {
+    public bool ThrowOnWarning { get; set; }
+    public bool ThrowOnError { get; set; }
+
     public event EventHandler<AppLogEntry>? LogWritten
     {
         add { }
@@ -361,8 +408,21 @@ internal sealed class NullAppLogService : IAppLogService
     }
 
     public void Info(string source, string message) { }
-    public void Warning(string source, string message) { }
-    public void Error(string source, string message) { }
+    public void Warning(string source, string message)
+    {
+        if (ThrowOnWarning)
+        {
+            throw new InvalidOperationException("warning-log-failure");
+        }
+    }
+
+    public void Error(string source, string message)
+    {
+        if (ThrowOnError)
+        {
+            throw new InvalidOperationException("error-log-failure");
+        }
+    }
     public void Critical(string source, string message) { }
     public IReadOnlyList<AppLogEntry> Recent(int count) => [];
 }
@@ -377,6 +437,8 @@ internal sealed class RecordingCommunicationChannels : ICommunicationChannelRunt
 
     public int ConnectCount { get; private set; }
     public int DisconnectCount { get; private set; }
+    public Func<string, CancellationToken, Task> DisconnectHandler { get; set; } =
+        static (_, _) => Task.CompletedTask;
 
     public Task ConnectAsync(
         string connectionPolicy,
@@ -391,7 +453,7 @@ internal sealed class RecordingCommunicationChannels : ICommunicationChannelRunt
         CancellationToken cancellationToken = default)
     {
         DisconnectCount++;
-        return Task.CompletedTask;
+        return DisconnectHandler(connectionPolicy, cancellationToken);
     }
 
     public Task<CommunicationChannelRuntimeSnapshot> GetTcpSnapshotAsync(
