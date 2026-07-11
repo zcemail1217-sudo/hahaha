@@ -71,6 +71,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
     private CancellationTokenSource? _testRunLifetimeCancellation;
     private CancellationTokenSource? _testRunAttemptCancellation;
     private bool _inspectionExecutionSubscribed;
+    private string? _pendingRecipeRefreshId;
     private RecipeProcessStepItem? _activeRuntimeStep;
     private InspectionRunResult? _lastTestRun;
 
@@ -763,18 +764,44 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 
     private void OnExternalRecipeChanged(string recipeId)
     {
-        if (IsTestRunning ||
-            _loadedRecipe is null ||
+        if (_loadedRecipe is null ||
             string.IsNullOrWhiteSpace(recipeId) ||
             !string.Equals(_loadedRecipe.Id, recipeId, StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
+        if (IsTestRunning)
+        {
+            _pendingRecipeRefreshId = recipeId;
+            return;
+        }
+
         _ = RefreshRecipeVariablesAsync(recipeId);
     }
 
-    private async Task RefreshRecipeVariablesAsync(string recipeId)
+    private async Task ReplayDeferredRecipeRefreshAsync(string recipeId)
+    {
+        try
+        {
+            await RefreshRecipeVariablesAsync(recipeId, updateStatus: false);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                _log.Warning("Recipe", $"Deferred recipe refresh failed: {ex.Message}");
+            }
+            catch
+            {
+                // A failed logging sink must not fault this fire-and-forget replay.
+            }
+        }
+    }
+
+    private async Task RefreshRecipeVariablesAsync(
+        string recipeId,
+        bool updateStatus = true)
     {
         var recipe = await _recipes.GetAsync(recipeId);
         if (recipe is null)
@@ -797,7 +824,10 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 
             RaisePropertyChanged(nameof(RecipeVariableCount));
             RefreshVisionFlowResultPreviewItems();
-            StatusText = $"参数已同步：{RecipeVariables.Count} 个参数可用于配方步骤。";
+            if (updateStatus)
+            {
+                StatusText = $"参数已同步：{RecipeVariables.Count} 个参数可用于配方步骤。";
+            }
         }
         finally
         {
@@ -1109,7 +1139,13 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
             _testRunResetRequested = false;
             IsTestRunPaused = false;
             IsTestRunning = false;
+            var pendingRecipeRefreshId = _pendingRecipeRefreshId;
+            _pendingRecipeRefreshId = null;
             RaiseCommandStates();
+            if (!string.IsNullOrWhiteSpace(pendingRecipeRefreshId))
+            {
+                _ = ReplayDeferredRecipeRefreshAsync(pendingRecipeRefreshId);
+            }
         }
     }
 

@@ -1,5 +1,6 @@
 using VisionStation.Application;
 using VisionStation.Client.ViewModels;
+using VisionStation.Domain;
 using Xunit;
 
 namespace VisionStation.Vision.UI.Tests;
@@ -57,12 +58,63 @@ public sealed class RecipeManagementInspectionExecutionTests
         Assert.Equal(0, harness.Recipes.SaveCount);
         Assert.Equal(0, harness.Recipes.SetCurrentCount);
         Assert.Equal(0, harness.Channels.ConnectCount);
+        Assert.Equal(0, harness.Channels.DisconnectCount);
         Assert.Equal(0, harness.RunControl.BeginCount);
+        Assert.Equal(0, harness.Session.DisposeCount);
         Assert.Contains("连续生产", harness.ViewModel.StatusText);
         Assert.Equal(InspectionRunModes.RecipeTest, harness.Execution.LastIntent?.Mode);
         Assert.Equal(
             nameof(RecipeManagementViewModel),
             harness.Execution.LastIntent?.EntryPoint);
+    }
+
+    [Fact]
+    public async Task Recipe_changes_during_run_are_coalesced_and_replayed_after_release()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        var entered = RecipeManagementTestHarness.NewSignal();
+        harness.Session.Handler = async (_, token) =>
+        {
+            entered.TrySetResult(true);
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return RecipeRunResults.Ok();
+        };
+
+        var running = harness.ViewModel.TestRunRecipeCommand.Execute();
+        await entered.Task.WaitAsync(CommandTimeout);
+        var getAsyncBaseline = harness.Recipes.GetAsyncCount;
+        const string externalVariableKey = "ExternalDeferredVariable";
+        var externalRecipe = new Recipe
+        {
+            Id = "recipe-1",
+            Name = "Externally Updated Recipe",
+            ProductCode = "P-EXT",
+            Variables =
+            [
+                new RecipeVariableDefinition
+                {
+                    Key = externalVariableKey,
+                    Name = "External Deferred Variable",
+                    CurrentValue = "external"
+                }
+            ]
+        };
+
+        harness.PublishRecipeChanged(externalRecipe);
+        harness.PublishRecipeChanged(externalRecipe);
+
+        Assert.DoesNotContain(
+            harness.ViewModel.RecipeVariables,
+            variable => variable.Key == externalVariableKey);
+        Assert.Equal(getAsyncBaseline, harness.Recipes.GetAsyncCount);
+
+        harness.ViewModel.OnNavigatedFrom(null!);
+        await running.WaitAsync(CommandTimeout);
+        await RecipeManagementTestHarness.WaitUntilAsync(() =>
+            harness.ViewModel.RecipeVariables.Any(variable =>
+                variable.Key == externalVariableKey));
+
+        Assert.Equal(getAsyncBaseline + 1, harness.Recipes.GetAsyncCount);
     }
 
     [Fact]

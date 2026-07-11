@@ -2,6 +2,7 @@ using System.IO;
 using Prism.Events;
 using VisionStation.Application;
 using VisionStation.Application.Presentation;
+using VisionStation.Client.Events;
 using VisionStation.Client.ViewModels;
 using VisionStation.Domain;
 using VisionStation.Infrastructure;
@@ -12,9 +13,11 @@ namespace VisionStation.Vision.UI.Tests;
 internal sealed class RecipeManagementTestHarness : IAsyncDisposable
 {
     private readonly string _root;
+    private readonly IEventAggregator _events;
 
     private RecipeManagementTestHarness(
         string root,
+        IEventAggregator events,
         RecipeManagementViewModel viewModel,
         RecordingRecipeRepository recipes,
         FakeInspectionExecution execution,
@@ -23,6 +26,7 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
         RecordingRunControl runControl)
     {
         _root = root;
+        _events = events;
         ViewModel = viewModel;
         Recipes = recipes;
         Execution = execution;
@@ -54,22 +58,36 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
         var execution = new FakeInspectionExecution(session);
         var channels = new RecordingCommunicationChannels();
         var runControl = new RecordingRunControl();
-        var viewModel = new RecipeManagementViewModel(
-            recipes,
-            paths,
-            new NullFlowEditorDialogService(),
-            new NullAppLogService(),
-            new EventAggregator(),
-            new FakeDeviceConfigurationRepository(),
-            execution,
-            channels,
-            runControl,
-            new ImmediateUiDispatcher(),
-            new UnsavedChangesService());
+        EventAggregator events;
+        RecipeManagementViewModel viewModel;
+        var previousContext = SynchronizationContext.Current;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(
+                new ImmediateSynchronizationContext());
+            events = new EventAggregator();
+            viewModel = new RecipeManagementViewModel(
+                recipes,
+                paths,
+                new NullFlowEditorDialogService(),
+                new NullAppLogService(),
+                events,
+                new FakeDeviceConfigurationRepository(),
+                execution,
+                channels,
+                runControl,
+                new ImmediateUiDispatcher(),
+                new UnsavedChangesService());
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+        }
 
         await WaitUntilAsync(() => viewModel.SelectedRecipe is not null && !viewModel.IsBusy);
         return new RecipeManagementTestHarness(
             root,
+            events,
             viewModel,
             recipes,
             execution,
@@ -84,6 +102,12 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
     public static TaskCompletionSource<bool> NewSignal() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    public void PublishRecipeChanged(Recipe recipe)
+    {
+        Recipes.ReplaceCurrent(recipe);
+        _events.GetEvent<RecipeChangedEvent>().Publish(recipe.Id);
+    }
+
     public async ValueTask DisposeAsync()
     {
         ViewModel.OnNavigatedFrom(null!);
@@ -95,7 +119,7 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
         }
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
+    public static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         while (!condition())
@@ -225,19 +249,21 @@ internal static class RecipeRunResults
 internal sealed class RecordingRecipeRepository : IRecipeRepository
 {
     private Recipe _recipe;
+    private int _getAsyncCount;
 
     public RecordingRecipeRepository(Recipe recipe) => _recipe = recipe;
 
     public int SaveCount { get; private set; }
     public int SetCurrentCount { get; private set; }
+    public int GetAsyncCount => Volatile.Read(ref _getAsyncCount);
     public Func<Recipe, CancellationToken, Task> SaveHandler { get; set; } =
         static (_, _) => Task.CompletedTask;
 
     public Task<Recipe> GetCurrentAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(_recipe);
+        Task.FromResult(Volatile.Read(ref _recipe));
 
     public Task<string> GetCurrentRecipeIdAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(_recipe.Id);
+        Task.FromResult(Volatile.Read(ref _recipe).Id);
 
     public Task SetCurrentRecipeAsync(
         string recipeId,
@@ -247,17 +273,23 @@ internal sealed class RecordingRecipeRepository : IRecipeRepository
         return Task.CompletedTask;
     }
 
-    public Task<Recipe?> GetAsync(string recipeId, CancellationToken cancellationToken = default) =>
-        Task.FromResult<Recipe?>(_recipe.Id == recipeId ? _recipe : null);
+    public Task<Recipe?> GetAsync(string recipeId, CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref _getAsyncCount);
+        var current = Volatile.Read(ref _recipe);
+        return Task.FromResult<Recipe?>(current.Id == recipeId ? current : null);
+    }
+
+    public void ReplaceCurrent(Recipe recipe) => Volatile.Write(ref _recipe, recipe);
 
     public Task<IReadOnlyList<Recipe>> ListAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<Recipe>>([_recipe]);
+        Task.FromResult<IReadOnlyList<Recipe>>([Volatile.Read(ref _recipe)]);
 
     public async Task SaveAsync(Recipe recipe, CancellationToken cancellationToken = default)
     {
         SaveCount++;
         await SaveHandler(recipe, cancellationToken);
-        _recipe = recipe;
+        Volatile.Write(ref _recipe, recipe);
     }
 
     public Task DeleteAsync(string recipeId, CancellationToken cancellationToken = default) =>
@@ -285,6 +317,15 @@ internal sealed class RecordingRunControl : IInspectionRunControl
 internal sealed class ImmediateUiDispatcher : IUiDispatcher
 {
     public void Invoke(Action action) => action();
+}
+
+internal sealed class ImmediateSynchronizationContext : SynchronizationContext
+{
+    public override void Post(SendOrPostCallback callback, object? state) =>
+        callback(state);
+
+    public override void Send(SendOrPostCallback callback, object? state) =>
+        callback(state);
 }
 
 internal sealed class NullFlowEditorDialogService : IFlowEditorDialogService
