@@ -76,7 +76,10 @@ public sealed class JsonRecipeRepository : IRecipeRepository
             throw new InvalidOperationException($"Recipe '{recipeId}' was not found.");
         }
 
-        await File.WriteAllTextAsync(_paths.CurrentRecipePath, recipe.Id, cancellationToken);
+        await WriteTextAtomicallyAsync(
+            _paths.CurrentRecipePath,
+            recipe.Id,
+            cancellationToken);
     }
 
     public async Task<Recipe?> GetAsync(string recipeId, CancellationToken cancellationToken = default)
@@ -119,12 +122,32 @@ public sealed class JsonRecipeRepository : IRecipeRepository
     {
         var path = GetPath(recipe.Id);
         var normalized = recipe.WithNormalizedFlows() with { UpdatedAt = DateTimeOffset.Now };
-        await using var stream = File.Create(path);
-        await JsonSerializer.SerializeAsync(stream, normalized, JsonOptions, cancellationToken);
+        await WriteAtomicallyAsync(
+            path,
+            async (temporaryPath, token) =>
+            {
+                await using var stream = new FileStream(
+                    temporaryPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    bufferSize: 4096,
+                    FileOptions.Asynchronous);
+                await JsonSerializer.SerializeAsync(
+                    stream,
+                    normalized,
+                    JsonOptions,
+                    token);
+                await stream.FlushAsync(token);
+            },
+            cancellationToken);
 
         if (!File.Exists(_paths.CurrentRecipePath))
         {
-            await File.WriteAllTextAsync(_paths.CurrentRecipePath, normalized.Id, cancellationToken);
+            await WriteTextAtomicallyAsync(
+                _paths.CurrentRecipePath,
+                normalized.Id,
+                cancellationToken);
         }
     }
 
@@ -152,7 +175,10 @@ public sealed class JsonRecipeRepository : IRecipeRepository
         var fallbackRecipe = await GetFirstExistingRecipeAsync(cancellationToken);
         if (fallbackRecipe is not null)
         {
-            await File.WriteAllTextAsync(_paths.CurrentRecipePath, fallbackRecipe.Id, cancellationToken);
+            await WriteTextAtomicallyAsync(
+                _paths.CurrentRecipePath,
+                fallbackRecipe.Id,
+                cancellationToken);
         }
         else if (File.Exists(_paths.CurrentRecipePath))
         {
@@ -164,6 +190,43 @@ public sealed class JsonRecipeRepository : IRecipeRepository
     {
         var safeName = string.Join("_", recipeId.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
         return Path.Combine(_paths.RecipeDirectory, $"{safeName}.recipe.json");
+    }
+
+    private static Task WriteTextAtomicallyAsync(
+        string path,
+        string content,
+        CancellationToken cancellationToken) =>
+        WriteAtomicallyAsync(
+            path,
+            (temporaryPath, token) =>
+                File.WriteAllTextAsync(temporaryPath, content, token),
+            cancellationToken);
+
+    private static async Task WriteAtomicallyAsync(
+        string path,
+        Func<string, CancellationToken, Task> writeTemporaryFile,
+        CancellationToken cancellationToken)
+    {
+        var temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await writeTemporaryFile(temporaryPath, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(temporaryPath))
+                {
+                    File.Delete(temporaryPath);
+                }
+            }
+            catch
+            {
+            }
+        }
     }
 
     private async Task<Recipe?> GetFirstExistingRecipeAsync(CancellationToken cancellationToken)
