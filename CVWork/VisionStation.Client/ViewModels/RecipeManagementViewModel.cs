@@ -7,9 +7,11 @@ using System.Windows;
 using Prism.Commands;
 using Prism.Events;
 using Prism.Mvvm;
+using Prism.Navigation.Regions;
 using VisionStation.Application;
 using VisionStation.Application.Presentation;
 using VisionStation.Client.Events;
+using VisionStation.Client.Presentation;
 using VisionStation.Client.Services;
 using VisionStation.Domain;
 using VisionStation.Infrastructure;
@@ -18,19 +20,18 @@ using VisionStation.Vision.UI.ViewModels;
 
 namespace VisionStation.Client.ViewModels;
 
-public sealed class RecipeManagementViewModel : BindableBase
+public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 {
     private const int MaxTestRunLogCount = 300;
     private const string UnsavedChangesKey = "recipe-management";
 
     private readonly IRecipeRepository _recipes;
     private readonly RuntimePaths _paths;
-    private readonly VisionDebugViewModel _visionDebugViewModel;
     private readonly IFlowEditorDialogService _flowEditorDialog;
     private readonly IAppLogService _log;
     private readonly IEventAggregator _events;
     private readonly IDeviceConfigurationRepository _configurationRepository;
-    private readonly IInspectionRunner _inspectionRunner;
+    private readonly IInspectionExecution _inspectionExecution;
     private readonly ICommunicationChannelRuntime _communicationChannels;
     private readonly IInspectionRunControl _inspectionRunControl;
     private readonly IUiDispatcher _uiDispatcher;
@@ -67,7 +68,9 @@ public sealed class RecipeManagementViewModel : BindableBase
     private bool _isTestRunning;
     private bool _isTestRunPaused;
     private bool _testRunResetRequested;
-    private CancellationTokenSource? _testRunCancellation;
+    private CancellationTokenSource? _testRunLifetimeCancellation;
+    private CancellationTokenSource? _testRunAttemptCancellation;
+    private bool _inspectionExecutionSubscribed;
     private RecipeProcessStepItem? _activeRuntimeStep;
     private InspectionRunResult? _lastTestRun;
 
@@ -82,12 +85,11 @@ public sealed class RecipeManagementViewModel : BindableBase
     public RecipeManagementViewModel(
         IRecipeRepository recipes,
         RuntimePaths paths,
-        VisionDebugViewModel visionDebugViewModel,
         IFlowEditorDialogService flowEditorDialog,
         IAppLogService log,
         IEventAggregator events,
         IDeviceConfigurationRepository configurationRepository,
-        IInspectionRunner inspectionRunner,
+        IInspectionExecution inspectionExecution,
         ICommunicationChannelRuntime communicationChannels,
         IInspectionRunControl inspectionRunControl,
         IUiDispatcher uiDispatcher,
@@ -95,12 +97,11 @@ public sealed class RecipeManagementViewModel : BindableBase
     {
         _recipes = recipes;
         _paths = paths;
-        _visionDebugViewModel = visionDebugViewModel;
         _flowEditorDialog = flowEditorDialog;
         _log = log;
         _events = events;
         _configurationRepository = configurationRepository;
-        _inspectionRunner = inspectionRunner;
+        _inspectionExecution = inspectionExecution;
         _communicationChannels = communicationChannels;
         _inspectionRunControl = inspectionRunControl;
         _uiDispatcher = uiDispatcher;
@@ -123,7 +124,8 @@ public sealed class RecipeManagementViewModel : BindableBase
         ReloadCommand = new DelegateCommand(async () => await LoadAsync());
         SaveCommand = new DelegateCommand(async () => await SaveAsync(), CanSave);
         SetCurrentRecipeCommand = new DelegateCommand(async () => await SetCurrentRecipeAsync(), CanSetCurrentRecipe);
-        TestRunRecipeCommand = new DelegateCommand(async () => await TestRunRecipeAsync(), () => !IsBusy && (!IsTestRunning || IsTestRunPaused));
+        TestRunRecipeCommand = new AsyncDelegateCommand(TestRunRecipeAsync, CanTestRun)
+            .EnableParallelExecution();
         PauseTestRunCommand = new DelegateCommand(PauseTestRun, () => IsTestRunning && !IsTestRunPaused);
         ResetTestRunCommand = new DelegateCommand(ResetTestRun, () => !IsBusy);
         OpenFlowEditorCommand = new DelegateCommand(async () => await OpenFlowEditorAsync(), CanOpenFlowEditor);
@@ -155,6 +157,7 @@ public sealed class RecipeManagementViewModel : BindableBase
         _configurationRepository.ConfigurationSaved += OnConfigurationSaved;
         _log.LogWritten += OnAppLogWritten;
 
+        SubscribeInspectionExecution();
         _ = LoadAsync();
     }
 
@@ -205,7 +208,7 @@ public sealed class RecipeManagementViewModel : BindableBase
 
     public DelegateCommand SetCurrentRecipeCommand { get; }
 
-    public DelegateCommand TestRunRecipeCommand { get; }
+    public AsyncDelegateCommand TestRunRecipeCommand { get; }
 
     public DelegateCommand PauseTestRunCommand { get; }
 
@@ -760,7 +763,8 @@ public sealed class RecipeManagementViewModel : BindableBase
 
     private void OnExternalRecipeChanged(string recipeId)
     {
-        if (_loadedRecipe is null ||
+        if (IsTestRunning ||
+            _loadedRecipe is null ||
             string.IsNullOrWhiteSpace(recipeId) ||
             !string.Equals(_loadedRecipe.Id, recipeId, StringComparison.OrdinalIgnoreCase))
         {
@@ -963,22 +967,34 @@ public sealed class RecipeManagementViewModel : BindableBase
             return;
         }
 
-        if (IsTestRunning)
+        if (IsTestRunning || _loadedRecipe is null)
         {
+            if (_loadedRecipe is null)
+            {
+                StatusText = "请先选择一个配方，再试运行流程";
+                AddTestRunLog("WARN", "Recipe", StatusText);
+                _log.Warning("Recipe", "Test run ignored because no recipe is selected.");
+            }
+
             return;
         }
 
-        if (_loadedRecipe is null)
+        var admission = _inspectionExecution.TryBegin(new InspectionRunIntent(
+            InspectionRunModes.RecipeTest,
+            nameof(RecipeManagementViewModel)));
+        if (admission is RunAdmission.Rejected rejected)
         {
-            StatusText = "请先选择一个配方，再试运行流程";
-            AddTestRunLog("WARN", "Recipe", StatusText);
-            _log.Warning("Recipe", "Test run ignored because no recipe is selected.");
+            StatusText = ProductionRunUiState.FormatRejection(rejected.Rejection);
+            TestRunStateText = StatusText;
+            RaiseCommandStates();
             return;
         }
 
+        await using var session = ((RunAdmission.Acquired)admission).Session;
+        using var lifetime = new CancellationTokenSource();
+        _testRunLifetimeCancellation = lifetime;
         var recipeName = RecipeName;
-        StatusText = "试运行已启动，详情见试运行日志";
-        TestRunStateText = StatusText;
+        var runControlStarted = false;
         IsTestRunning = true;
         IsTestRunPaused = false;
         RaiseCommandStates();
@@ -989,55 +1005,63 @@ public sealed class RecipeManagementViewModel : BindableBase
             {
                 restartRequested = false;
                 _testRunResetRequested = false;
-                _testRunCancellation?.Dispose();
-                _testRunCancellation = new CancellationTokenSource();
-                var runCancellationToken = _testRunCancellation.Token;
+                using var attempt = CancellationTokenSource.CreateLinkedTokenSource(
+                    lifetime.Token);
+                _testRunAttemptCancellation = attempt;
                 _inspectionRunControl.BeginRun();
-                _log.Info("Recipe", $"试运行：正在保存配方 {recipeName} 并启动流程");
-                await Task.Yield();
-                var recipe = await PersistSelectedRecipeAsync(setCurrentRecipe: true, refreshList: false);
-                if (recipe is null)
-                {
-                    StatusText = "试运行取消：当前配方保存失败";
-                    _log.Warning("Recipe", StatusText);
-                    return;
-                }
-
-                recipeName = recipe.Name;
-                ResetProcessStepRuntimeStates(prepareForRun: true);
-                StatusText = $"正在试运行 {recipe.Name}";
-                TestRunStateText = StatusText;
-                _log.Info("Recipe", $"Test run started for recipe {recipe.Name}");
+                runControlStarted = true;
                 try
                 {
-                    await _communicationChannels.ConnectAsync(CommunicationChannelConnectionPolicies.Production);
-                    var run = await _inspectionRunner.RunAsync(new InspectionRequest
+                    _log.Info("Recipe", $"试运行：正在保存配方 {recipeName} 并启动流程");
+                    var recipe = await PersistSelectedRecipeAsync(
+                        setCurrentRecipe: true,
+                        refreshList: false,
+                        attempt.Token);
+                    if (recipe is null)
+                    {
+                        StatusText = "试运行取消：当前配方保存失败";
+                        _log.Warning("Recipe", StatusText);
+                        return;
+                    }
+
+                    recipeName = recipe.Name;
+                    ResetProcessStepRuntimeStates(prepareForRun: true);
+                    StatusText = $"正在试运行 {recipe.Name}";
+                    TestRunStateText = StatusText;
+                    _log.Info("Recipe", $"Test run started for recipe {recipe.Name}");
+                    await _communicationChannels.ConnectAsync(
+                        CommunicationChannelConnectionPolicies.Production,
+                        attempt.Token);
+                    var run = await session.ExecuteAsync(new InspectionRequest
                     {
                         RecipeId = recipe.Id,
                         BatchId = DateTimeOffset.Now.ToString("yyyyMMdd"),
                         OperatorName = Environment.UserName,
                         TriggeredByPlc = false,
                         ProcessOnly = true
-                    }, runCancellationToken);
+                    }, attempt.Token);
                     StatusText = $"试运行完成：{run.Result.Outcome}，耗时 {run.Result.CycleTime.TotalMilliseconds:0} ms";
                     TestRunStateText = StatusText;
                     AddTestRunResultSnapshot(run);
                     _log.Info("Recipe", $"Test run completed for recipe {recipe.Name}: {run.Result.Outcome}");
                 }
-                catch (InspectionRunResetException)
+                catch (InspectionRunResetException) when (
+                    !lifetime.IsCancellationRequested)
                 {
                     restartRequested = true;
-                    IsTestRunPaused = false;
-                    ResetRecipeVariablesToDefaults();
-                    ResetProcessStepRuntimeStates(prepareForRun: true);
-                    StatusText = "流程已复位，正在从第一步重新开始";
-                    TestRunStateText = StatusText;
-                    AddTestRunLog("INFO", "Recipe", StatusText);
-                    _log.Info("Recipe", StatusText);
                 }
-                catch (OperationCanceledException) when (_testRunResetRequested)
+                catch (OperationCanceledException) when (
+                    _testRunResetRequested && !lifetime.IsCancellationRequested)
                 {
                     restartRequested = true;
+                }
+                finally
+                {
+                    _testRunAttemptCancellation = null;
+                }
+
+                if (restartRequested)
+                {
                     IsTestRunPaused = false;
                     ResetRecipeVariablesToDefaults();
                     ResetProcessStepRuntimeStates(prepareForRun: true);
@@ -1049,6 +1073,11 @@ public sealed class RecipeManagementViewModel : BindableBase
             }
             while (restartRequested);
         }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+        {
+            StatusText = "配方试运行已取消";
+            TestRunStateText = StatusText;
+        }
         catch (Exception ex)
         {
             StatusText = $"试运行失败：{ex.Message}";
@@ -1058,9 +1087,25 @@ public sealed class RecipeManagementViewModel : BindableBase
         }
         finally
         {
-            _inspectionRunControl.EndRun();
-            _testRunCancellation?.Dispose();
-            _testRunCancellation = null;
+            if (runControlStarted)
+            {
+                _inspectionRunControl.EndRun();
+            }
+
+            try
+            {
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                await _communicationChannels.DisconnectAsync(
+                    CommunicationChannelConnectionPolicies.Production,
+                    cleanup.Token);
+            }
+            catch (Exception ex)
+            {
+                _log.Warning("Recipe", $"试运行通信清理失败：{ex.Message}");
+            }
+
+            _testRunAttemptCancellation = null;
+            _testRunLifetimeCancellation = null;
             _testRunResetRequested = false;
             IsTestRunPaused = false;
             IsTestRunning = false;
@@ -1076,8 +1121,7 @@ public sealed class RecipeManagementViewModel : BindableBase
             return;
         }
 
-        await _visionDebugViewModel.LoadRecipeAsync(recipe.Id);
-        _flowEditorDialog.ShowEditor(_visionDebugViewModel);
+        await _flowEditorDialog.ShowEditorAsync(recipe.Id);
         await LoadAsync(recipe.Id);
         StatusText = $"已打开 {recipe.Name} 的运行流程编辑器";
     }
@@ -1180,7 +1224,10 @@ public sealed class RecipeManagementViewModel : BindableBase
         StatusText = $"已删除配方 {target.Name}，当前选中 {fallbackRecipe.Name}";
     }
 
-    private async Task<Recipe?> PersistSelectedRecipeAsync(bool setCurrentRecipe, bool refreshList)
+    private async Task<Recipe?> PersistSelectedRecipeAsync(
+        bool setCurrentRecipe,
+        bool refreshList,
+        CancellationToken cancellationToken = default)
     {
         if (_loadedRecipe is null)
         {
@@ -1188,11 +1235,11 @@ public sealed class RecipeManagementViewModel : BindableBase
         }
 
         var recipe = BuildRecipe();
-        await _recipes.SaveAsync(recipe);
+        await _recipes.SaveAsync(recipe, cancellationToken);
         _events.GetEvent<RecipeChangedEvent>().Publish(recipe.Id);
         if (setCurrentRecipe)
         {
-            await _recipes.SetCurrentRecipeAsync(recipe.Id);
+            await _recipes.SetCurrentRecipeAsync(recipe.Id, cancellationToken);
         }
 
         _loadedRecipe = recipe.WithNormalizedFlows();
@@ -1204,7 +1251,9 @@ public sealed class RecipeManagementViewModel : BindableBase
         }
         else
         {
-            var currentRecipeId = setCurrentRecipe ? recipe.Id : await _recipes.GetCurrentRecipeIdAsync();
+            var currentRecipeId = setCurrentRecipe
+                ? recipe.Id
+                : await _recipes.GetCurrentRecipeIdAsync(cancellationToken);
             ApplyRecipe(_loadedRecipe, currentRecipeId);
         }
 
@@ -1824,23 +1873,18 @@ public sealed class RecipeManagementViewModel : BindableBase
 
     private void ResetTestRun()
     {
-        ResetRecipeVariablesToDefaults();
-        ResetProcessStepRuntimeStates(prepareForRun: IsTestRunning);
-        SelectedProcessStep = ProcessSteps.FirstOrDefault();
-        IsTestRunPaused = false;
-
         if (IsTestRunning)
         {
-            StatusText = "已请求复位：流程将从第一步重新开始";
-            TestRunStateText = StatusText;
-            AddTestRunLog("INFO", "Recipe", StatusText);
-            _log.Info("Recipe", StatusText);
             _testRunResetRequested = true;
             _inspectionRunControl.RequestReset();
-            _testRunCancellation?.Cancel();
+            _testRunAttemptCancellation?.Cancel();
             return;
         }
 
+        ResetRecipeVariablesToDefaults();
+        ResetProcessStepRuntimeStates(prepareForRun: false);
+        SelectedProcessStep = ProcessSteps.FirstOrDefault();
+        IsTestRunPaused = false;
         StatusText = "流程已复位，变量已初始化";
         TestRunStateText = StatusText;
         AddTestRunLog("INFO", "Recipe", StatusText);
@@ -2085,6 +2129,54 @@ public sealed class RecipeManagementViewModel : BindableBase
         RemovePlcSignalCommand.RaiseCanExecuteChanged();
         AddSignalMappingCommand.RaiseCanExecuteChanged();
         RemoveSignalMappingCommand.RaiseCanExecuteChanged();
+    }
+
+    private bool CanTestRun() =>
+        !IsBusy &&
+        (IsTestRunPaused ||
+         (!IsTestRunning && _inspectionExecution.Current is null));
+
+    private void SubscribeInspectionExecution()
+    {
+        if (_inspectionExecutionSubscribed)
+        {
+            return;
+        }
+
+        _inspectionExecution.Changed += OnInspectionExecutionChanged;
+        _inspectionExecutionSubscribed = true;
+        RaiseCommandStates();
+    }
+
+    private void UnsubscribeInspectionExecution()
+    {
+        if (!_inspectionExecutionSubscribed)
+        {
+            return;
+        }
+
+        _inspectionExecution.Changed -= OnInspectionExecutionChanged;
+        _inspectionExecutionSubscribed = false;
+    }
+
+    private void OnInspectionExecutionChanged(
+        object? sender,
+        InspectionExecutionChangedEventArgs args)
+    {
+        _uiDispatcher.Invoke(RaiseCommandStates);
+    }
+
+    public void OnNavigatedTo(NavigationContext navigationContext)
+    {
+        SubscribeInspectionExecution();
+    }
+
+    public bool IsNavigationTarget(NavigationContext navigationContext) => true;
+
+    public void OnNavigatedFrom(NavigationContext navigationContext)
+    {
+        _testRunLifetimeCancellation?.Cancel();
+        UnsubscribeInspectionExecution();
     }
 
     private static void ReplaceItems<T>(ObservableCollection<T> target, IEnumerable<T> items)

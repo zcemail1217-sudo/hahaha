@@ -6,8 +6,27 @@ namespace VisionStation.Vision.UI.Services;
 
 public sealed class WpfFlowEditorDialogService : IFlowEditorDialogService
 {
-    public void ShowEditor(VisionDebugViewModel viewModel)
+    private readonly Lazy<VisionDebugViewModel> _viewModel;
+
+    public WpfFlowEditorDialogService(Lazy<VisionDebugViewModel> viewModel)
     {
+        _viewModel = viewModel;
+    }
+
+    public async Task ShowEditorAsync(
+        string? recipeId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var viewModel = _viewModel.Value;
+        if (string.IsNullOrWhiteSpace(recipeId))
+        {
+            await viewModel.EnsureInitializedAsync(cancellationToken);
+        }
+        else
+        {
+            await viewModel.LoadRecipeAsync(recipeId, cancellationToken);
+        }
+
         var existing = System.Windows.Application.Current.Windows
             .OfType<FlowEditorWindow>()
             .FirstOrDefault();

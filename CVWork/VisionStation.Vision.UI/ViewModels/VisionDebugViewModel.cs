@@ -46,6 +46,8 @@ public sealed class VisionDebugViewModel : BindableBase
     private readonly IUiDispatcher _uiDispatcher;
     private readonly IRegionManager _regionManager;
     private readonly IUnsavedChangesService _unsavedChanges;
+    private readonly SemaphoreSlim _recipeLoadGate = new(1, 1);
+    private readonly Task _initialization;
     private Recipe? _currentRecipe;
     private ImageFrame? _currentFrame;
     private ImageFrame? _displayedFlowFrame;
@@ -130,7 +132,7 @@ public sealed class VisionDebugViewModel : BindableBase
         EditToolCommand = new DelegateCommand<object>(async item => await EditToolAsync(item));
         SelectFlowNodeCommand = new DelegateCommand<object>(SelectFlowNode);
         MoveFlowNodeCommand = new DelegateCommand<FlowNodeMoveRequest>(MoveFlowNode);
-        OpenFlowEditorCommand = new DelegateCommand<object>(OpenFlowEditor);
+        OpenFlowEditorCommand = new AsyncDelegateCommand<object>(OpenFlowEditorAsync);
         AutoLayoutFlowCommand = new DelegateCommand(AutoLayoutFlow);
         ConnectFlowPortsCommand = new DelegateCommand<CanvasFlowPortConnectionRequest>(ConnectFlowPorts, CanConnectFlowPorts);
         SelectFlowNodesCommand = new DelegateCommand<FlowNodeSelectionRequest>(ProcessFlowNodeSelection);
@@ -156,7 +158,7 @@ public sealed class VisionDebugViewModel : BindableBase
             .ObservesProperty(() => SelectedVisionFlow);
 
         RefreshVisibleToolboxCategories();
-        _ = LoadRecipeAsync();
+        _initialization = InitializeRecipeAsync();
     }
 
     public ObservableCollection<VisionFlowItem> VisionFlows { get; } = new();
@@ -217,7 +219,7 @@ public sealed class VisionDebugViewModel : BindableBase
 
     public DelegateCommand<FlowNodeMoveRequest> MoveFlowNodeCommand { get; }
 
-    public DelegateCommand<object> OpenFlowEditorCommand { get; }
+    public AsyncDelegateCommand<object> OpenFlowEditorCommand { get; }
 
     public DelegateCommand OpenCalibrationCommand { get; }
 
@@ -592,34 +594,69 @@ public sealed class VisionDebugViewModel : BindableBase
         }
     }
 
-    public async Task LoadRecipeAsync(string? recipeId = null)
+    private async Task LoadRecipeCoreAsync(
+        string? recipeId,
+        CancellationToken cancellationToken)
     {
-        var recipe = string.IsNullOrWhiteSpace(recipeId)
-            ? await _recipes.GetCurrentAsync()
-            : await _recipes.GetAsync(recipeId) ?? await _recipes.GetCurrentAsync();
-        recipe = recipe.WithNormalizedFlows();
-        _currentRecipe = recipe;
-        _flowImageStates.Clear();
-        var activeFlow = recipe.GetActiveFlow();
-
-        _uiDispatcher.Invoke(() =>
+        await _recipeLoadGate.WaitAsync(cancellationToken);
+        try
         {
-            RecipeName = recipe.Name;
-            RefreshVisionFlowList(recipe, activeFlow.Id);
-            LoadFlowDefinition(activeFlow);
-            StatusText = $"Loaded flow {activeFlow.Name} / {_rois.Count} ROI / {Tools.Count} tools";
-            ClearDebugResults();
-            CurrentFrame = null;
-            _lastAcquiredFrame = null;
-            FlowResultImages.Clear();
-            SelectedFlowResultImage = null;
-            DisplayedFlowFrame = null;
-            DisplayedFlowOverlays.Clear();
-            DebugMessage = "No image loaded";
-            HasUnsavedChanges = false;
-            AddDebugLog("提示", $"配方加载完成：{recipe.Name} / {activeFlow.Name}");
-        });
+            var recipe = string.IsNullOrWhiteSpace(recipeId)
+                ? await _recipes.GetCurrentAsync(cancellationToken)
+                : await _recipes.GetAsync(recipeId, cancellationToken)
+                    ?? await _recipes.GetCurrentAsync(cancellationToken);
+            recipe = recipe.WithNormalizedFlows();
+            _currentRecipe = recipe;
+            _flowImageStates.Clear();
+            var activeFlow = recipe.GetActiveFlow();
 
+            _uiDispatcher.Invoke(() =>
+            {
+                RecipeName = recipe.Name;
+                RefreshVisionFlowList(recipe, activeFlow.Id);
+                LoadFlowDefinition(activeFlow);
+                StatusText = $"Loaded flow {activeFlow.Name} / {_rois.Count} ROI / {Tools.Count} tools";
+                ClearDebugResults();
+                CurrentFrame = null;
+                _lastAcquiredFrame = null;
+                FlowResultImages.Clear();
+                SelectedFlowResultImage = null;
+                DisplayedFlowFrame = null;
+                DisplayedFlowOverlays.Clear();
+                DebugMessage = "No image loaded";
+                HasUnsavedChanges = false;
+                AddDebugLog("提示", $"配方加载完成：{recipe.Name} / {activeFlow.Name}");
+            });
+        }
+        finally
+        {
+            _recipeLoadGate.Release();
+        }
+    }
+
+    private async Task InitializeRecipeAsync()
+    {
+        try
+        {
+            await LoadRecipeCoreAsync(null, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _log.Error("VisionDebug", $"Initial recipe load failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>等待首次配方加载完成，不重新投影当前编辑状态。</summary>
+    public Task EnsureInitializedAsync(
+        CancellationToken cancellationToken = default) =>
+        _initialization.WaitAsync(cancellationToken);
+
+    public async Task LoadRecipeAsync(
+        string? recipeId = null,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        await LoadRecipeCoreAsync(recipeId, cancellationToken);
     }
 
     private async Task<ImageFrame?> RefreshImageAsync()
@@ -1123,7 +1160,7 @@ public sealed class VisionDebugViewModel : BindableBase
                 new DelegateCommand(async () => await RunVisionFlowAsync(flow), () => !IsDebugBusy)),
             new FlowConnectionOptionItem(
                 "编辑流程",
-                new DelegateCommand(() => OpenFlowEditor(flow))),
+                new AsyncDelegateCommand(async () => await OpenFlowEditorAsync(flow))),
             new FlowConnectionOptionItem(
                 "复制流程",
                 new DelegateCommand(() => RunSelectedFlowAction(flow, DuplicateFlow))),
@@ -1376,7 +1413,7 @@ public sealed class VisionDebugViewModel : BindableBase
         RefreshFlowTree();
     }
 
-    private void OpenFlowEditor(object? item)
+    private async Task OpenFlowEditorAsync(object? item)
     {
         if (item is VisionFlowItem flow &&
             !string.Equals(flow.Id, _activeFlowId, StringComparison.OrdinalIgnoreCase))
@@ -1384,7 +1421,10 @@ public sealed class VisionDebugViewModel : BindableBase
             SelectedVisionFlow = flow;
         }
 
-        _flowEditorDialog.ShowEditor(this);
+        if (_currentRecipe is not null)
+        {
+            await _flowEditorDialog.ShowEditorAsync();
+        }
     }
 
     private void OpenCalibration()
