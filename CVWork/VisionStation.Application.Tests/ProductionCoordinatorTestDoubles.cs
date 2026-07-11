@@ -564,6 +564,15 @@ internal sealed class FakeCommunicationChannels : ICommunicationChannelRuntime
 
     public int DisconnectCount => Volatile.Read(ref _disconnectCount);
 
+    public TaskCompletionSource ConnectEntered { get; } = CoordinatorHarness.NewSignal();
+
+    public Func<CancellationToken, Task> ConnectHandler { get; set; } =
+        static cancellationToken =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        };
+
     public Func<CancellationToken, Task> DisconnectHandler { get; set; } =
         static cancellationToken =>
         {
@@ -571,11 +580,14 @@ internal sealed class FakeCommunicationChannels : ICommunicationChannelRuntime
             return Task.CompletedTask;
         };
 
-    public Task ConnectAsync(string connectionPolicy, CancellationToken cancellationToken = default)
+    public async Task ConnectAsync(
+        string connectionPolicy,
+        CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Interlocked.Increment(ref _connectCount);
-        return Task.CompletedTask;
+        ConnectEntered.TrySetResult();
+        await ConnectHandler(cancellationToken);
     }
 
     public Task DisconnectAsync(string connectionPolicy, CancellationToken cancellationToken = default)

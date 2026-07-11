@@ -570,4 +570,381 @@ public sealed class ProductionCoordinatorTests
             item => item.Id == "production:cleanup" &&
                     item.Severity == AlarmSeverity.Critical);
     }
+
+    [Fact]
+    public async Task Stop_during_initialization_cancels_registered_operation()
+    {
+        var harness = CoordinatorHarness.Create();
+        harness.Camera.ConnectHandler = cancellationToken =>
+            Task.Delay(System.Threading.Timeout.InfiniteTimeSpan, cancellationToken);
+        using var recorder = new DistinctStateRecorder(harness.Coordinator);
+        var startTask = harness.Coordinator.StartAsync();
+        await harness.Camera.ConnectEntered.Task.WaitAsync(Watchdog);
+
+        var stop = await harness.Coordinator.StopAsync().WaitAsync(Watchdog);
+        var start = await startTask.WaitAsync(Watchdog);
+
+        Assert.Equal(ProductionCommandDisposition.Completed, stop.Disposition);
+        Assert.Equal(ProductionCommandDisposition.Canceled, start.Disposition);
+        Assert.Equal(
+            [ProductionState.Starting, ProductionState.Stopping, ProductionState.Stopped],
+            recorder.States);
+        Assert.Equal(1, harness.CommunicationChannels.DisconnectCount);
+        Assert.Null(harness.Execution.Current);
+    }
+
+    [Fact]
+    public async Task Stop_during_last_initialization_return_never_transitions_back_to_running()
+    {
+        var harness = CoordinatorHarness.Create();
+        var allowConnectReturn = CoordinatorHarness.NewSignal();
+        harness.CommunicationChannels.ConnectHandler = _ => allowConnectReturn.Task;
+        using var recorder = new DistinctStateRecorder(harness.Coordinator);
+        var startTask = harness.Coordinator.StartAsync();
+        await harness.CommunicationChannels.ConnectEntered.Task.WaitAsync(Watchdog);
+        var stopTask = harness.Coordinator.StopAsync();
+
+        try
+        {
+            allowConnectReturn.TrySetResult();
+            var stop = await stopTask.WaitAsync(Watchdog);
+            var start = await startTask.WaitAsync(Watchdog);
+
+            Assert.Equal(ProductionCommandDisposition.Completed, stop.Disposition);
+            Assert.Equal(ProductionCommandDisposition.Canceled, start.Disposition);
+            Assert.Equal(
+                [ProductionState.Starting, ProductionState.Stopping, ProductionState.Stopped],
+                recorder.States);
+            Assert.DoesNotContain(ProductionState.Running, recorder.States);
+        }
+        finally
+        {
+            allowConnectReturn.TrySetResult();
+        }
+    }
+
+    [Fact]
+    public async Task Reentrant_stop_publishes_snapshots_in_revision_order()
+    {
+        var harness = CoordinatorHarness.Create();
+        Task<ProductionCommandResult>? stopTask = null;
+        var stopped = 0;
+        EventHandler<ProductionSnapshot> stopOnStarting = (_, snapshot) =>
+        {
+            if (snapshot.State == ProductionState.Starting &&
+                Interlocked.Exchange(ref stopped, 1) == 0)
+            {
+                stopTask = harness.Coordinator.StopAsync();
+            }
+        };
+        harness.Coordinator.SnapshotChanged += stopOnStarting;
+        using var recorder = new DistinctStateRecorder(harness.Coordinator);
+
+        ProductionCommandResult start;
+        try
+        {
+            start = await harness.Coordinator.StartAsync().WaitAsync(Watchdog);
+        }
+        finally
+        {
+            harness.Coordinator.SnapshotChanged -= stopOnStarting;
+        }
+
+        Assert.NotNull(stopTask);
+        var stop = await stopTask.WaitAsync(Watchdog);
+
+        Assert.Equal(ProductionCommandDisposition.Canceled, start.Disposition);
+        Assert.Equal(ProductionCommandDisposition.Completed, stop.Disposition);
+        Assert.Equal(
+            [ProductionState.Starting, ProductionState.Stopping, ProductionState.Stopped],
+            recorder.States);
+    }
+
+    [Fact]
+    public async Task Concurrent_stop_calls_wait_same_completion_and_clean_once()
+    {
+        var harness = CoordinatorHarness.Create();
+        var executeEntered = CoordinatorHarness.NewSignal();
+        var cancellationObserved = CoordinatorHarness.NewSignal();
+        var allowExecutorExit = CoordinatorHarness.NewSignal();
+        harness.Executor.Handler = async (_, cancellationToken) =>
+        {
+            using var registration = cancellationToken.Register(
+                () => cancellationObserved.TrySetResult());
+            executeEntered.TrySetResult();
+            await allowExecutorExit.Task;
+            throw new OperationCanceledException(cancellationToken);
+        };
+        var start = await harness.Coordinator.StartAsync().WaitAsync(Watchdog);
+        await executeEntered.Task.WaitAsync(Watchdog);
+
+        var stops = Enumerable.Range(0, 8)
+            .Select(_ => harness.Coordinator.StopAsync())
+            .ToArray();
+        await cancellationObserved.Task.WaitAsync(Watchdog);
+        allowExecutorExit.TrySetResult();
+        var results = await Task.WhenAll(stops).WaitAsync(Watchdog);
+
+        Assert.Equal(ProductionCommandDisposition.Completed, start.Disposition);
+        Assert.All(
+            results,
+            result => Assert.Equal(ProductionCommandDisposition.Completed, result.Disposition));
+        Assert.Equal(1, harness.CommunicationChannels.DisconnectCount);
+        Assert.Equal([true, false], harness.Plc.BusyWrites.ToArray());
+        Assert.Null(harness.Execution.Current);
+        Assert.Null(harness.Coordinator.Snapshot.ActiveSessionId);
+    }
+
+    [Fact]
+    public async Task Stop_timeout_faults_and_holds_session_until_late_cleanup()
+    {
+        var harness = CoordinatorHarness.Create(stopWaitTimeoutMs: 200);
+        var executeEntered = CoordinatorHarness.NewSignal();
+        var allowExecutorExit = CoordinatorHarness.NewSignal();
+        harness.Executor.Handler = async (_, cancellationToken) =>
+        {
+            executeEntered.TrySetResult();
+            await allowExecutorExit.Task;
+            throw new OperationCanceledException(cancellationToken);
+        };
+        var start = await harness.Coordinator.StartAsync().WaitAsync(Watchdog);
+        await executeEntered.Task.WaitAsync(Watchdog);
+        var session = harness.Execution.Current;
+        Assert.NotNull(session);
+        Task<ProductionCommandResult>? firstStopTask = null;
+        Task<ProductionCommandResult>? repeatedStopTask = null;
+        Task<ProductionCommandResult>? finalStopTask = null;
+
+        try
+        {
+            firstStopTask = harness.Coordinator.StopAsync();
+            await AssertInternalStopTimeoutAsync(firstStopTask);
+
+            Assert.Equal(ProductionCommandDisposition.Completed, start.Disposition);
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Equal(session.SessionId, harness.Coordinator.Snapshot.ActiveSessionId);
+            Assert.Same(session, harness.Execution.Current);
+            var conflict = Assert.IsType<RunAdmission.Rejected>(
+                harness.Execution.TryBegin(new InspectionRunIntent(
+                    InspectionRunModes.RecipeTest,
+                    "RecipeManagementViewModel")));
+            Assert.Equal(RunRejectionReason.Busy, conflict.Rejection.Reason);
+
+            repeatedStopTask = harness.Coordinator.StopAsync();
+            await AssertInternalStopTimeoutAsync(repeatedStopTask);
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Equal(session.SessionId, harness.Coordinator.Snapshot.ActiveSessionId);
+            var timeoutAlarm = Assert.Single(
+                harness.Alarms.Raised,
+                alarm => alarm.Id == "production:stop-timeout");
+            Assert.Equal(AlarmSeverity.Critical, timeoutAlarm.Severity);
+            Assert.Equal(
+                "Production stop timed out; the production operation has not completed.",
+                timeoutAlarm.Message);
+
+            finalStopTask = harness.Coordinator.StopAsync();
+            allowExecutorExit.TrySetResult();
+            var finalStop = await finalStopTask.WaitAsync(Watchdog);
+
+            Assert.Equal(ProductionCommandDisposition.Completed, finalStop.Disposition);
+            Assert.Null(harness.Execution.Current);
+            Assert.Null(harness.Coordinator.Snapshot.ActiveSessionId);
+            Assert.Equal(1, harness.CommunicationChannels.DisconnectCount);
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Single(
+                harness.Alarms.Raised,
+                alarm => alarm.Id == "production:stop-timeout");
+        }
+        finally
+        {
+            allowExecutorExit.TrySetResult();
+            foreach (var pending in new[] { firstStopTask, repeatedStopTask, finalStopTask })
+            {
+                if (pending is null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    await pending.WaitAsync(Watchdog);
+                }
+                catch (Exception)
+                {
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Timeout_before_session_attachment_never_regresses_faulted_to_starting()
+    {
+        var harness = CoordinatorHarness.Create(stopWaitTimeoutMs: 200);
+        var changedEntered = CoordinatorHarness.NewSignal();
+        var allowChangedReturn = CoordinatorHarness.NewSignal();
+        EventHandler<InspectionExecutionChangedEventArgs> blockAdmission = (_, args) =>
+        {
+            if (args.Current is not null)
+            {
+                changedEntered.TrySetResult();
+                allowChangedReturn.Task.GetAwaiter().GetResult();
+            }
+        };
+        harness.Execution.Changed += blockAdmission;
+        using var recorder = new DistinctStateRecorder(harness.Coordinator);
+        var startTask = Task.Run(() => harness.Coordinator.StartAsync());
+        await changedEntered.Task.WaitAsync(Watchdog);
+        Task<ProductionCommandResult>? stopTask = null;
+
+        try
+        {
+            stopTask = harness.Coordinator.StopAsync();
+            await AssertInternalStopTimeoutAsync(stopTask);
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Null(harness.Coordinator.Snapshot.ActiveSessionId);
+
+            allowChangedReturn.TrySetResult();
+            var start = await startTask.WaitAsync(Watchdog);
+
+            Assert.Equal(ProductionCommandDisposition.Canceled, start.Disposition);
+            Assert.DoesNotContain(ProductionState.Starting, recorder.States);
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Null(harness.Coordinator.Snapshot.ActiveSessionId);
+        }
+        finally
+        {
+            allowChangedReturn.TrySetResult();
+            harness.Execution.Changed -= blockAdmission;
+            try
+            {
+                await startTask.WaitAsync(Watchdog);
+                if (stopTask is not null)
+                {
+                    await stopTask.WaitAsync(Watchdog);
+                }
+            }
+            catch (Exception)
+            {
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Pending_reservation_timeout_never_claims_external_session_ownership()
+    {
+        var innerExecution = new InspectionExecution(
+            new TestInspectionExecutor(),
+            new FakeAppLogService());
+        var externalAdmission = Assert.IsType<RunAdmission.Acquired>(
+            innerExecution.TryBegin(new InspectionRunIntent(
+                InspectionRunModes.RecipeTest,
+                "RecipeManagementViewModel")));
+        var external = externalAdmission.Session.Run;
+        var blockingExecution = new BlockingRejectedInspectionExecution(external);
+        var harness = CoordinatorHarness.Create(200, blockingExecution);
+        var startTask = Task.Run(() => harness.Coordinator.StartAsync());
+        await blockingExecution.TryBeginEntered.Task.WaitAsync(Watchdog);
+        Task<ProductionCommandResult>? stopTask = null;
+
+        try
+        {
+            stopTask = harness.Coordinator.StopAsync();
+            await AssertInternalStopTimeoutAsync(stopTask);
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Null(harness.Coordinator.Snapshot.ActiveSessionId);
+            Assert.Same(external, harness.Execution.Current);
+
+            blockingExecution.AllowTryBeginReturn.TrySetResult();
+            var start = await startTask.WaitAsync(Watchdog);
+
+            Assert.Equal(ProductionCommandDisposition.Rejected, start.Disposition);
+            Assert.Equal(RunRejectionReason.Busy, start.Rejection?.Reason);
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Null(harness.Coordinator.Snapshot.ActiveSessionId);
+            Assert.Same(external, harness.Execution.Current);
+        }
+        finally
+        {
+            blockingExecution.AllowTryBeginReturn.TrySetResult();
+            try
+            {
+                await startTask.WaitAsync(Watchdog);
+                if (stopTask is not null)
+                {
+                    await stopTask.WaitAsync(Watchdog);
+                }
+            }
+            catch (Exception)
+            {
+            }
+
+            await externalAdmission.Session.DisposeAsync().AsTask().WaitAsync(Watchdog);
+        }
+    }
+
+    [Fact]
+    public async Task Stop_when_idle_is_noop_and_external_session_is_not_owner()
+    {
+        var harness = CoordinatorHarness.Create();
+
+        var idle = await harness.Coordinator.StopAsync().WaitAsync(Watchdog);
+        Assert.Equal(ProductionCommandDisposition.NoOp, idle.Disposition);
+
+        var externalAdmission = Assert.IsType<RunAdmission.Acquired>(
+            harness.Execution.TryBegin(new InspectionRunIntent(
+                InspectionRunModes.RecipeTest,
+                "RecipeManagementViewModel")));
+        try
+        {
+            var external = await harness.Coordinator.StopAsync().WaitAsync(Watchdog);
+
+            Assert.Equal(ProductionCommandDisposition.Rejected, external.Disposition);
+            Assert.Equal(RunRejectionReason.NotOwner, external.Rejection?.Reason);
+            Assert.Same(externalAdmission.Session.Run, harness.Execution.Current);
+            Assert.Equal(0, harness.CommunicationChannels.DisconnectCount);
+        }
+        finally
+        {
+            await externalAdmission.Session.DisposeAsync().AsTask().WaitAsync(Watchdog);
+        }
+    }
+
+    [Fact]
+    public async Task RunSingle_fault_publishes_faulted_sequence_and_releases_session()
+    {
+        var harness = CoordinatorHarness.Create();
+        harness.Executor.Handler = (_, _) =>
+            Task.FromException<InspectionRunResult>(
+                new InvalidOperationException("inspection-failure"));
+        using var recorder = new DistinctStateRecorder(harness.Coordinator);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+        });
+
+        Assert.Equal("inspection-failure", exception.Message);
+        Assert.Equal(
+            [
+                ProductionState.Starting,
+                ProductionState.Running,
+                ProductionState.Stopping,
+                ProductionState.Faulted
+            ],
+            recorder.States);
+        Assert.Null(harness.Execution.Current);
+        var alarm = Assert.Single(
+            harness.Alarms.Raised,
+            item => item.Severity == AlarmSeverity.Error);
+        Assert.Equal("production:single-run", alarm.Id);
+        Assert.Equal(AlarmSeverity.Error, alarm.Severity);
+    }
+
+    private static async Task AssertInternalStopTimeoutAsync(
+        Task<ProductionCommandResult> stopTask)
+    {
+        var completed = await Task.WhenAny(stopTask, Task.Delay(Watchdog));
+        Assert.Same(stopTask, completed);
+        await Assert.ThrowsAsync<TimeoutException>(async () => await stopTask);
+    }
 }

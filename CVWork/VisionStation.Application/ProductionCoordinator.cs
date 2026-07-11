@@ -223,10 +223,27 @@ public sealed class ProductionCoordinator
 
         PublishSnapshot(TryCommitStopping(operation));
         operation.RequestCancellation();
-        var cleanup = await operation.Completion.WaitAsync(cancellationToken).ConfigureAwait(false);
-        cleanup.ThrowIfFailed();
-        LogInfoSafely("Continuous production stopped.");
-        return new ProductionCommandResult(ProductionCommandDisposition.Completed);
+        try
+        {
+            var cleanup = await operation.Completion
+                .WaitAsync(
+                    TimeSpan.FromMilliseconds(_productionSettings.StopWaitTimeoutMs),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            cleanup.ThrowIfFailed();
+            LogInfoSafely("Continuous production stopped.");
+            return new ProductionCommandResult(ProductionCommandDisposition.Completed);
+        }
+        catch (TimeoutException)
+        {
+            PublishSnapshot(TryMarkStopTimedOut(operation, out var firstTimeout));
+            if (firstTimeout)
+            {
+                ReportStopTimeoutSafely();
+            }
+
+            throw;
+        }
     }
 
     private ActiveProductionOperation? TryReserveOperation(
@@ -522,6 +539,27 @@ public sealed class ProductionCoordinator
         }
     }
 
+    private SnapshotUpdate? TryMarkStopTimedOut(
+        ActiveProductionOperation operation,
+        out bool firstTimeout)
+    {
+        lock (_syncRoot)
+        {
+            firstTimeout = ReferenceEquals(_activeOperation, operation) &&
+                           !operation.Completion.IsCompleted &&
+                           !operation.StopTimedOut;
+            if (!firstTimeout)
+            {
+                return null;
+            }
+
+            operation.StopTimedOut = true;
+            return CommitStateLocked(
+                ProductionState.Faulted,
+                operation.Session?.Run.SessionId);
+        }
+    }
+
     private bool TryTransitionToRunning(ActiveProductionOperation operation)
     {
         SnapshotUpdate? update = null;
@@ -727,6 +765,25 @@ public sealed class ProductionCoordinator
             $"Production cleanup failed: {exception.Message}",
             exception.ToString(),
             "production:cleanup");
+    }
+
+    private void ReportStopTimeoutSafely()
+    {
+        const string message =
+            "Production stop timed out; the production operation has not completed.";
+        try
+        {
+            _log.Critical(LogSource, message);
+        }
+        catch
+        {
+        }
+
+        RaiseAlarmSafely(
+            AlarmSeverity.Critical,
+            message,
+            message,
+            "production:stop-timeout");
     }
 
     private void RaiseAlarmSafely(
