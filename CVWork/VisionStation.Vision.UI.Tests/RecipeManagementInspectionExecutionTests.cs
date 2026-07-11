@@ -1,3 +1,4 @@
+using System.IO;
 using VisionStation.Application;
 using VisionStation.Client.ViewModels;
 using VisionStation.Domain;
@@ -116,6 +117,82 @@ public sealed class RecipeManagementInspectionExecutionTests
                 variable.Key == externalVariableKey));
 
         Assert.Equal(getAsyncBaseline + 1, harness.Recipes.GetAsyncCount);
+    }
+
+    [Fact]
+    public async Task Deferred_refresh_retries_one_transient_read_and_applies_latest_recipe()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        var runEntered = RecipeManagementTestHarness.NewSignal();
+        var allowRun = new TaskCompletionSource<InspectionRunResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Session.Handler = (_, _) =>
+        {
+            runEntered.TrySetResult(true);
+            return allowRun.Task;
+        };
+
+        var running = harness.ViewModel.TestRunRecipeCommand.Execute();
+        await runEntered.Task.WaitAsync(CommandTimeout);
+        var readAttempt = 0;
+        harness.Recipes.GetAsyncHandler = (_, current, _) =>
+            Interlocked.Increment(ref readAttempt) == 1
+                ? Task.FromException<Recipe?>(new IOException("transient-read-failure"))
+                : Task.FromResult(current);
+        harness.PublishRecipeChanged(RecipeWithVariable("DeferredRetry", "latest"));
+
+        allowRun.TrySetResult(RecipeRunResults.Ok());
+        await running.WaitAsync(CommandTimeout);
+        await RecipeManagementTestHarness.WaitUntilAsync(() =>
+            harness.ViewModel.RecipeVariables.Any(variable =>
+                variable.Key == "DeferredRetry"));
+
+        Assert.Equal(2, readAttempt);
+    }
+
+    [Fact]
+    public async Task Deferred_refresh_stops_after_one_retry_when_reads_keep_failing()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        var runEntered = RecipeManagementTestHarness.NewSignal();
+        var allowRun = new TaskCompletionSource<InspectionRunResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Session.Handler = (_, _) =>
+        {
+            runEntered.TrySetResult(true);
+            return allowRun.Task;
+        };
+
+        var running = harness.ViewModel.TestRunRecipeCommand.Execute();
+        await runEntered.Task.WaitAsync(CommandTimeout);
+        var secondReadFailed = RecipeManagementTestHarness.NewSignal();
+        var thirdReadStarted = RecipeManagementTestHarness.NewSignal();
+        var readAttempt = 0;
+        harness.Recipes.GetAsyncHandler = (_, _, _) =>
+        {
+            var attempt = Interlocked.Increment(ref readAttempt);
+            if (attempt == 2)
+            {
+                secondReadFailed.TrySetResult(true);
+            }
+            else if (attempt == 3)
+            {
+                thirdReadStarted.TrySetResult(true);
+            }
+
+            return Task.FromException<Recipe?>(new IOException($"read-failure-{attempt}"));
+        };
+        harness.PublishRecipeChanged(RecipeWithVariable("DeferredFailure", "latest"));
+
+        allowRun.TrySetResult(RecipeRunResults.Ok());
+        await running.WaitAsync(CommandTimeout);
+        await secondReadFailed.Task.WaitAsync(CommandTimeout);
+
+        var observed = await Task.WhenAny(
+            thirdReadStarted.Task,
+            Task.Delay(TimeSpan.FromMilliseconds(250)));
+        Assert.NotSame(thirdReadStarted.Task, observed);
+        Assert.Equal(2, readAttempt);
     }
 
     [Fact]
@@ -238,6 +315,65 @@ public sealed class RecipeManagementInspectionExecutionTests
         Assert.DoesNotContain(
             harness.ViewModel.RecipeVariables,
             variable => variable.Key == "StaleRecipeOne");
+    }
+
+    [Fact]
+    public async Task Old_refresh_cannot_overwrite_newer_same_recipe_after_A_B_A_reload()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        var staleRecipe = RecipeWithVariable("StaleA", "stale");
+        var staleReadStarted = RecipeManagementTestHarness.NewSignal();
+        var staleRead = new TaskCompletionSource<Recipe?>();
+        var recipeARead = 0;
+        harness.Recipes.GetAsyncHandler = (recipeId, current, _) =>
+        {
+            if (recipeId == "recipe-1" && Interlocked.Increment(ref recipeARead) == 1)
+            {
+                staleReadStarted.TrySetResult(true);
+                return staleRead.Task;
+            }
+
+            return Task.FromResult(current?.Id == recipeId ? current : null);
+        };
+
+        harness.PublishRecipeChanged(staleRecipe);
+        await staleReadStarted.Task.WaitAsync(CommandTimeout);
+
+        var recipeB = new Recipe
+        {
+            Id = "recipe-2",
+            Name = "Recipe B",
+            ProductCode = "P-B",
+            Variables =
+            [
+                new RecipeVariableDefinition
+                {
+                    Key = "RecipeB",
+                    Name = "Recipe B",
+                    CurrentValue = "B"
+                }
+            ]
+        };
+        harness.Recipes.ReplaceCurrent(recipeB);
+        harness.ViewModel.SelectedRecipe = RecipeListItemFor(recipeB);
+        await RecipeManagementTestHarness.WaitUntilAsync(() =>
+            harness.ViewModel.RecipeId == recipeB.Id);
+
+        var newerRecipeA = RecipeWithVariable("NewerA", "newer");
+        harness.Recipes.ReplaceCurrent(newerRecipeA);
+        harness.ViewModel.SelectedRecipe = RecipeListItemFor(newerRecipeA);
+        await RecipeManagementTestHarness.WaitUntilAsync(() =>
+            harness.ViewModel.RecipeVariables.Any(variable => variable.Key == "NewerA"));
+
+        staleRead.SetResult(staleRecipe);
+
+        Assert.Equal(newerRecipeA.Id, harness.ViewModel.RecipeId);
+        Assert.Contains(
+            harness.ViewModel.RecipeVariables,
+            variable => variable.Key == "NewerA");
+        Assert.DoesNotContain(
+            harness.ViewModel.RecipeVariables,
+            variable => variable.Key == "StaleA");
     }
 
     [Fact]
@@ -387,6 +523,97 @@ public sealed class RecipeManagementInspectionExecutionTests
     }
 
     [Fact]
+    public async Task Recipe_editability_notifies_when_test_run_starts_and_finishes()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        var editability = typeof(RecipeManagementViewModel).GetProperty(
+            "IsRecipeEditingEnabled");
+        Assert.NotNull(editability);
+        Assert.True(Assert.IsType<bool>(editability.GetValue(harness.ViewModel)));
+        var notifications = 0;
+        harness.ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == "IsRecipeEditingEnabled")
+            {
+                Interlocked.Increment(ref notifications);
+            }
+        };
+        var runEntered = RecipeManagementTestHarness.NewSignal();
+        var allowRun = new TaskCompletionSource<InspectionRunResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Session.Handler = (_, _) =>
+        {
+            runEntered.TrySetResult(true);
+            return allowRun.Task;
+        };
+
+        var running = harness.ViewModel.TestRunRecipeCommand.Execute();
+        await runEntered.Task.WaitAsync(CommandTimeout);
+        Assert.False(Assert.IsType<bool>(editability.GetValue(harness.ViewModel)));
+
+        allowRun.TrySetResult(RecipeRunResults.Ok());
+        await running.WaitAsync(CommandTimeout);
+
+        Assert.True(Assert.IsType<bool>(editability.GetValue(harness.ViewModel)));
+        Assert.Equal(2, Volatile.Read(ref notifications));
+
+        var beforeReload = Volatile.Read(ref notifications);
+        harness.ViewModel.ReloadCommand.Execute();
+        await RecipeManagementTestHarness.WaitUntilAsync(() =>
+            !harness.ViewModel.IsBusy &&
+            Volatile.Read(ref notifications) >= beforeReload + 2);
+        Assert.True(Assert.IsType<bool>(editability.GetValue(harness.ViewModel)));
+    }
+
+    [Fact]
+    public async Task Reset_attempt_uses_frozen_recipe_with_variable_values_reset_to_defaults()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        harness.PublishRecipeChanged(RecipeWithVariable(
+            "ResetVariable",
+            "current-before-run",
+            "default-after-reset"));
+        await RecipeManagementTestHarness.WaitUntilAsync(() =>
+            harness.ViewModel.RecipeVariables.Any(variable =>
+                variable.Key == "ResetVariable" &&
+                variable.CurrentValue == "current-before-run"));
+        var firstAttemptEntered = RecipeManagementTestHarness.NewSignal();
+        var attempt = 0;
+        harness.Session.Handler = async (_, token) =>
+        {
+            if (Interlocked.Increment(ref attempt) == 1)
+            {
+                firstAttemptEntered.TrySetResult(true);
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+
+            return RecipeRunResults.Ok();
+        };
+
+        var running = harness.ViewModel.TestRunRecipeCommand.Execute();
+        await firstAttemptEntered.Task.WaitAsync(CommandTimeout);
+        harness.ViewModel.ResetTestRunCommand.Execute();
+        await running.WaitAsync(CommandTimeout);
+
+        Assert.Equal(2, harness.Recipes.SavedRecipes.Count);
+        Assert.Equal(
+            "current-before-run",
+            Assert.Single(harness.Recipes.SavedRecipes[0].Variables).CurrentValue);
+        Assert.Equal(
+            "default-after-reset",
+            Assert.Single(harness.Recipes.SavedRecipes[1].Variables).CurrentValue);
+        Assert.All(
+            harness.Recipes.SavedRecipes,
+            recipe => Assert.Equal("recipe-1", recipe.Id));
+        Assert.Equal(2, harness.Session.Requests.Count);
+        Assert.All(
+            harness.Session.Requests,
+            request => Assert.Equal("recipe-1", request.RecipeId));
+        Assert.Equal(1, harness.Execution.TryBeginCount);
+        Assert.Equal(1, harness.Session.DisposeCount);
+    }
+
+    [Fact]
     public async Task Reset_cancel_does_not_run_blocking_callbacks_on_caller()
     {
         await using var harness = await RecipeManagementTestHarness.CreateAsync();
@@ -469,7 +696,10 @@ public sealed class RecipeManagementInspectionExecutionTests
         await running.WaitAsync(CommandTimeout);
     }
 
-    private static Recipe RecipeWithVariable(string key, string value) =>
+    private static Recipe RecipeWithVariable(
+        string key,
+        string value,
+        string defaultValue = "") =>
         new()
         {
             Id = "recipe-1",
@@ -481,10 +711,22 @@ public sealed class RecipeManagementInspectionExecutionTests
                 {
                     Key = key,
                     Name = key,
+                    DefaultValue = defaultValue,
                     CurrentValue = value
                 }
             ]
         };
+
+    private static RecipeListItem RecipeListItemFor(Recipe recipe) =>
+        new(
+            recipe.Id,
+            recipe.Name,
+            recipe.ProductCode,
+            recipe.EffectiveFlows.Count,
+            recipe.GetActiveFlow().Tools.Count,
+            recipe.GetActiveFlow().Rois.Count,
+            string.Empty,
+            false);
 
     [Fact]
     public async Task Paused_run_can_reenter_async_command_only_to_resume()

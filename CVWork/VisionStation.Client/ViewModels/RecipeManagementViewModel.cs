@@ -23,6 +23,8 @@ namespace VisionStation.Client.ViewModels;
 public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 {
     private const int MaxTestRunLogCount = 300;
+    private const int MaxRecipeRefreshAttempts = 2;
+    private const int RecipeRefreshRetryDelayMs = 50;
     private const string UnsavedChangesKey = "recipe-management";
 
     private readonly IRecipeRepository _recipes;
@@ -75,6 +77,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
     private bool _inspectionExecutionSubscribed;
     private string? _pendingRecipeRefreshId;
     private long _recipeRefreshGeneration;
+    private volatile bool _isNavigatedAway;
     private RecipeProcessStepItem? _activeRuntimeStep;
     private InspectionRunResult? _lastTestRun;
 
@@ -384,6 +387,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
             if (SetProperty(ref _isTestRunning, value))
             {
                 RaisePropertyChanged(nameof(TestRunButtonText));
+                RaisePropertyChanged(nameof(IsRecipeEditingEnabled));
                 RaiseCommandStates();
             }
         }
@@ -409,10 +413,13 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         {
             if (SetProperty(ref _isBusy, value))
             {
+                RaisePropertyChanged(nameof(IsRecipeEditingEnabled));
                 RaiseCommandStates();
             }
         }
     }
+
+    public bool IsRecipeEditingEnabled => !IsBusy && !IsTestRunning;
 
     public bool IsCurrentRecipe
     {
@@ -535,6 +542,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
                 return;
             }
 
+            AdvanceRecipePageEpoch();
             RaiseCommandStates();
             _ = LoadRecipeAsync(value?.Id);
         }
@@ -841,11 +849,37 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         long generation,
         bool updateStatus)
     {
+        Recipe? recipe = null;
+        for (var attempt = 1; attempt <= MaxRecipeRefreshAttempts; attempt++)
+        {
+            if (generation != Volatile.Read(ref _recipeRefreshGeneration))
+            {
+                return;
+            }
+
+            try
+            {
+                recipe = await _recipes
+                    .GetAsync(recipeId)
+                    .ConfigureAwait(false);
+                break;
+            }
+            catch (Exception ex)
+            {
+                if (attempt == MaxRecipeRefreshAttempts ||
+                    _isNavigatedAway ||
+                    generation != Volatile.Read(ref _recipeRefreshGeneration))
+                {
+                    LogWarningSafely($"配方参数刷新失败：{ex.Message}");
+                    return;
+                }
+            }
+
+            await Task.Delay(RecipeRefreshRetryDelayMs).ConfigureAwait(false);
+        }
+
         try
         {
-            var recipe = await _recipes
-                .GetAsync(recipeId)
-                .ConfigureAwait(false);
             if (recipe is null ||
                 generation != Volatile.Read(ref _recipeRefreshGeneration))
             {
@@ -910,6 +944,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 
     private void ApplyRecipe(Recipe recipe, string currentRecipeId)
     {
+        AdvanceRecipePageEpoch();
         _isLoadingEditor = true;
         try
         {
@@ -990,6 +1025,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 
     private void ClearEditor()
     {
+        AdvanceRecipePageEpoch();
         _isLoadingEditor = true;
         try
         {
@@ -1111,6 +1147,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         try
         {
             var runRecipeSnapshot = BuildRecipe();
+            var attemptRecipeSnapshot = runRecipeSnapshot;
             recipeName = runRecipeSnapshot.Name;
             IsTestRunning = true;
             IsTestRunPaused = false;
@@ -1133,7 +1170,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
                         setCurrentRecipe: true,
                         refreshList: false,
                         attempt.Token,
-                        runRecipeSnapshot);
+                        attemptRecipeSnapshot);
                     if (recipe is null)
                     {
                         StatusText = "试运行取消：当前配方保存失败";
@@ -1186,6 +1223,8 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 
                 if (restartRequested)
                 {
+                    attemptRecipeSnapshot = WithVariableValuesResetToDefaults(
+                        runRecipeSnapshot);
                     IsTestRunPaused = false;
                     ResetRecipeVariablesToDefaults();
                     ResetProcessStepRuntimeStates(prepareForRun: true);
@@ -1615,6 +1654,17 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
             UpdatedAt = DateTimeOffset.Now
         };
     }
+
+    private static Recipe WithVariableValuesResetToDefaults(Recipe recipe) =>
+        recipe with
+        {
+            Variables = recipe.Variables
+                .Select(variable => variable with
+                {
+                    CurrentValue = variable.DefaultValue
+                })
+                .ToArray()
+        };
 
     private void AddProductParameter()
     {
@@ -2601,6 +2651,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 
     public void OnNavigatedTo(NavigationContext navigationContext)
     {
+        _isNavigatedAway = false;
         SubscribeInspectionExecution();
     }
 
@@ -2608,6 +2659,8 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 
     public void OnNavigatedFrom(NavigationContext navigationContext)
     {
+        _isNavigatedAway = true;
+        AdvanceRecipePageEpoch();
         try
         {
             RequestLifetimeCancellation();
@@ -2617,6 +2670,9 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
             UnsubscribeInspectionExecution();
         }
     }
+
+    private void AdvanceRecipePageEpoch() =>
+        Interlocked.Increment(ref _recipeRefreshGeneration);
 
     private static void ReplaceItems<T>(ObservableCollection<T> target, IEnumerable<T> items)
     {
