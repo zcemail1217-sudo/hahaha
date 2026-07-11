@@ -4,6 +4,7 @@ using Prism.Mvvm;
 using Prism.Navigation.Regions;
 using VisionStation.Application;
 using VisionStation.Application.Presentation;
+using VisionStation.Client.Presentation;
 using VisionStation.Client.Services;
 using VisionStation.Devices;
 using VisionStation.Domain;
@@ -16,9 +17,11 @@ public sealed class ShellWindowViewModel : BindableBase
 {
     private readonly IRegionManager _regionManager;
     private readonly IUiDispatcher _uiDispatcher;
+    private readonly IInspectionExecution _inspectionExecution;
     private readonly IAlarmService _alarms;
     private readonly IUnsavedChangesService _unsavedChanges;
     private readonly Timer _clockTimer;
+    private ProductionSnapshot _productionSnapshot;
     private string _clockText = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
     private string _pageTitle = "生产监控";
     private string _productionStateText = "停止";
@@ -37,6 +40,7 @@ public sealed class ShellWindowViewModel : BindableBase
     public ShellWindowViewModel(
         IRegionManager regionManager,
         ProductionCoordinator coordinator,
+        IInspectionExecution inspectionExecution,
         IUiDispatcher uiDispatcher,
         ICameraDevice camera,
         IPlcClient plc,
@@ -46,6 +50,8 @@ public sealed class ShellWindowViewModel : BindableBase
     {
         _regionManager = regionManager;
         _uiDispatcher = uiDispatcher;
+        _inspectionExecution = inspectionExecution;
+        _productionSnapshot = coordinator.Snapshot;
         _alarms = alarms;
         _unsavedChanges = unsavedChanges;
         GlobalSave = new GlobalSaveViewModel(_unsavedChanges, _uiDispatcher);
@@ -83,13 +89,16 @@ public sealed class ShellWindowViewModel : BindableBase
 
         coordinator.SnapshotChanged += (_, snapshot) => _uiDispatcher.Invoke(() =>
         {
-            ApplyProductionState(snapshot.State);
+            _productionSnapshot = snapshot;
+            RefreshProductionPresentation();
         });
+        _inspectionExecution.Changed += (_, _) => _uiDispatcher.Invoke(RefreshProductionPresentation);
         coordinator.DeviceStateChanged += (_, snapshot) => _uiDispatcher.Invoke(() => ApplyDeviceSnapshot(snapshot));
 
         ApplyDeviceSnapshot(camera.Snapshot);
         ApplyDeviceSnapshot(plc.Snapshot);
         ApplyDeviceSnapshot(axis.Snapshot);
+        RefreshProductionPresentation();
 
         _clockTimer = new Timer(1000)
         {
@@ -229,22 +238,15 @@ public sealed class ShellWindowViewModel : BindableBase
         PageTitle = NavigationItems.Concat(UtilityNavigationItems).FirstOrDefault(item => item.Key == key)?.Title ?? "VisionStation";
     }
 
-    private void ApplyProductionState(ProductionState state)
+    private void RefreshProductionPresentation()
     {
-        ProductionStateText = state switch
-        {
-            ProductionState.Running => "运行",
-            ProductionState.Paused => "暂停",
-            ProductionState.Faulted => "故障",
-            _ => "停止"
-        };
-        ProductionStateBrush = state switch
-        {
-            ProductionState.Running => "#FF5CE08A",
-            ProductionState.Paused => "#FFFFC95A",
-            ProductionState.Faulted => "#FFFF667A",
-            _ => "#FFA9B7C2"
-        };
+        var uiState = ProductionRunUiState.Create(
+            _productionSnapshot.State,
+            _inspectionExecution.Current,
+            _productionSnapshot.ActiveSessionId,
+            commandBusy: false);
+        ProductionStateText = uiState.StateText;
+        ProductionStateBrush = uiState.StateBrush;
     }
 
     private void ApplyDeviceSnapshot(DeviceSnapshot snapshot)

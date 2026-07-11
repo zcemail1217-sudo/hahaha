@@ -3,6 +3,7 @@ using System.ComponentModel;
 using Prism.Commands;
 using Prism.Mvvm;
 using VisionStation.Application;
+using VisionStation.Client.Presentation;
 using VisionStation.Client.Services;
 using VisionStation.Domain;
 using VisionStation.Vision.UI.Models;
@@ -14,6 +15,7 @@ namespace VisionStation.Client.ViewModels;
 public sealed class ProductionDashboardViewModel : BindableBase
 {
     private readonly ProductionCoordinator _coordinator;
+    private readonly IInspectionExecution _inspectionExecution;
     private readonly IInspectionRecordRepository _records;
     private readonly IRecipeRepository _recipes;
     private readonly IAppLogService _log;
@@ -22,6 +24,7 @@ public sealed class ProductionDashboardViewModel : BindableBase
     private readonly ProductionDashboardLayoutService _layoutService;
     private readonly Dictionary<string, FlowDisplaySnapshot> _latestFlowResults = new(StringComparer.OrdinalIgnoreCase);
     private ProductionDashboardRecipeLayout _displayLayout = new();
+    private ProductionSnapshot _productionSnapshot;
 
     private ImageFrame? _currentFrame;
     private string _lastOutcome = "READY";
@@ -35,6 +38,8 @@ public sealed class ProductionDashboardViewModel : BindableBase
     private int _ngCount;
     private string _yieldText = "100.0%";
     private bool _isBusy;
+    private int _activeCommandCount;
+    private bool _occupancyMessageVisible;
     private bool _suppressDisplayPanePersistence;
     private string _currentRecipeId = string.Empty;
     private int _displayPaneSeed;
@@ -43,6 +48,7 @@ public sealed class ProductionDashboardViewModel : BindableBase
 
     public ProductionDashboardViewModel(
         ProductionCoordinator coordinator,
+        IInspectionExecution inspectionExecution,
         IInspectionRecordRepository records,
         IRecipeRepository recipes,
         IAppLogService log,
@@ -51,6 +57,8 @@ public sealed class ProductionDashboardViewModel : BindableBase
         ProductionDashboardLayoutService layoutService)
     {
         _coordinator = coordinator;
+        _inspectionExecution = inspectionExecution;
+        _productionSnapshot = coordinator.Snapshot;
         _records = records;
         _recipes = recipes;
         _log = log;
@@ -60,9 +68,9 @@ public sealed class ProductionDashboardViewModel : BindableBase
 
         AddDisplayPaneCommand = new DelegateCommand(AddDisplayPane);
         RemoveDisplayPaneCommand = new DelegateCommand<InspectionDisplayPaneItem>(RemoveDisplayPane, CanRemoveDisplayPane);
-        RunSingleCommand = new DelegateCommand(async () => await RunSingleAsync());
-        StartCommand = new DelegateCommand(async () => await StartAsync());
-        StopCommand = new DelegateCommand(async () => await StopAsync());
+        RunSingleCommand = new AsyncDelegateCommand(RunSingleAsync, CanRunSingle);
+        StartCommand = new AsyncDelegateCommand(StartAsync, CanStart);
+        StopCommand = new AsyncDelegateCommand(StopAsync, CanStop);
 
         foreach (var entry in _log.Recent(80).Reverse())
         {
@@ -70,9 +78,18 @@ public sealed class ProductionDashboardViewModel : BindableBase
         }
 
         _log.LogWritten += (_, entry) => _uiDispatcher.Invoke(() => AddLog(entry));
-        _coordinator.SnapshotChanged += (_, snapshot) => _uiDispatcher.Invoke(() => ApplySnapshot(snapshot));
+        _coordinator.SnapshotChanged += (_, snapshot) => _uiDispatcher.Invoke(() =>
+        {
+            _productionSnapshot = snapshot;
+            ApplySnapshot(snapshot);
+            RefreshExecutionPresentation();
+        });
         _coordinator.InspectionCompleted += (_, run) => _uiDispatcher.Invoke(() => ApplyRunResult(run));
+        _inspectionExecution.Changed += (_, _) => _uiDispatcher.Invoke(RefreshExecutionPresentation);
         _layoutService.LayoutChanged += (_, _) => _ = ReloadDisplayLayoutAsync();
+
+        ApplySnapshot(_productionSnapshot);
+        RefreshExecutionPresentation();
 
         _ = LoadDisplayFlowsAsync();
         _ = LoadRecentAsync();
@@ -96,11 +113,11 @@ public sealed class ProductionDashboardViewModel : BindableBase
 
     public DelegateCommand<InspectionDisplayPaneItem> RemoveDisplayPaneCommand { get; }
 
-    public DelegateCommand RunSingleCommand { get; }
+    public AsyncDelegateCommand RunSingleCommand { get; }
 
-    public DelegateCommand StartCommand { get; }
+    public AsyncDelegateCommand StartCommand { get; }
 
-    public DelegateCommand StopCommand { get; }
+    public AsyncDelegateCommand StopCommand { get; }
 
     public int DisplayColumnCount
     {
@@ -186,32 +203,117 @@ public sealed class ProductionDashboardViewModel : BindableBase
         private set => SetProperty(ref _isBusy, value);
     }
 
-    private async Task RunSingleAsync()
+    private Task RunSingleAsync()
     {
-        if (IsBusy)
+        return ExecuteProductionCommandAsync(async () =>
         {
-            return;
-        }
+            var result = await _coordinator.RunSingleAsync();
+            return new ProductionCommandResult(result.Disposition, result.Rejection);
+        });
+    }
 
-        IsBusy = true;
+    private Task StartAsync()
+    {
+        return ExecuteProductionCommandAsync(() => _coordinator.StartAsync());
+    }
+
+    private Task StopAsync()
+    {
+        return ExecuteProductionCommandAsync(() => _coordinator.StopAsync());
+    }
+
+    private async Task ExecuteProductionCommandAsync(Func<Task<ProductionCommandResult>> execute)
+    {
+        Interlocked.Increment(ref _activeCommandCount);
+        _uiDispatcher.Invoke(RefreshCommandActivity);
         try
         {
-            await _coordinator.RunSingleAsync();
+            var result = await execute();
+            _uiDispatcher.Invoke(() =>
+            {
+                ApplyCommandResult(result);
+                RefreshExecutionPresentation();
+            });
+        }
+        catch (Exception ex)
+        {
+            var message = $"生产命令失败：{ex.Message}";
+            _uiDispatcher.Invoke(() => LastMessage = message);
+            _log.Error("Production", message);
         }
         finally
         {
-            IsBusy = false;
+            Interlocked.Decrement(ref _activeCommandCount);
+            _uiDispatcher.Invoke(RefreshCommandActivity);
         }
     }
 
-    private async Task StartAsync()
+    private bool CanRunSingle()
     {
-        await _coordinator.StartAsync();
+        return CurrentUiState.CanRunSingle;
     }
 
-    private async Task StopAsync()
+    private bool CanStart()
     {
-        await _coordinator.StopAsync();
+        return CurrentUiState.CanStart;
+    }
+
+    private bool CanStop()
+    {
+        return CurrentUiState.CanStop;
+    }
+
+    private ProductionRunUiState CurrentUiState => ProductionRunUiState.Create(
+        _productionSnapshot.State,
+        _inspectionExecution.Current,
+        _productionSnapshot.ActiveSessionId,
+        Volatile.Read(ref _activeCommandCount) > 0);
+
+    private void RefreshCommandActivity()
+    {
+        IsBusy = Volatile.Read(ref _activeCommandCount) > 0;
+        RefreshExecutionPresentation();
+    }
+
+    private void RefreshExecutionPresentation()
+    {
+        var current = _inspectionExecution.Current;
+        var uiState = ProductionRunUiState.Create(
+            _productionSnapshot.State,
+            current,
+            _productionSnapshot.ActiveSessionId,
+            Volatile.Read(ref _activeCommandCount) > 0);
+
+        if (uiState.IsExternallyOccupied)
+        {
+            LastMessage = uiState.OccupancyText;
+            _occupancyMessageVisible = true;
+        }
+        else if (_occupancyMessageVisible)
+        {
+            LastMessage = current is null
+                ? "检测执行占用已释放"
+                : $"{current.Intent.Mode.DisplayName}已取得检测执行权";
+            _occupancyMessageVisible = false;
+        }
+
+        RunSingleCommand.RaiseCanExecuteChanged();
+        StartCommand.RaiseCanExecuteChanged();
+        StopCommand.RaiseCanExecuteChanged();
+    }
+
+    private void ApplyCommandResult(ProductionCommandResult result)
+    {
+        if (result.Disposition == ProductionCommandDisposition.Rejected)
+        {
+            LastMessage = result.Rejection is null
+                ? "生产检测正在申请执行权"
+                : ProductionRunUiState.FormatRejection(result.Rejection);
+        }
+        else if (result.Disposition == ProductionCommandDisposition.Canceled)
+        {
+            LastMessage = "生产检测已取消";
+        }
     }
 
     private async Task LoadDisplayFlowsAsync()
