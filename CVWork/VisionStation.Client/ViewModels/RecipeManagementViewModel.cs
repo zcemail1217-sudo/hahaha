@@ -77,7 +77,6 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
     private bool _inspectionExecutionSubscribed;
     private string? _pendingRecipeRefreshId;
     private long _recipeRefreshGeneration;
-    private volatile bool _isNavigatedAway;
     private RecipeProcessStepItem? _activeRuntimeStep;
     private InspectionRunResult? _lastTestRun;
 
@@ -867,7 +866,6 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
             catch (Exception ex)
             {
                 if (attempt == MaxRecipeRefreshAttempts ||
-                    _isNavigatedAway ||
                     generation != Volatile.Read(ref _recipeRefreshGeneration))
                 {
                     LogWarningSafely($"配方参数刷新失败：{ex.Message}");
@@ -2651,7 +2649,6 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 
     public void OnNavigatedTo(NavigationContext navigationContext)
     {
-        _isNavigatedAway = false;
         SubscribeInspectionExecution();
     }
 
@@ -2659,7 +2656,6 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 
     public void OnNavigatedFrom(NavigationContext navigationContext)
     {
-        _isNavigatedAway = true;
         AdvanceRecipePageEpoch();
         try
         {

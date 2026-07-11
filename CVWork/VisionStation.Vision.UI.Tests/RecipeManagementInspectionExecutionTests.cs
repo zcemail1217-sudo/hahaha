@@ -151,6 +151,39 @@ public sealed class RecipeManagementInspectionExecutionTests
     }
 
     [Fact]
+    public async Task Navigation_cleanup_replay_retries_one_transient_read_after_return()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        var runEntered = RecipeManagementTestHarness.NewSignal();
+        harness.Session.Handler = async (_, token) =>
+        {
+            runEntered.TrySetResult(true);
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return RecipeRunResults.Ok();
+        };
+
+        var running = harness.ViewModel.TestRunRecipeCommand.Execute();
+        await runEntered.Task.WaitAsync(CommandTimeout);
+        var readAttempt = 0;
+        harness.Recipes.GetAsyncHandler = (_, current, _) =>
+            Interlocked.Increment(ref readAttempt) == 1
+                ? Task.FromException<Recipe?>(new IOException("navigation-transient-read"))
+                : Task.FromResult(current);
+        harness.PublishRecipeChanged(RecipeWithVariable(
+            "NavigationDeferredRetry",
+            "latest"));
+
+        harness.ViewModel.OnNavigatedFrom(null!);
+        await running.WaitAsync(CommandTimeout);
+        harness.ViewModel.OnNavigatedTo(null!);
+        await RecipeManagementTestHarness.WaitUntilAsync(() =>
+            harness.ViewModel.RecipeVariables.Any(variable =>
+                variable.Key == "NavigationDeferredRetry"));
+
+        Assert.Equal(2, readAttempt);
+    }
+
+    [Fact]
     public async Task Deferred_refresh_stops_after_one_retry_when_reads_keep_failing()
     {
         await using var harness = await RecipeManagementTestHarness.CreateAsync();
