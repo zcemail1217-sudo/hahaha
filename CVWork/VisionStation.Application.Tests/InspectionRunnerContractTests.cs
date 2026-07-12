@@ -1,12 +1,33 @@
 using System.Reflection;
 using VisionStation.Application;
+using VisionStation.Devices;
 using VisionStation.Domain;
+using VisionStation.Vision;
 using Xunit;
 
 namespace VisionStation.Application.Tests;
 
 public sealed class InspectionExecutionContractTests
 {
+    public static TheoryData<int, string> ProductionConstructorDependencies =>
+        new()
+        {
+            { 0, "camera" },
+            { 1, "configurableCamera" },
+            { 2, "axis" },
+            { 3, "plc" },
+            { 4, "devices" },
+            { 5, "configuration" },
+            { 6, "configurationRepository" },
+            { 7, "pipeline" },
+            { 8, "recipes" },
+            { 9, "records" },
+            { 10, "traceStore" },
+            { 11, "log" },
+            { 12, "communicationChannels" },
+            { 13, "runControl" }
+        };
+
     [Fact]
     public void Raw_inspection_runner_is_not_a_public_contract()
     {
@@ -18,6 +39,23 @@ public sealed class InspectionExecutionContractTests
 
         Assert.Null(assembly.GetType($"VisionStation.Application.{legacyContractName}"));
         Assert.False(runner.IsPublic);
+    }
+
+    [Theory]
+    [MemberData(nameof(ProductionConstructorDependencies))]
+    public void InspectionExecution_production_constructor_rejects_null_dependency(
+        int dependencyIndex,
+        string expectedParameterName)
+    {
+        var constructor = Assert.Single(typeof(InspectionExecution).GetConstructors());
+        var dependencies = CreateProductionConstructorDependencies();
+        dependencies[dependencyIndex] = null!;
+
+        var invocation = Assert.Throws<TargetInvocationException>(
+            () => constructor.Invoke(dependencies));
+        var exception = Assert.IsType<ArgumentNullException>(invocation.InnerException);
+
+        Assert.Equal(expectedParameterName, exception.ParamName);
     }
 
     [Theory]
@@ -213,6 +251,28 @@ public sealed class InspectionExecutionContractTests
         return type;
     }
 
+    private static object[] CreateProductionConstructorDependencies() =>
+    [
+        CreateDummy<ICameraDevice>(),
+        CreateDummy<IConfigurableCameraDevice>(),
+        CreateDummy<IAxisController>(),
+        CreateDummy<IPlcClient>(),
+        CreateDummy<IDeviceRuntime>(),
+        new DeviceConfiguration(),
+        CreateDummy<IDeviceConfigurationRepository>(),
+        CreateDummy<IVisionPipeline>(),
+        CreateDummy<IRecipeRepository>(),
+        CreateDummy<IInspectionRecordRepository>(),
+        CreateDummy<IImageTraceStore>(),
+        CreateDummy<IAppLogService>(),
+        CreateDummy<ICommunicationChannelRuntime>(),
+        CreateDummy<IInspectionRunControl>()
+    ];
+
+    private static T CreateDummy<T>()
+        where T : class =>
+        DispatchProxy.Create<T, NonInvokedProxy>();
+
     private static PropertyInfo GetRequiredProperty(Type type, string name)
     {
         var property = type.GetProperty(name);
@@ -256,5 +316,14 @@ public sealed class InspectionExecutionContractTests
         {
             Assert.Equal(component.Type, GetRequiredProperty(type, component.PropertyName).PropertyType);
         }
+    }
+
+    private class NonInvokedProxy : DispatchProxy
+    {
+        protected override object? Invoke(
+            MethodInfo? targetMethod,
+            object?[]? args) =>
+            throw new InvalidOperationException(
+                $"Dependency member '{targetMethod?.Name}' must not be invoked while validating constructor arguments.");
     }
 }

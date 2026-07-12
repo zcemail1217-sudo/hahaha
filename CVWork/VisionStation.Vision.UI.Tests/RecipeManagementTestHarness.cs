@@ -426,6 +426,9 @@ internal sealed class FakeDeviceConfigurationRepository : IDeviceConfigurationRe
 {
     public event EventHandler<DeviceConfiguration>? ConfigurationSaved;
 
+    public void PublishSaved(DeviceConfiguration configuration) =>
+        ConfigurationSaved?.Invoke(this, configuration);
+
     public Task<DeviceConfiguration> GetAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(new DeviceConfiguration());
 
@@ -433,7 +436,7 @@ internal sealed class FakeDeviceConfigurationRepository : IDeviceConfigurationRe
         DeviceConfiguration configuration,
         CancellationToken cancellationToken = default)
     {
-        ConfigurationSaved?.Invoke(this, configuration);
+        PublishSaved(configuration);
         return Task.CompletedTask;
     }
 }
@@ -478,10 +481,12 @@ internal sealed class ConfigurableAppLogService : IAppLogService
 
 internal sealed class RecordingCommunicationChannels : ICommunicationChannelRuntime
 {
+    private EventHandler<CommunicationChannelRuntimeFrame>? _frameReceived;
+
     public event EventHandler<CommunicationChannelRuntimeFrame>? FrameReceived
     {
-        add { }
-        remove { }
+        add => _frameReceived += value;
+        remove => _frameReceived -= value;
     }
 
     public int ConnectCount { get; private set; }
@@ -490,6 +495,9 @@ internal sealed class RecordingCommunicationChannels : ICommunicationChannelRunt
         static (_, _) => Task.CompletedTask;
     public Func<string, CancellationToken, Task> DisconnectHandler { get; set; } =
         static (_, _) => Task.CompletedTask;
+
+    public void PublishFrame(CommunicationChannelRuntimeFrame frame) =>
+        _frameReceived?.Invoke(this, frame);
 
     public Task ConnectAsync(
         string connectionPolicy,

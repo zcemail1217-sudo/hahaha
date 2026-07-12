@@ -73,20 +73,23 @@ internal sealed class InspectionRunner : IInspectionExecutor
         ICommunicationChannelRuntime communicationChannels,
         IInspectionRunControl runControl)
     {
-        _camera = camera;
-        _configurableCamera = configurableCamera;
-        _axis = axis;
-        _plc = plc;
-        _devices = devices;
-        _configuration = configuration;
-        _configurationRepository = configurationRepository;
-        _pipeline = pipeline;
-        _recipes = recipes;
-        _records = records;
-        _traceStore = traceStore;
-        _log = log;
-        _communicationChannels = communicationChannels;
-        _runControl = runControl;
+        _camera = camera ?? throw new ArgumentNullException(nameof(camera));
+        _configurableCamera = configurableCamera ??
+            throw new ArgumentNullException(nameof(configurableCamera));
+        _axis = axis ?? throw new ArgumentNullException(nameof(axis));
+        _plc = plc ?? throw new ArgumentNullException(nameof(plc));
+        _devices = devices ?? throw new ArgumentNullException(nameof(devices));
+        _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _configurationRepository = configurationRepository ??
+            throw new ArgumentNullException(nameof(configurationRepository));
+        _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
+        _recipes = recipes ?? throw new ArgumentNullException(nameof(recipes));
+        _records = records ?? throw new ArgumentNullException(nameof(records));
+        _traceStore = traceStore ?? throw new ArgumentNullException(nameof(traceStore));
+        _log = log ?? throw new ArgumentNullException(nameof(log));
+        _communicationChannels = communicationChannels ??
+            throw new ArgumentNullException(nameof(communicationChannels));
+        _runControl = runControl ?? throw new ArgumentNullException(nameof(runControl));
     }
 
     public async Task<InspectionRunResult> ExecuteAsync(InspectionRequest request, CancellationToken cancellationToken = default)
