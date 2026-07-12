@@ -31,7 +31,6 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable, IAsyncD
     private readonly IUnsavedChangesService _unsavedChanges;
     private readonly CancellationTokenSource _liveValueCancellation = new();
     private readonly object _projectionGate = new();
-    private readonly object _disposeSyncRoot = new();
     private readonly TaskCompletionSource _disposeCompletion = new(
         TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _liveValuePollingTask;
@@ -1250,31 +1249,28 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable, IAsyncD
 
     private Task BeginDispose()
     {
-        lock (_disposeSyncRoot)
+        if (Interlocked.CompareExchange(ref _disposeStarted, 1, 0) != 0)
         {
-            if (Interlocked.CompareExchange(ref _disposeStarted, 1, 0) != 0)
-            {
-                return _disposeCompletion.Task;
-            }
-
-            lock (_projectionGate)
-            {
-                // Drain an already-running projection before removing subscriptions.
-            }
-
-            UnsubscribeEventsSafely();
-            try
-            {
-                _liveValueCancellation.Cancel();
-            }
-            catch
-            {
-                // External cancellation callbacks must not fault synchronous disposal.
-            }
-
-            _ = CompleteDisposeAsync();
             return _disposeCompletion.Task;
         }
+
+        lock (_projectionGate)
+        {
+            // Drain an already-running projection before removing subscriptions.
+        }
+
+        UnsubscribeEventsSafely();
+        try
+        {
+            _liveValueCancellation.Cancel();
+        }
+        catch
+        {
+            // External cancellation callbacks must not fault synchronous disposal.
+        }
+
+        _ = CompleteDisposeAsync();
+        return _disposeCompletion.Task;
     }
 
     private async Task CompleteDisposeAsync()

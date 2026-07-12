@@ -148,6 +148,7 @@ internal sealed class FakeInspectionExecution : IInspectionExecution
 {
     private readonly RecordingInspectionSession _session;
     private EventHandler<InspectionExecutionChangedEventArgs>? _changed;
+    private EventHandler<InspectionRunResult>? _runCompleted;
 
     public FakeInspectionExecution(RecordingInspectionSession session)
     {
@@ -176,7 +177,22 @@ internal sealed class FakeInspectionExecution : IInspectionExecution
         }
     }
 
-    public event EventHandler<InspectionRunResult>? RunCompleted;
+    public event EventHandler<InspectionRunResult>? RunCompleted
+    {
+        add => _runCompleted += value;
+        remove
+        {
+            if (ThrowOnRunCompletedRemove)
+            {
+                throw new InvalidOperationException("run-completed-remove-failure");
+            }
+
+            _runCompleted -= value;
+        }
+    }
+    public bool ThrowOnRunCompletedRemove { get; set; }
+    public int RunCompletedSubscriberCount =>
+        _runCompleted?.GetInvocationList().Length ?? 0;
     public Func<InspectionRunIntent, RunAdmission> TryBeginHandler { get; set; }
     public int TryBeginCount { get; private set; }
     public InspectionRunIntent? LastIntent { get; private set; }
@@ -203,7 +219,7 @@ internal sealed class FakeInspectionExecution : IInspectionExecution
     }
 
     public void PublishCompleted(InspectionRunResult result) =>
-        RunCompleted?.Invoke(this, result);
+        _runCompleted?.Invoke(this, result);
 }
 
 internal sealed class RecordingInspectionSession : IInspectionSession
@@ -424,10 +440,27 @@ internal sealed class ConfigurableFlowEditorDialogService : IFlowEditorDialogSer
 
 internal sealed class FakeDeviceConfigurationRepository : IDeviceConfigurationRepository
 {
-    public event EventHandler<DeviceConfiguration>? ConfigurationSaved;
+    private EventHandler<DeviceConfiguration>? _configurationSaved;
+
+    public event EventHandler<DeviceConfiguration>? ConfigurationSaved
+    {
+        add => _configurationSaved += value;
+        remove
+        {
+            if (ThrowOnConfigurationSavedRemove)
+            {
+                throw new InvalidOperationException("configuration-saved-remove-failure");
+            }
+
+            _configurationSaved -= value;
+        }
+    }
+    public bool ThrowOnConfigurationSavedRemove { get; set; }
+    public int ConfigurationSavedSubscriberCount =>
+        _configurationSaved?.GetInvocationList().Length ?? 0;
 
     public void PublishSaved(DeviceConfiguration configuration) =>
-        ConfigurationSaved?.Invoke(this, configuration);
+        _configurationSaved?.Invoke(this, configuration);
 
     public Task<DeviceConfiguration> GetAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(new DeviceConfiguration());
@@ -486,8 +519,19 @@ internal sealed class RecordingCommunicationChannels : ICommunicationChannelRunt
     public event EventHandler<CommunicationChannelRuntimeFrame>? FrameReceived
     {
         add => _frameReceived += value;
-        remove => _frameReceived -= value;
+        remove
+        {
+            if (ThrowOnFrameReceivedRemove)
+            {
+                throw new InvalidOperationException("frame-received-remove-failure");
+            }
+
+            _frameReceived -= value;
+        }
     }
+    public bool ThrowOnFrameReceivedRemove { get; set; }
+    public int FrameReceivedSubscriberCount =>
+        _frameReceived?.GetInvocationList().Length ?? 0;
 
     public int ConnectCount { get; private set; }
     public int DisconnectCount { get; private set; }

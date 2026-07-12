@@ -1,4 +1,6 @@
+using System.Collections.Specialized;
 using System.IO;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using Prism.Events;
 using VisionStation.Application;
@@ -288,6 +290,168 @@ public sealed class VariableCenterInspectionExecutionTests
         }
     }
 
+    [Fact]
+    public async Task Reentrant_dispose_does_not_deadlock_with_concurrent_dispose()
+    {
+        var context = CreateContext(
+            new ImmediateUiDispatcher(),
+            new RecordingCommunicationChannels());
+        await RecipeManagementTestHarness.WaitUntilAsync(
+            () => context.ViewModel.SelectedRecipe is not null &&
+                  !context.ViewModel.IsBusy);
+
+        var projectionEntered = RecipeManagementTestHarness.NewSignal();
+        var allowReentrantDispose = RecipeManagementTestHarness.NewSignal();
+        var projectionFinished = RecipeManagementTestHarness.NewSignal();
+        Exception? projectionException = null;
+        Task? firstDisposal = null;
+        NotifyCollectionChangedEventHandler? onRuntimeValuesChanged = null;
+        onRuntimeValuesChanged = (_, _) =>
+        {
+            context.ViewModel.RuntimeValues.CollectionChanged -= onRuntimeValuesChanged;
+            projectionEntered.TrySetResult(true);
+            allowReentrantDispose.Task.GetAwaiter().GetResult();
+            context.ViewModel.Dispose();
+        };
+        context.ViewModel.RuntimeValues.CollectionChanged += onRuntimeValuesChanged;
+
+        var projectionThread = new Thread(() =>
+        {
+            try
+            {
+                context.Execution.PublishCompleted(CreateRunResult("A"));
+            }
+            catch (Exception exception)
+            {
+                projectionException = exception;
+            }
+            finally
+            {
+                projectionFinished.TrySetResult(true);
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "VariableCenter reentrant projection"
+        };
+
+        try
+        {
+            projectionThread.Start();
+            await projectionEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+            firstDisposal = Task.Run(context.ViewModel.Dispose);
+            await RecipeManagementTestHarness.WaitUntilAsync(
+                () => ReadDisposeStarted(context.ViewModel));
+            allowReentrantDispose.TrySetResult(true);
+
+            await Task.WhenAll(firstDisposal, projectionFinished.Task)
+                .WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Null(projectionException);
+        }
+        finally
+        {
+            allowReentrantDispose.TrySetResult(true);
+            if (!projectionFinished.Task.IsCompleted)
+            {
+                try
+                {
+                    projectionThread.Interrupt();
+                }
+                catch (ThreadStateException)
+                {
+                }
+            }
+
+            await projectionFinished.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            if (firstDisposal is not null)
+            {
+                await firstDisposal.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+
+            await context.ViewModel.DisposeAsync();
+            Assert.True(projectionThread.Join(TimeSpan.FromSeconds(2)));
+        }
+    }
+
+    [Fact]
+    public async Task Hostile_event_remove_does_not_block_other_unsubscriptions_or_dispatch()
+    {
+        var connectEntered = RecipeManagementTestHarness.NewSignal();
+        var connectExited = RecipeManagementTestHarness.NewSignal();
+        var channels = new RecordingCommunicationChannels
+        {
+            ConnectHandler = async (_, cancellationToken) =>
+            {
+                connectEntered.TrySetResult(true);
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                }
+                finally
+                {
+                    connectExited.TrySetResult(true);
+                }
+            }
+        };
+        var dispatcher = new CountingUiDispatcher();
+        var context = CreateContext(dispatcher, channels);
+        var disposalStarted = false;
+
+        try
+        {
+            await connectEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await RecipeManagementTestHarness.WaitUntilAsync(
+                () => context.ViewModel.SelectedRecipe is not null &&
+                      !context.ViewModel.IsBusy);
+            Assert.Equal(1, context.Execution.RunCompletedSubscriberCount);
+            Assert.Equal(
+                1,
+                context.ConfigurationRepository.ConfigurationSavedSubscriberCount);
+            Assert.Equal(1, context.Channels.FrameReceivedSubscriberCount);
+
+            context.Execution.ThrowOnRunCompletedRemove = true;
+            await context.ViewModel.DisposeAsync();
+            disposalStarted = true;
+            await connectExited.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Equal(1, context.Execution.RunCompletedSubscriberCount);
+            Assert.Equal(
+                0,
+                context.ConfigurationRepository.ConfigurationSavedSubscriberCount);
+            Assert.Equal(0, context.Channels.FrameReceivedSubscriberCount);
+
+            var invocationCount = dispatcher.InvocationCount;
+            context.Execution.PublishCompleted(CreateRunResult("A"));
+            context.ConfigurationRepository.PublishSaved(new DeviceConfiguration());
+            context.Channels.PublishFrame(new CommunicationChannelRuntimeFrame(
+                "TCP",
+                "channel-1",
+                "Channel 1",
+                [(byte)'A'],
+                1,
+                1));
+
+            Assert.Equal(invocationCount, dispatcher.InvocationCount);
+            Assert.Empty(context.ViewModel.RuntimeValues);
+        }
+        finally
+        {
+            context.Execution.ThrowOnRunCompletedRemove = false;
+            if (!disposalStarted)
+            {
+                context.ViewModel.Dispose();
+            }
+
+            await context.ViewModel.DisposeAsync();
+            await connectExited.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
     private static void PublishProjection(
         VariableCenterTestContext context,
         ProjectionSource source)
@@ -367,6 +531,16 @@ public sealed class VariableCenterInspectionExecutionTests
             }
         };
 
+    private static bool ReadDisposeStarted(VariableCenterViewModel viewModel)
+    {
+        var field = typeof(VariableCenterViewModel).GetField(
+            "_disposeStarted",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        Assert.NotNull(field);
+        return Assert.IsType<int>(field.GetValue(viewModel)) != 0;
+    }
+
     private static string GetViewModelPath(
         [CallerFilePath] string testFilePath = "") =>
         Path.GetFullPath(Path.Combine(
@@ -413,6 +587,19 @@ public sealed class VariableCenterInspectionExecutionTests
                 InvocationRelease.Task.GetAwaiter().GetResult();
             }
 
+            action();
+        }
+    }
+
+    private sealed class CountingUiDispatcher : IUiDispatcher
+    {
+        private int _invocationCount;
+
+        public int InvocationCount => Volatile.Read(ref _invocationCount);
+
+        public void Invoke(Action action)
+        {
+            Interlocked.Increment(ref _invocationCount);
             action();
         }
     }
