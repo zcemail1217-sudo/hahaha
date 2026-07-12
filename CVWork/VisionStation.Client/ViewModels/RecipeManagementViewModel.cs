@@ -1140,7 +1140,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
             return;
         }
 
-        await using var session = ((RunAdmission.Acquired)admission).Session;
+        var session = ((RunAdmission.Acquired)admission).Session;
         using var lifetime = new CancellationTokenSource();
         _testRunLifetimeCancellation = lifetime;
         _testRunLifetimeCancellationCompletion = Task.CompletedTask;
@@ -1208,6 +1208,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
                         TriggeredByPlc = false,
                         ProcessOnly = true
                     }, attempt.Token);
+                    attempt.Token.ThrowIfCancellationRequested();
                     StatusText = $"试运行完成：{run.Result.Outcome}，耗时 {run.Result.CycleTime.TotalMilliseconds:0} ms";
                     TestRunStateText = StatusText;
                     AddTestRunResultSnapshot(run);
@@ -1235,6 +1236,12 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
                     if (lifetime.IsCancellationRequested)
                     {
                         await _testRunLifetimeCancellationCompletion;
+                    }
+
+                    if (_testRunResetRequested &&
+                        !lifetime.IsCancellationRequested)
+                    {
+                        restartRequested = true;
                     }
                 }
 
@@ -1304,22 +1311,40 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
             {
             }
 
+            Exception? sessionDisposeFailure = null;
+            var sessionReleased = false;
             try
             {
-                IsTestRunning = false;
+                await session.DisposeAsync();
+                sessionReleased = true;
             }
-            catch
+            catch (Exception ex)
             {
+                sessionDisposeFailure = ex;
+                sessionReleased = _inspectionExecution.Current?.SessionId !=
+                    session.Run.SessionId;
             }
 
-            var pendingRecipeRefreshId = _pendingRecipeRefreshId;
-            _pendingRecipeRefreshId = null;
-            try
+            string? pendingRecipeRefreshId = null;
+            if (sessionReleased)
             {
-                RaiseCommandStates();
-            }
-            catch
-            {
+                try
+                {
+                    IsTestRunning = false;
+                }
+                catch
+                {
+                }
+
+                pendingRecipeRefreshId = _pendingRecipeRefreshId;
+                _pendingRecipeRefreshId = null;
+                try
+                {
+                    RaiseCommandStates();
+                }
+                catch
+                {
+                }
             }
 
             if (endRunFailure is not null)
@@ -1332,7 +1357,13 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
                 LogWarningSafely($"试运行通信清理失败：{disconnectFailure.Message}");
             }
 
-            if (!string.IsNullOrWhiteSpace(pendingRecipeRefreshId))
+            if (sessionDisposeFailure is not null)
+            {
+                LogWarningSafely($"试运行会话释放失败：{sessionDisposeFailure.Message}");
+            }
+
+            if (sessionReleased &&
+                !string.IsNullOrWhiteSpace(pendingRecipeRefreshId))
             {
                 RequestRecipeRefresh(pendingRecipeRefreshId, updateStatus: false);
             }
@@ -1394,6 +1425,17 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         try
         {
             _log.Error("Recipe", message);
+        }
+        catch
+        {
+        }
+    }
+
+    private void LogInfoSafely(string message)
+    {
+        try
+        {
+            _log.Info("Recipe", message);
         }
         catch
         {
@@ -2331,12 +2373,30 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
             return;
         }
 
-        _inspectionRunControl.Pause();
-        IsTestRunPaused = true;
-        StatusText = "已请求暂停：当前步骤结束后停在流程位置";
-        TestRunStateText = StatusText;
-        AddTestRunLog("INFO", "Recipe", StatusText);
-        _log.Info("Recipe", StatusText);
+        try
+        {
+            _inspectionRunControl.Pause();
+        }
+        catch (Exception ex)
+        {
+            LogWarningSafely($"试运行暂停请求失败：{ex.Message}");
+            return;
+        }
+
+        const string message = "已请求暂停：当前步骤结束后停在流程位置";
+        try
+        {
+            IsTestRunPaused = true;
+            StatusText = message;
+            TestRunStateText = message;
+            AddTestRunLog("INFO", "Recipe", message);
+        }
+        catch (Exception ex)
+        {
+            LogWarningSafely($"试运行暂停状态更新失败：{ex.Message}");
+        }
+
+        LogInfoSafely(message);
     }
 
     private void ResumeTestRun()
@@ -2398,7 +2458,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         StatusText = "流程已复位，变量已初始化";
         TestRunStateText = StatusText;
         AddTestRunLog("INFO", "Recipe", StatusText);
-        _log.Info("Recipe", StatusText);
+        LogInfoSafely(StatusText);
         RaiseCommandStates();
     }
 

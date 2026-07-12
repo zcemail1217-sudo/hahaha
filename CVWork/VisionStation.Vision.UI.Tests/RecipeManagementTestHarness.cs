@@ -217,6 +217,7 @@ internal sealed class RecordingInspectionSession : IInspectionSession
     public List<InspectionRequest> Requests { get; } = [];
     public Func<InspectionRequest, CancellationToken, Task<InspectionRunResult>> Handler { get; set; } =
         static (_, _) => Task.FromResult(RecipeRunResults.Ok());
+    public Func<Task> DisposeHandler { get; set; } = static () => Task.CompletedTask;
     public Action? Released { get; set; }
     public int DisposeCount { get; private set; }
 
@@ -228,11 +229,11 @@ internal sealed class RecordingInspectionSession : IInspectionSession
         return Handler(request, cancellationToken);
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         DisposeCount++;
+        await DisposeHandler();
         Released?.Invoke();
-        return ValueTask.CompletedTask;
     }
 }
 
@@ -342,6 +343,7 @@ internal sealed class RecordingRunControl : IInspectionRunControl
     public int ResumeCount { get; private set; }
     public int RequestResetCount { get; private set; }
     public Action EndRunHandler { get; set; } = static () => { };
+    public Action PauseHandler { get; set; } = static () => { };
     public Action ResumeHandler { get; set; } = static () => { };
     public Action RequestResetHandler { get; set; } = static () => { };
     public void BeginRun()
@@ -360,6 +362,7 @@ internal sealed class RecordingRunControl : IInspectionRunControl
     public void Pause()
     {
         PauseCount++;
+        PauseHandler();
         IsPaused = true;
     }
 
@@ -437,6 +440,7 @@ internal sealed class FakeDeviceConfigurationRepository : IDeviceConfigurationRe
 
 internal sealed class ConfigurableAppLogService : IAppLogService
 {
+    public bool ThrowOnInfo { get; set; }
     public bool ThrowOnWarning { get; set; }
     public bool ThrowOnError { get; set; }
 
@@ -446,7 +450,13 @@ internal sealed class ConfigurableAppLogService : IAppLogService
         remove { }
     }
 
-    public void Info(string source, string message) { }
+    public void Info(string source, string message)
+    {
+        if (ThrowOnInfo)
+        {
+            throw new InvalidOperationException("info-log-failure");
+        }
+    }
     public void Warning(string source, string message)
     {
         if (ThrowOnWarning)
