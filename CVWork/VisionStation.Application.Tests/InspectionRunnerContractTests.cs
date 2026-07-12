@@ -90,6 +90,18 @@ public sealed class InspectionExecutionContractTests
     }
 
     [Fact]
+    public void InspectionRequest_exposes_optional_recipe_snapshot()
+    {
+        var property = typeof(InspectionRequest).GetProperty("RecipeSnapshot");
+
+        Assert.NotNull(property);
+        Assert.Equal(typeof(Recipe), property.PropertyType);
+        Assert.True(property.CanRead);
+        Assert.NotNull(property.SetMethod);
+        Assert.Null(property.GetValue(new InspectionRequest()));
+    }
+
+    [Fact]
     public void RunAdmission_exposes_public_payload_cases()
     {
         var admission = GetRequiredApplicationType("RunAdmission");

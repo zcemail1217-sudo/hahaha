@@ -537,6 +537,16 @@ public sealed record InspectionRequest
 {
     public string RecipeId { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Gets the logical immutable recipe snapshot for this inspection.
+    /// When null, the runner resolves <see cref="RecipeId" /> from the recipe repository.
+    /// </summary>
+    /// <remarks>
+    /// After calling ExecuteAsync, callers must not mutate collections reachable from this snapshot.
+    /// When both values are supplied, <see cref="RecipeId" /> must match <see cref="Recipe.Id" />.
+    /// </remarks>
+    public Recipe? RecipeSnapshot { get; init; }
+
     public string BatchId { get; init; } = DateTimeOffset.Now.ToString("yyyyMMdd");
 
     public string OperatorName { get; init; } = "Operator";
