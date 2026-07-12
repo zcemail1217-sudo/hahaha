@@ -596,6 +596,8 @@ var attemptRecipeSnapshot = _testRunResetRequested
 
 基础保存期间不创建 `_testRunAttemptCancellation`；Reset 只锁存 `_testRunResetRequested`，导航仍通过 `lifetime.Token` 取消保存。
 
+同时引入私有 `_isTestRunAttemptActive`：`BeginRun()` 成功后置为 true，attempt `finally` 在等待 CancelAsync completion 前先置为 false。Pause/Resume 的 `CanExecute` 和方法体都要求 active；Reset 在 inactive 的基础保存阶段只锁存，不能调用共享 RunControl。phase 变化先更新内部值，再安全刷新命令，订阅者异常只能记录。
+
 - [ ] **Step 6: 循环内删除仓库保存并传递快照**
 
 每个 attempt 保留 linked CTS、`BeginRun`、连接和 Session 执行，但删除循环内 `PersistSelectedRecipeAsync`。请求使用：
@@ -697,6 +699,8 @@ internal sealed class ImmediateUiDispatcher : IUiDispatcher
 ```
 
 `RecipeManagementTestHarness` 构造器、属性和 `CreateAsync` 必须保存同一个 dispatcher 实例为 `UiDispatcher`，不能在构造 VM 时临时 `new` 后丢失。
+
+实现还必须增加私有 `_acceptsTestRunReset`：基础保存前开启，outer cleanup `finally` 第一时间关闭；Reset command 的 `CanExecute` 与方法体同时使用该门。最终 Disconnect cleanup 期间 Reset 必须禁用，直接调用也不能改 flag 或触碰 RunControl。
 
 - [ ] **Step 2: 写 Resume 异常 owner 真相测试**
 
@@ -817,9 +821,11 @@ private void ReportTestRunFailureSafely(Exception exception)
     {
     }
 
-    LogErrorSafely(message);
+LogErrorSafely(message);
 }
 ```
+
+`ReportOpenFlowEditorFailureSafely` 使用同样的 `_uiDispatcher.Invoke` 规则；测试通过 `Task.Run` 产生后台故障并在 `PropertyChanged` 中断言 `UiDispatcher.IsInvoking`。
 
 `IsTestRunning`、`IsTestRunPaused` 和 `RaiseCommandStates` 继续只由 Session owner 的现有 `finally` 处理。
 

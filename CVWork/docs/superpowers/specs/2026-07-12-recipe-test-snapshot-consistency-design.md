@@ -107,6 +107,8 @@ public Recipe? RecipeSnapshot { get; init; }
 
 基础保存使用 lifetime token，而不是 attempt token。若用户在基础保存尚未完成时按 Reset，Reset 被记录为待处理请求，但不取消或重复这次基础保存；保存完成后，首个真正执行的 attempt 直接使用默认变量值快照。导航离开仍可通过 lifetime token 取消基础保存。这样保留“Reset 后从默认值开始”的用户语义，同时不制造第二次业务配方写入。
 
+基础保存阶段尚未进入可控制 attempt：Pause/Resume 必须禁用且方法内拒绝；Reset 只锁存 ViewModel 本地请求，不调用全局 `IInspectionRunControl`。只有 `BeginRun()` 成功后，Pause/Resume/Reset 才能触碰共享 RunControl 和 attempt cancellation。这样保存失败或离页取消不会把 pause/reset 状态泄漏给下一次生产。
+
 ### 7.2 attempt 执行
 
 - 基础保存期间未收到 Reset 时，第一次 attempt 使用 `runRecipeSnapshot`。
@@ -134,7 +136,19 @@ public Recipe? RecipeSnapshot { get; init; }
 
 因此，暂停后的 Resume 即使 `Resume()` 或日志失败，页面仍保持运行中和编辑冻结；用户仍可通过导航取消，由 owner 完成清理。
 
-### 8.2 离页不淘汰已知刷新
+Recipe Management 的 TestRun 与 Flow Editor 两个 Prism async command Catch 都必须通过 `IUiDispatcher` 更新绑定状态；Prism Catch 所在线程不视为 UI 线程。dispatcher 或日志失败只被安全记录，不能反向改变 Session owner 真相。
+
+### 8.2 三个显式控制阶段
+
+配方试运行区分三个不互相替代的状态：
+
+- `IsTestRunning`：Session owner 生命周期，控制配方编辑冻结和整体状态展示。
+- `isTestRunAttemptActive`：`BeginRun()` 成功到 attempt 离开的窗口，控制 Pause/Resume 以及 Reset 对共享 RunControl 的调用。
+- `acceptsTestRunReset`：从基础保存开始到进入最终 cleanup 前的窗口；最终 Disconnect cleanup 期间 Reset 命令禁用，方法内也拒绝。
+
+attempt phase 和 Reset 接受 phase 的命令通知异常必须被隔离；内部真相先更新，`CanExecuteChanged` 订阅者异常不得打断取消完成等待、CTS 释放、下一 attempt 或 owner cleanup。
+
+### 8.3 离页不淘汰已知刷新
 
 `OnNavigatedFrom` 不再推进 recipe refresh generation。已启动的有限刷新可以在页面离开后安全完成。
 
@@ -153,6 +167,7 @@ public Recipe? RecipeSnapshot { get; init; }
 - 基础配方首次保存失败：试运行失败并由 owner 清理 Session；不连接、不执行。
 - deferred refresh 瞬时失败：同 generation 固定最多两次读取；新 generation 可以随时淘汰旧尝试。
 - Resume/Catch 报错：只报告，绝不伪造空闲状态。
+- `CanExecuteChanged` 订阅者报错：安全记录，不能传播进 attempt/finally 生命周期。
 - EndRun、Disconnect、日志和 Session Dispose 继续保持分段隔离及既有有界清理语义。
 
 ## 10. 测试设计
@@ -174,6 +189,10 @@ public Recipe? RecipeSnapshot { get; init; }
 - 请求同时携带相同的 RecipeId 和 RecipeSnapshot；两个 attempt 共用一个 Session。
 - cleanup replay 已启动后再离页，读取完成仍应用；配方切换仍能淘汰旧结果。
 - 暂停后的 Resume 抛错时，主运行仍为 running、编辑区仍冻结、Session 未提前释放；导航取消后由 owner 复位。
+- 基础保存期间 Pause 不可执行，Reset 只锁存且不调用共享 RunControl；离页取消不残留控制状态。
+- attempt phase 通知订阅者抛错时，Reset 仍能完成第二 attempt 和唯一 cleanup。
+- 最终 Disconnect cleanup 期间 Reset 的 CanExecute 与方法内执行均被拒绝。
+- TestRun 与 Flow Editor 的后台异步失败都通过同一个 UI dispatcher 投影状态。
 
 ### 10.3 回归矩阵
 
