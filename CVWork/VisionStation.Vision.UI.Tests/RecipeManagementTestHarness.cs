@@ -486,6 +486,8 @@ internal sealed class RecordingCommunicationChannels : ICommunicationChannelRunt
 
     public int ConnectCount { get; private set; }
     public int DisconnectCount { get; private set; }
+    public Func<string, CancellationToken, Task> ConnectHandler { get; set; } =
+        static (_, _) => Task.CompletedTask;
     public Func<string, CancellationToken, Task> DisconnectHandler { get; set; } =
         static (_, _) => Task.CompletedTask;
 
@@ -494,7 +496,7 @@ internal sealed class RecordingCommunicationChannels : ICommunicationChannelRunt
         CancellationToken cancellationToken = default)
     {
         ConnectCount++;
-        return Task.CompletedTask;
+        return ConnectHandler(connectionPolicy, cancellationToken);
     }
 
     public Task DisconnectAsync(

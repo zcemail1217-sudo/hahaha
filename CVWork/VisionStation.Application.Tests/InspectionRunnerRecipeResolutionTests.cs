@@ -9,7 +9,7 @@ namespace VisionStation.Application.Tests;
 public sealed class InspectionRunnerRecipeResolutionTests
 {
     [Fact]
-    public async Task RunAsync_uses_matching_snapshot_without_reading_recipe_repository()
+    public async Task ExecuteAsync_uses_matching_snapshot_without_reading_recipe_repository()
     {
         var repositoryRecipe = CreateProcessOnlyRecipe("recipe-1", "Repository Recipe");
         var snapshot = CreateProcessOnlyRecipe("recipe-1", "Frozen Snapshot");
@@ -17,7 +17,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
         var configuration = new RecordingDeviceConfigurationRepository();
         var runner = CreateRunner(recipes, configuration);
 
-        var result = await runner.RunAsync(new InspectionRequest
+        var result = await runner.ExecuteAsync(new InspectionRequest
         {
             RecipeId = "RECIPE-1",
             RecipeSnapshot = snapshot,
@@ -35,14 +35,14 @@ public sealed class InspectionRunnerRecipeResolutionTests
     }
 
     [Fact]
-    public async Task RunAsync_uses_snapshot_id_when_request_recipe_id_is_empty()
+    public async Task ExecuteAsync_uses_snapshot_id_when_request_recipe_id_is_empty()
     {
         var snapshot = CreateProcessOnlyRecipe("snapshot-only", "Snapshot Only");
         var recipes = new RecordingRecipeRepository(
             CreateProcessOnlyRecipe("repository", "Repository Recipe"));
         var runner = CreateRunner(recipes, new RecordingDeviceConfigurationRepository());
 
-        var result = await runner.RunAsync(new InspectionRequest
+        var result = await runner.ExecuteAsync(new InspectionRequest
         {
             RecipeSnapshot = snapshot,
             ProcessOnly = true
@@ -56,7 +56,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
     }
 
     [Fact]
-    public async Task RunAsync_rejects_blank_snapshot_id_before_downstream_reads()
+    public async Task ExecuteAsync_rejects_blank_snapshot_id_before_downstream_reads()
     {
         var recipes = new RecordingRecipeRepository(
             CreateProcessOnlyRecipe("recipe-1", "Repository Recipe"));
@@ -64,7 +64,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
         var runner = CreateRunner(recipes, configuration);
 
         var error = await Assert.ThrowsAsync<ArgumentException>(() =>
-            runner.RunAsync(new InspectionRequest
+            runner.ExecuteAsync(new InspectionRequest
             {
                 RecipeId = "recipe-1",
                 RecipeSnapshot = CreateProcessOnlyRecipe(" ", "Invalid Snapshot"),
@@ -80,7 +80,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
     }
 
     [Fact]
-    public async Task RunAsync_rejects_mismatched_snapshot_before_downstream_reads()
+    public async Task ExecuteAsync_rejects_mismatched_snapshot_before_downstream_reads()
     {
         var recipes = new RecordingRecipeRepository(
             CreateProcessOnlyRecipe("recipe-1", "Repository Recipe"));
@@ -88,7 +88,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
         var runner = CreateRunner(recipes, configuration);
 
         var error = await Assert.ThrowsAsync<ArgumentException>(() =>
-            runner.RunAsync(new InspectionRequest
+            runner.ExecuteAsync(new InspectionRequest
             {
                 RecipeId = "recipe-1",
                 RecipeSnapshot = CreateProcessOnlyRecipe("recipe-2", "Wrong Snapshot"),
@@ -106,13 +106,13 @@ public sealed class InspectionRunnerRecipeResolutionTests
     }
 
     [Fact]
-    public async Task RunAsync_without_snapshot_preserves_repository_resolution()
+    public async Task ExecuteAsync_without_snapshot_preserves_repository_resolution()
     {
         var stored = CreateProcessOnlyRecipe("recipe-1", "Repository Recipe");
         var recipes = new RecordingRecipeRepository(stored);
         var runner = CreateRunner(recipes, new RecordingDeviceConfigurationRepository());
 
-        var result = await runner.RunAsync(new InspectionRequest
+        var result = await runner.ExecuteAsync(new InspectionRequest
         {
             RecipeId = stored.Id,
             ProcessOnly = true
@@ -127,7 +127,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
     [Theory]
     [InlineData("", 0)]
     [InlineData("missing", 1)]
-    public async Task RunAsync_without_snapshot_falls_back_to_current_recipe(
+    public async Task ExecuteAsync_without_snapshot_falls_back_to_current_recipe(
         string recipeId,
         int expectedGetAsyncCount)
     {
@@ -135,7 +135,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
         var recipes = new RecordingRecipeRepository(current);
         var runner = CreateRunner(recipes, new RecordingDeviceConfigurationRepository());
 
-        var result = await runner.RunAsync(new InspectionRequest
+        var result = await runner.ExecuteAsync(new InspectionRequest
         {
             RecipeId = recipeId,
             RecipeSnapshot = null,
@@ -151,7 +151,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
     }
 
     [Fact]
-    public async Task RunAsync_non_process_only_uses_snapshot_business_id_for_result_trace_and_record()
+    public async Task ExecuteAsync_non_process_only_uses_snapshot_business_id_for_result_trace_and_record()
     {
         var snapshot = new Recipe
         {
@@ -170,7 +170,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
             records,
             traceStore);
 
-        var result = await runner.RunAsync(new InspectionRequest
+        var result = await runner.ExecuteAsync(new InspectionRequest
         {
             RecipeId = "RECIPE-1",
             RecipeSnapshot = snapshot,

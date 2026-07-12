@@ -1,4 +1,6 @@
+using VisionStation.Devices;
 using VisionStation.Domain;
+using VisionStation.Vision;
 
 namespace VisionStation.Application;
 
@@ -28,8 +30,38 @@ public sealed class InspectionExecution : IInspectionExecution
         _log = log;
     }
 
-    public InspectionExecution(IInspectionRunner runner, IAppLogService log)
-        : this(new LegacyInspectionRunnerExecutor(runner), log)
+    public InspectionExecution(
+        ICameraDevice camera,
+        IConfigurableCameraDevice configurableCamera,
+        IAxisController axis,
+        IPlcClient plc,
+        IDeviceRuntime devices,
+        DeviceConfiguration configuration,
+        IDeviceConfigurationRepository configurationRepository,
+        IVisionPipeline pipeline,
+        IRecipeRepository recipes,
+        IInspectionRecordRepository records,
+        IImageTraceStore traceStore,
+        IAppLogService log,
+        ICommunicationChannelRuntime communicationChannels,
+        IInspectionRunControl runControl)
+        : this(
+            new InspectionRunner(
+                camera,
+                configurableCamera,
+                axis,
+                plc,
+                devices,
+                configuration,
+                configurationRepository,
+                pipeline,
+                recipes,
+                records,
+                traceStore,
+                log,
+                communicationChannels,
+                runControl),
+            log)
     {
     }
 
@@ -349,20 +381,4 @@ public sealed class InspectionExecution : IInspectionExecution
             TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    private sealed class LegacyInspectionRunnerExecutor : IInspectionExecutor
-    {
-        private readonly IInspectionRunner _runner;
-
-        public LegacyInspectionRunnerExecutor(IInspectionRunner runner)
-        {
-            _runner = runner ?? throw new ArgumentNullException(nameof(runner));
-        }
-
-        public Task<InspectionRunResult> ExecuteAsync(
-            InspectionRequest request,
-            CancellationToken cancellationToken)
-        {
-            return _runner.RunAsync(request, cancellationToken);
-        }
-    }
 }

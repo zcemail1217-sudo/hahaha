@@ -7,6 +7,19 @@ namespace VisionStation.Application.Tests;
 
 public sealed class InspectionExecutionContractTests
 {
+    [Fact]
+    public void Raw_inspection_runner_is_not_a_public_contract()
+    {
+        var assembly = typeof(IInspectionExecution).Assembly;
+        var runner = assembly.GetType(
+            "VisionStation.Application.InspectionRunner",
+            throwOnError: true)!;
+        var legacyContractName = string.Concat("IInspection", "Runner");
+
+        Assert.Null(assembly.GetType($"VisionStation.Application.{legacyContractName}"));
+        Assert.False(runner.IsPublic);
+    }
+
     [Theory]
     [InlineData("IInspectionExecution")]
     [InlineData("IInspectionSession")]

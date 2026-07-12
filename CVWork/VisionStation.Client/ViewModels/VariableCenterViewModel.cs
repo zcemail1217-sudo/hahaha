@@ -21,7 +21,7 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
 
     private readonly IRecipeRepository _recipes;
     private readonly IDeviceConfigurationRepository _configurationRepository;
-    private readonly IInspectionRunner _inspectionRunner;
+    private readonly IInspectionExecution _inspectionExecution;
     private readonly IUiDispatcher _uiDispatcher;
     private readonly IEventAggregator _events;
     private readonly ICommunicationChannelRuntime _communicationChannels;
@@ -45,7 +45,7 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
     public VariableCenterViewModel(
         IRecipeRepository recipes,
         IDeviceConfigurationRepository configurationRepository,
-        IInspectionRunner inspectionRunner,
+        IInspectionExecution inspectionExecution,
         IUiDispatcher uiDispatcher,
         DeviceConfiguration configuration,
         IEventAggregator events,
@@ -57,7 +57,7 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
     {
         _recipes = recipes;
         _configurationRepository = configurationRepository;
-        _inspectionRunner = inspectionRunner;
+        _inspectionExecution = inspectionExecution;
         _uiDispatcher = uiDispatcher;
         _configuration = configuration;
         _events = events;
@@ -73,7 +73,7 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
         AddVariableCommand = new DelegateCommand<string>(AddVariable, _ => CanEditRecipe());
         RemoveVariableCommand = new DelegateCommand(RemoveSelectedVariable, () => SelectedVariable is not null && CanEditRecipe());
         SyncFromRecipeCommand = new DelegateCommand(SyncFromRecipe, CanEditRecipe);
-        _inspectionRunner.RunCompleted += OnInspectionCompleted;
+        _inspectionExecution.RunCompleted += OnInspectionCompleted;
         _communicationChannels.FrameReceived += OnCommunicationFrameReceived;
         _configurationRepository.ConfigurationSaved += OnConfigurationSaved;
 
@@ -1234,7 +1234,7 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
     {
         _liveValueCancellation.Cancel();
         _liveValueCancellation.Dispose();
-        _inspectionRunner.RunCompleted -= OnInspectionCompleted;
+        _inspectionExecution.RunCompleted -= OnInspectionCompleted;
         _communicationChannels.FrameReceived -= OnCommunicationFrameReceived;
         _configurationRepository.ConfigurationSaved -= OnConfigurationSaved;
     }

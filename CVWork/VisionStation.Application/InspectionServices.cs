@@ -14,13 +14,6 @@ using VisionStation.Vision;
 
 namespace VisionStation.Application;
 
-public interface IInspectionRunner
-{
-    event EventHandler<InspectionRunResult>? RunCompleted;
-
-    Task<InspectionRunResult> RunAsync(InspectionRequest request, CancellationToken cancellationToken = default);
-}
-
 public sealed record FlowRunResult(
     string FlowId,
     string FlowName,
@@ -38,7 +31,7 @@ public sealed record InspectionRunResult(InspectionResult Result, ImageFrame Ori
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }
 
-public sealed class InspectionRunner : IInspectionRunner
+internal sealed class InspectionRunner : IInspectionExecutor
 {
     private readonly ICameraDevice _camera;
     private readonly IConfigurableCameraDevice _configurableCamera;
@@ -96,9 +89,7 @@ public sealed class InspectionRunner : IInspectionRunner
         _runControl = runControl;
     }
 
-    public event EventHandler<InspectionRunResult>? RunCompleted;
-
-    public async Task<InspectionRunResult> RunAsync(InspectionRequest request, CancellationToken cancellationToken = default)
+    public async Task<InspectionRunResult> ExecuteAsync(InspectionRequest request, CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
         var recipe = await ResolveRecipeAsync(request, cancellationToken);
@@ -161,7 +152,6 @@ public sealed class InspectionRunner : IInspectionRunner
             FlowResults = execution.FlowResults.ToArray(),
             RuntimeValues = new Dictionary<string, string>(execution.RuntimeValues, StringComparer.OrdinalIgnoreCase)
         };
-        RunCompleted?.Invoke(this, runResult);
         return runResult;
     }
 
