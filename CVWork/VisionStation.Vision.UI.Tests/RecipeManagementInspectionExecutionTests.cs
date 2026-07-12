@@ -806,6 +806,49 @@ public sealed class RecipeManagementInspectionExecutionTests
     }
 
     [Fact]
+    public async Task Pause_is_unavailable_during_initial_persist_and_enabled_for_active_attempt()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        var saveEntered = RecipeManagementTestHarness.NewSignal();
+        var allowSave = RecipeManagementTestHarness.NewSignal();
+        harness.Recipes.SaveHandler = async (_, _) =>
+        {
+            saveEntered.TrySetResult(true);
+            await allowSave.Task;
+        };
+        var attemptEntered = RecipeManagementTestHarness.NewSignal();
+        var allowAttempt = new TaskCompletionSource<InspectionRunResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Session.Handler = (_, token) =>
+        {
+            attemptEntered.TrySetResult(true);
+            return allowAttempt.Task.WaitAsync(token);
+        };
+
+        var running = harness.ViewModel.TestRunRecipeCommand.Execute();
+        await saveEntered.Task.WaitAsync(CommandTimeout);
+
+        var canPauseDuringPersist =
+            harness.ViewModel.PauseTestRunCommand.CanExecute();
+        harness.ViewModel.PauseTestRunCommand.Execute();
+        var pausedDuringPersist = harness.ViewModel.IsTestRunPaused;
+        var pauseCountDuringPersist = harness.RunControl.PauseCount;
+
+        allowSave.TrySetResult(true);
+        await attemptEntered.Task.WaitAsync(CommandTimeout);
+        var canPauseDuringAttempt =
+            harness.ViewModel.PauseTestRunCommand.CanExecute();
+        allowAttempt.TrySetResult(RecipeRunResults.Ok());
+        await running.WaitAsync(CommandTimeout);
+
+        Assert.False(canPauseDuringPersist);
+        Assert.False(pausedDuringPersist);
+        Assert.Equal(0, pauseCountDuringPersist);
+        Assert.True(canPauseDuringAttempt);
+        Assert.Equal(0, harness.RunControl.PauseCount);
+    }
+
+    [Fact]
     public async Task Reset_during_initial_persist_is_latched_without_cancelling_or_resaving()
     {
         await using var harness = await RecipeManagementTestHarness.CreateAsync();
@@ -832,10 +875,14 @@ public sealed class RecipeManagementInspectionExecutionTests
         await saveEntered.Task.WaitAsync(CommandTimeout);
         harness.ViewModel.ResetTestRunCommand.Execute();
         var saveWasCancelled = saveToken.IsCancellationRequested;
+        var beginCountDuringPersist = harness.RunControl.BeginCount;
+        var resetCountDuringPersist = harness.RunControl.RequestResetCount;
         allowSave.TrySetResult(true);
         Assert.False(saveWasCancelled);
         await running.WaitAsync(CommandTimeout);
 
+        Assert.Equal(0, beginCountDuringPersist);
+        Assert.Equal(0, resetCountDuringPersist);
         Assert.Equal(1, harness.Execution.TryBeginCount);
         Assert.Equal(1, harness.Recipes.SaveCount);
         Assert.Equal(1, harness.Recipes.SetCurrentCount);
@@ -849,6 +896,47 @@ public sealed class RecipeManagementInspectionExecutionTests
             Assert.Single(harness.Session.Requests).RecipeSnapshot);
         var resetVariable = Assert.Single(snapshot.Variables);
         Assert.Equal(resetVariable.DefaultValue, resetVariable.CurrentValue);
+        Assert.Equal(0, harness.RunControl.RequestResetCount);
+        Assert.Equal(1, harness.Session.DisposeCount);
+    }
+
+    [Fact]
+    public async Task Early_reset_then_navigation_cancels_persist_without_touching_run_control()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        var saveEntered = RecipeManagementTestHarness.NewSignal();
+        var allowSave = RecipeManagementTestHarness.NewSignal();
+        CancellationToken saveToken = default;
+        harness.Recipes.SaveHandler = async (_, token) =>
+        {
+            saveToken = token;
+            saveEntered.TrySetResult(true);
+            await allowSave.Task;
+            token.ThrowIfCancellationRequested();
+        };
+
+        var running = harness.ViewModel.TestRunRecipeCommand.Execute();
+        await saveEntered.Task.WaitAsync(CommandTimeout);
+        harness.ViewModel.ResetTestRunCommand.Execute();
+        var resetCountDuringPersist = harness.RunControl.RequestResetCount;
+
+        harness.ViewModel.OnNavigatedFrom(null!);
+        var lifetimeSaveWasCancelled = saveToken.IsCancellationRequested;
+        allowSave.TrySetResult(true);
+        await running.WaitAsync(CommandTimeout);
+
+        Assert.True(lifetimeSaveWasCancelled);
+        Assert.Equal(0, resetCountDuringPersist);
+        Assert.Empty(harness.Session.Requests);
+        Assert.Equal(0, harness.Channels.ConnectCount);
+        Assert.Equal(0, harness.RunControl.BeginCount);
+        Assert.Equal(0, harness.RunControl.EndCount);
+        Assert.Equal(0, harness.RunControl.PauseCount);
+        Assert.Equal(0, harness.RunControl.ResumeCount);
+        Assert.Equal(0, harness.RunControl.RequestResetCount);
+        Assert.False(harness.RunControl.IsPaused);
+        Assert.False(harness.ViewModel.IsTestRunning);
+        Assert.False(harness.ViewModel.IsTestRunPaused);
         Assert.Equal(1, harness.Session.DisposeCount);
     }
 
@@ -856,6 +944,14 @@ public sealed class RecipeManagementInspectionExecutionTests
     public async Task Reset_does_not_overwrite_external_recipe_saved_after_initial_persist()
     {
         await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        harness.PublishRecipeChanged(RecipeWithVariable(
+            "InitialFrozen",
+            "current-before-reset",
+            "default-after-reset"));
+        await RecipeManagementTestHarness.WaitUntilAsync(() =>
+            harness.ViewModel.RecipeVariables.Any(variable =>
+                variable.Key == "InitialFrozen"));
+        var initialRecipeName = harness.ViewModel.RecipeName;
         var firstAttemptEntered = RecipeManagementTestHarness.NewSignal();
         var attempt = 0;
         harness.Session.Handler = async (_, token) =>
@@ -890,6 +986,30 @@ public sealed class RecipeManagementInspectionExecutionTests
                 variable.CurrentValue == "external"));
         Assert.Equal(1, harness.Recipes.SaveCount);
         Assert.Equal(2, harness.Session.Requests.Count);
+        var firstSnapshot = Assert.IsType<Recipe>(
+            harness.Session.Requests[0].RecipeSnapshot);
+        var secondSnapshot = Assert.IsType<Recipe>(
+            harness.Session.Requests[1].RecipeSnapshot);
+        Assert.All(
+            new[] { firstSnapshot, secondSnapshot },
+            snapshot =>
+            {
+                Assert.Equal("recipe-1", snapshot.Id);
+                Assert.Equal(initialRecipeName, snapshot.Name);
+                Assert.Equal("P-1", snapshot.ProductCode);
+                Assert.DoesNotContain(
+                    snapshot.Variables,
+                    variable => variable.Key == "ExternalAfterSave");
+                Assert.Equal(
+                    firstSnapshot.EffectiveFlows.Select(flow => flow.Id),
+                    snapshot.EffectiveFlows.Select(flow => flow.Id));
+            });
+        Assert.Equal(
+            "current-before-reset",
+            Assert.Single(firstSnapshot.Variables).CurrentValue);
+        Assert.Equal(
+            "default-after-reset",
+            Assert.Single(secondSnapshot.Variables).CurrentValue);
     }
 
     [Fact]

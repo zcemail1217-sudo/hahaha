@@ -333,6 +333,9 @@ internal sealed class RecordingRunControl : IInspectionRunControl
     public bool IsPaused { get; private set; }
     public int BeginCount { get; private set; }
     public int EndCount { get; private set; }
+    public int PauseCount { get; private set; }
+    public int ResumeCount { get; private set; }
+    public int RequestResetCount { get; private set; }
     public Action EndRunHandler { get; set; } = static () => { };
     public Action RequestResetHandler { get; set; } = static () => { };
     public void BeginRun()
@@ -348,9 +351,23 @@ internal sealed class RecordingRunControl : IInspectionRunControl
         EndRunHandler();
     }
 
-    public void Pause() => IsPaused = true;
-    public void Resume() => IsPaused = false;
-    public void RequestReset() => RequestResetHandler();
+    public void Pause()
+    {
+        PauseCount++;
+        IsPaused = true;
+    }
+
+    public void Resume()
+    {
+        ResumeCount++;
+        IsPaused = false;
+    }
+
+    public void RequestReset()
+    {
+        RequestResetCount++;
+        RequestResetHandler();
+    }
     public Task WaitIfPausedOrResetAsync(CancellationToken cancellationToken) =>
         Task.CompletedTask;
 }

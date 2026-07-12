@@ -69,6 +69,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
     private bool _isLoadingEditor;
     private bool _isTestRunning;
     private bool _isTestRunPaused;
+    private bool _isTestRunAttemptActive;
     private bool _testRunResetRequested;
     private CancellationTokenSource? _testRunLifetimeCancellation;
     private CancellationTokenSource? _testRunAttemptCancellation;
@@ -133,7 +134,9 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         TestRunRecipeCommand = new AsyncDelegateCommand(TestRunRecipeAsync, CanTestRun)
             .EnableParallelExecution()
             .Catch(ReportTestRunFailureSafely);
-        PauseTestRunCommand = new DelegateCommand(PauseTestRun, () => IsTestRunning && !IsTestRunPaused);
+        PauseTestRunCommand = new DelegateCommand(
+            PauseTestRun,
+            () => IsTestRunning && _isTestRunAttemptActive && !IsTestRunPaused);
         ResetTestRunCommand = new DelegateCommand(ResetTestRun, () => !IsBusy);
         OpenFlowEditorCommand = new AsyncDelegateCommand(OpenFlowEditorAsync, CanOpenFlowEditor)
             .Catch(ReportOpenFlowEditorFailureSafely);
@@ -1183,6 +1186,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
                 _testRunAttemptCancellationCompletion = Task.CompletedTask;
                 _inspectionRunControl.BeginRun();
                 runControlStarted = true;
+                SetTestRunAttemptActive(true);
                 try
                 {
                     ResetProcessStepRuntimeStates(prepareForRun: true);
@@ -1222,6 +1226,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
                 }
                 finally
                 {
+                    SetTestRunAttemptActive(false);
                     var attemptCancellationCompletion =
                         _testRunAttemptCancellationCompletion;
                     _testRunAttemptCancellation = null;
@@ -1250,6 +1255,14 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         }
         finally
         {
+            try
+            {
+                SetTestRunAttemptActive(false);
+            }
+            catch
+            {
+            }
+
             Exception? endRunFailure = null;
             if (runControlStarted)
             {
@@ -2318,7 +2331,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 
     private void PauseTestRun()
     {
-        if (!IsTestRunning || IsTestRunPaused)
+        if (!IsTestRunning || !_isTestRunAttemptActive || IsTestRunPaused)
         {
             return;
         }
@@ -2333,7 +2346,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 
     private void ResumeTestRun()
     {
-        if (!IsTestRunPaused)
+        if (!IsTestRunPaused || !_isTestRunAttemptActive)
         {
             return;
         }
@@ -2351,6 +2364,11 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         if (IsTestRunning)
         {
             _testRunResetRequested = true;
+            if (!_isTestRunAttemptActive)
+            {
+                return;
+            }
+
             Exception? requestResetFailure = null;
             try
             {
@@ -2628,9 +2646,20 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         RemoveSignalMappingCommand.RaiseCanExecuteChanged();
     }
 
+    private void SetTestRunAttemptActive(bool value)
+    {
+        if (_isTestRunAttemptActive == value)
+        {
+            return;
+        }
+
+        _isTestRunAttemptActive = value;
+        RaiseCommandStates();
+    }
+
     private bool CanTestRun() =>
         !IsBusy &&
-        (IsTestRunPaused ||
+        ((_isTestRunAttemptActive && IsTestRunPaused) ||
          (!IsTestRunning && _inspectionExecution.Current is null));
 
     private void SubscribeInspectionExecution()
