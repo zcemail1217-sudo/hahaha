@@ -10,12 +10,13 @@ public sealed class SignalWaiterTests
     {
         var values = new Queue<string?>(new[] { null, "WAIT", "OK" });
 
+        // This test verifies value sequencing, not timer scheduling under parallel test load.
         var actual = await SignalWaiter.WaitUntilMatchedAsync(
             _ => Task.FromResult(values.Count > 0 ? values.Dequeue() : null),
             "OK",
             "Equals",
             timeoutMs: 100,
-            pollIntervalMs: 1,
+            pollIntervalMs: 0,
             debounceMs: 0,
             CancellationToken.None);
 
