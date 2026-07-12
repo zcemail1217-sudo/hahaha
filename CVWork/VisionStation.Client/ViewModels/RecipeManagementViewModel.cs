@@ -1362,7 +1362,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         var message = $"打开流程编辑器失败：{exception.Message}";
         try
         {
-            StatusText = message;
+            _uiDispatcher.Invoke(() => StatusText = message);
         }
         catch
         {

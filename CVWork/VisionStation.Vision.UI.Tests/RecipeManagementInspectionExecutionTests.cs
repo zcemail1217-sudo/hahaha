@@ -471,13 +471,24 @@ public sealed class RecipeManagementInspectionExecutionTests
     {
         await using var harness = await RecipeManagementTestHarness.CreateAsync();
         harness.FlowEditor.Handler = static (_, _) =>
-            Task.FromException(new InvalidOperationException("dialog-failure"));
+            Task.Run(static () =>
+                throw new InvalidOperationException("dialog-failure"));
         harness.Log.ThrowOnError = true;
+        var reportedInsideDispatcher = false;
+        harness.ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(harness.ViewModel.StatusText) &&
+                harness.ViewModel.StatusText.Contains("dialog-failure"))
+            {
+                reportedInsideDispatcher = harness.UiDispatcher.IsInvoking;
+            }
+        };
 
         var failure = await Record.ExceptionAsync(() =>
             harness.ViewModel.OpenFlowEditorCommand.Execute().WaitAsync(CommandTimeout));
 
         Assert.Null(failure);
+        Assert.True(reportedInsideDispatcher);
         Assert.Equal(
             "打开流程编辑器失败：dialog-failure",
             harness.ViewModel.StatusText);
