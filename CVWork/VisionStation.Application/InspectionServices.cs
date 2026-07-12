@@ -101,13 +101,7 @@ public sealed class InspectionRunner : IInspectionRunner
     public async Task<InspectionRunResult> RunAsync(InspectionRequest request, CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
-        Recipe? recipe = null;
-        if (!string.IsNullOrWhiteSpace(request.RecipeId))
-        {
-            recipe = await _recipes.GetAsync(request.RecipeId, cancellationToken);
-        }
-
-        recipe = (recipe ?? await _recipes.GetCurrentAsync(cancellationToken)).WithNormalizedFlows();
+        var recipe = await ResolveRecipeAsync(request, cancellationToken);
         _configuration = await _configurationRepository.GetAsync(cancellationToken);
         var initialRuntimeValues = CreateInitialRuntimeValues(recipe, request, _configuration);
         var runtimeRecipe = ApplyVariableBindings(recipe, initialRuntimeValues).WithNormalizedFlows();
@@ -169,6 +163,36 @@ public sealed class InspectionRunner : IInspectionRunner
         };
         RunCompleted?.Invoke(this, runResult);
         return runResult;
+    }
+
+    private async Task<Recipe> ResolveRecipeAsync(
+        InspectionRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.RecipeSnapshot is { } snapshot)
+        {
+            if (!string.IsNullOrWhiteSpace(request.RecipeId) &&
+                !string.Equals(
+                    request.RecipeId,
+                    snapshot.Id,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    $"RecipeId '{request.RecipeId}' does not match RecipeSnapshot.Id '{snapshot.Id}'.",
+                    nameof(request));
+            }
+
+            return snapshot.WithNormalizedFlows();
+        }
+
+        Recipe? recipe = null;
+        if (!string.IsNullOrWhiteSpace(request.RecipeId))
+        {
+            recipe = await _recipes.GetAsync(request.RecipeId, cancellationToken);
+        }
+
+        return (recipe ?? await _recipes.GetCurrentAsync(cancellationToken))
+            .WithNormalizedFlows();
     }
 
     private async Task<ProcessExecutionContext> ExecuteVisionOnlyAsync(
