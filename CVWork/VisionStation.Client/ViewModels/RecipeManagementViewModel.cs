@@ -70,6 +70,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
     private bool _isTestRunning;
     private bool _isTestRunPaused;
     private bool _isTestRunAttemptActive;
+    private bool _acceptsTestRunReset;
     private bool _testRunResetRequested;
     private CancellationTokenSource? _testRunLifetimeCancellation;
     private CancellationTokenSource? _testRunAttemptCancellation;
@@ -137,7 +138,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         PauseTestRunCommand = new DelegateCommand(
             PauseTestRun,
             () => IsTestRunning && _isTestRunAttemptActive && !IsTestRunPaused);
-        ResetTestRunCommand = new DelegateCommand(ResetTestRun, () => !IsBusy);
+        ResetTestRunCommand = new DelegateCommand(ResetTestRun, CanResetTestRun);
         OpenFlowEditorCommand = new AsyncDelegateCommand(OpenFlowEditorAsync, CanOpenFlowEditor)
             .Catch(ReportOpenFlowEditorFailureSafely);
         NewRecipeCommand = new DelegateCommand(async () => await CreateRecipeAsync(), CanCreateRecipe);
@@ -1151,7 +1152,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
             recipeName = runRecipeSnapshot.Name;
             IsTestRunning = true;
             IsTestRunPaused = false;
-            RaiseCommandStates();
+            SetAcceptsTestRunReset(true);
 
             _log.Info("Recipe", $"试运行：正在保存配方 {recipeName} 并启动流程");
             var persistedRecipe = await PersistSelectedRecipeAsync(
@@ -1255,6 +1256,7 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         }
         finally
         {
+            SetAcceptsTestRunReset(false);
             try
             {
                 SetTestRunAttemptActive(false);
@@ -1374,18 +1376,11 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         var message = $"试运行失败：{exception.Message}";
         try
         {
-            StatusText = message;
-            TestRunStateText = message;
-        }
-        catch
-        {
-        }
-
-        try
-        {
-            IsTestRunPaused = false;
-            IsTestRunning = false;
-            RaiseCommandStates();
+            _uiDispatcher.Invoke(() =>
+            {
+                StatusText = message;
+                TestRunStateText = message;
+            });
         }
         catch
         {
@@ -2363,6 +2358,11 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
     {
         if (IsTestRunning)
         {
+            if (!_acceptsTestRunReset)
+            {
+                return;
+            }
+
             _testRunResetRequested = true;
             if (!_isTestRunAttemptActive)
             {
@@ -2654,13 +2654,39 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
         }
 
         _isTestRunAttemptActive = value;
-        RaiseCommandStates();
+        RaiseCommandStatesSafely("试运行阶段命令状态刷新失败");
+    }
+
+    private void SetAcceptsTestRunReset(bool value)
+    {
+        if (_acceptsTestRunReset == value)
+        {
+            return;
+        }
+
+        _acceptsTestRunReset = value;
+        RaiseCommandStatesSafely("试运行复位命令状态刷新失败");
+    }
+
+    private void RaiseCommandStatesSafely(string failurePrefix)
+    {
+        try
+        {
+            RaiseCommandStates();
+        }
+        catch (Exception ex)
+        {
+            LogWarningSafely($"{failurePrefix}：{ex.Message}");
+        }
     }
 
     private bool CanTestRun() =>
         !IsBusy &&
         ((_isTestRunAttemptActive && IsTestRunPaused) ||
          (!IsTestRunning && _inspectionExecution.Current is null));
+
+    private bool CanResetTestRun() =>
+        !IsBusy && (!IsTestRunning || _acceptsTestRunReset);
 
     private void SubscribeInspectionExecution()
     {
@@ -2701,7 +2727,6 @@ public sealed class RecipeManagementViewModel : BindableBase, INavigationAware
 
     public void OnNavigatedFrom(NavigationContext navigationContext)
     {
-        AdvanceRecipePageEpoch();
         try
         {
             RequestLifetimeCancellation();

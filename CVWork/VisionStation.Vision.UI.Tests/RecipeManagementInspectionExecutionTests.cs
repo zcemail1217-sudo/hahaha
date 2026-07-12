@@ -1104,4 +1104,241 @@ public sealed class RecipeManagementInspectionExecutionTests
         Assert.Equal(1, harness.Session.DisposeCount);
         Assert.Contains("已取消", harness.ViewModel.StatusText);
     }
+
+    [Fact]
+    public async Task Resume_failure_reports_on_dispatcher_without_releasing_owner()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        var entered = RecipeManagementTestHarness.NewSignal();
+        harness.Session.Handler = async (_, token) =>
+        {
+            entered.TrySetResult(true);
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return RecipeRunResults.Ok();
+        };
+
+        var owner = harness.ViewModel.TestRunRecipeCommand.Execute();
+        await entered.Task.WaitAsync(CommandTimeout);
+        harness.ViewModel.PauseTestRunCommand.Execute();
+
+        var reportedInsideDispatcher = false;
+        harness.ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(harness.ViewModel.StatusText) &&
+                harness.ViewModel.StatusText.Contains("resume-failure"))
+            {
+                reportedInsideDispatcher = harness.UiDispatcher.IsInvoking;
+            }
+        };
+        harness.RunControl.ResumeHandler = () =>
+            throw new InvalidOperationException("resume-failure");
+
+        var failure = await Record.ExceptionAsync(() =>
+            harness.ViewModel.TestRunRecipeCommand.Execute().WaitAsync(CommandTimeout));
+
+        Assert.Null(failure);
+        Assert.True(reportedInsideDispatcher);
+        Assert.True(harness.ViewModel.IsTestRunning);
+        Assert.True(harness.ViewModel.IsTestRunPaused);
+        Assert.False(harness.ViewModel.IsRecipeEditingEnabled);
+        Assert.Equal(0, harness.Session.DisposeCount);
+
+        harness.ViewModel.OnNavigatedFrom(null!);
+        await owner.WaitAsync(CommandTimeout);
+        Assert.False(harness.ViewModel.IsTestRunning);
+        Assert.False(harness.ViewModel.IsTestRunPaused);
+        Assert.Equal(1, harness.Session.DisposeCount);
+    }
+
+    [Fact]
+    public async Task Cleanup_replay_started_before_navigation_still_applies()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        var runEntered = RecipeManagementTestHarness.NewSignal();
+        var allowRun = new TaskCompletionSource<InspectionRunResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Session.Handler = (_, _) =>
+        {
+            runEntered.TrySetResult(true);
+            return allowRun.Task;
+        };
+
+        var running = harness.ViewModel.TestRunRecipeCommand.Execute();
+        await runEntered.Task.WaitAsync(CommandTimeout);
+        var external = RecipeWithVariable("ReplayAfterNavigation", "latest");
+        harness.PublishRecipeChanged(external);
+
+        var readStarted = RecipeManagementTestHarness.NewSignal();
+        var completeRead = new TaskCompletionSource<Recipe?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Recipes.GetAsyncHandler = (_, _, _) =>
+        {
+            readStarted.TrySetResult(true);
+            return completeRead.Task;
+        };
+
+        allowRun.TrySetResult(RecipeRunResults.Ok());
+        await running.WaitAsync(CommandTimeout);
+        await readStarted.Task.WaitAsync(CommandTimeout);
+        harness.ViewModel.OnNavigatedFrom(null!);
+        completeRead.TrySetResult(external);
+
+        await RecipeManagementTestHarness.WaitUntilAsync(() =>
+            harness.ViewModel.RecipeVariables.Any(variable =>
+                variable.Key == "ReplayAfterNavigation"));
+    }
+
+    [Fact]
+    public async Task Active_notification_failure_does_not_prevent_attempt_or_cleanup()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        var saveEntered = RecipeManagementTestHarness.NewSignal();
+        var allowSave = RecipeManagementTestHarness.NewSignal();
+        harness.Recipes.SaveHandler = async (_, _) =>
+        {
+            saveEntered.TrySetResult(true);
+            await allowSave.Task;
+        };
+        var attemptEntered = RecipeManagementTestHarness.NewSignal();
+        harness.Session.Handler = (_, _) =>
+        {
+            attemptEntered.TrySetResult(true);
+            return Task.FromResult(RecipeRunResults.Ok());
+        };
+
+        var running = harness.ViewModel.TestRunRecipeCommand.Execute();
+        await saveEntered.Task.WaitAsync(CommandTimeout);
+        var notificationFailed = false;
+        harness.ViewModel.PauseTestRunCommand.CanExecuteChanged += (_, _) =>
+        {
+            if (!notificationFailed &&
+                harness.ViewModel.PauseTestRunCommand.CanExecute())
+            {
+                notificationFailed = true;
+                throw new InvalidOperationException("active-notification-failure");
+            }
+        };
+
+        allowSave.TrySetResult(true);
+        await running.WaitAsync(CommandTimeout);
+
+        Assert.True(notificationFailed);
+        Assert.True(attemptEntered.Task.IsCompleted);
+        Assert.Single(harness.Session.Requests);
+        Assert.Equal(1, harness.RunControl.BeginCount);
+        Assert.Equal(1, harness.RunControl.EndCount);
+        Assert.Equal(1, harness.Channels.DisconnectCount);
+        Assert.Equal(1, harness.Session.DisposeCount);
+        Assert.False(harness.ViewModel.IsTestRunning);
+    }
+
+    [Fact]
+    public async Task Deactivate_notification_failure_awaits_cancellation_before_reset_attempt()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        var firstAttemptEntered = RecipeManagementTestHarness.NewSignal();
+        var cancellationCallbackEntered = RecipeManagementTestHarness.NewSignal();
+        var allowCancellationCompletion = RecipeManagementTestHarness.NewSignal();
+        var firstAttemptMayFinish = RecipeManagementTestHarness.NewSignal();
+        var secondAttemptEntered = RecipeManagementTestHarness.NewSignal();
+        var attempt = 0;
+        harness.Session.Handler = async (request, token) =>
+        {
+            if (Interlocked.Increment(ref attempt) == 1)
+            {
+                _ = token.Register(() =>
+                {
+                    cancellationCallbackEntered.TrySetResult(true);
+                    firstAttemptMayFinish.TrySetResult(true);
+                    allowCancellationCompletion.Task.GetAwaiter().GetResult();
+                });
+                firstAttemptEntered.TrySetResult(true);
+                await firstAttemptMayFinish.Task;
+                throw new InspectionRunResetException();
+            }
+
+            secondAttemptEntered.TrySetResult(true);
+            return RecipeRunResults.Ok();
+        };
+
+        var running = harness.ViewModel.TestRunRecipeCommand.Execute();
+        await firstAttemptEntered.Task.WaitAsync(CommandTimeout);
+        var notificationFailed = RecipeManagementTestHarness.NewSignal();
+        harness.ViewModel.PauseTestRunCommand.CanExecuteChanged += (_, _) =>
+        {
+            if (!harness.ViewModel.PauseTestRunCommand.CanExecute())
+            {
+                notificationFailed.TrySetResult(true);
+                throw new InvalidOperationException("inactive-notification-failure");
+            }
+        };
+
+        harness.ViewModel.ResetTestRunCommand.Execute();
+        try
+        {
+            await cancellationCallbackEntered.Task.WaitAsync(CommandTimeout);
+            await notificationFailed.Task.WaitAsync(CommandTimeout);
+            Assert.False(secondAttemptEntered.Task.IsCompleted);
+        }
+        finally
+        {
+            allowCancellationCompletion.TrySetResult(true);
+        }
+
+        await running.WaitAsync(CommandTimeout);
+        Assert.True(secondAttemptEntered.Task.IsCompleted);
+        Assert.Equal(2, harness.Session.Requests.Count);
+        Assert.Equal(2, harness.RunControl.BeginCount);
+        Assert.Equal(1, harness.RunControl.EndCount);
+        Assert.Equal(1, harness.Channels.DisconnectCount);
+        Assert.Equal(1, harness.Session.DisposeCount);
+        Assert.False(harness.ViewModel.IsTestRunning);
+        Assert.False(harness.ViewModel.IsTestRunPaused);
+    }
+
+    [Fact]
+    public async Task Reset_is_rejected_during_final_disconnect_and_available_after_cleanup()
+    {
+        await using var harness = await RecipeManagementTestHarness.CreateAsync();
+        harness.PublishRecipeChanged(RecipeWithVariable(
+            "CleanupReset",
+            "current-before-run",
+            "default-after-cleanup"));
+        await RecipeManagementTestHarness.WaitUntilAsync(() =>
+            harness.ViewModel.RecipeVariables.Any(variable =>
+                variable.Key == "CleanupReset"));
+        var disconnectEntered = RecipeManagementTestHarness.NewSignal();
+        var allowDisconnect = RecipeManagementTestHarness.NewSignal();
+        harness.Channels.DisconnectHandler = async (_, _) =>
+        {
+            disconnectEntered.TrySetResult(true);
+            await allowDisconnect.Task;
+        };
+
+        var running = harness.ViewModel.TestRunRecipeCommand.Execute();
+        await disconnectEntered.Task.WaitAsync(CommandTimeout);
+        var statusBeforeReset = harness.ViewModel.StatusText;
+        var runControlResetCount = harness.RunControl.RequestResetCount;
+        try
+        {
+            Assert.True(harness.ViewModel.IsTestRunning);
+            Assert.False(harness.ViewModel.ResetTestRunCommand.CanExecute());
+            harness.ViewModel.ResetTestRunCommand.Execute();
+            Assert.Equal(runControlResetCount, harness.RunControl.RequestResetCount);
+            Assert.Equal(statusBeforeReset, harness.ViewModel.StatusText);
+            Assert.Single(harness.Session.Requests);
+        }
+        finally
+        {
+            allowDisconnect.TrySetResult(true);
+            await running.WaitAsync(CommandTimeout);
+        }
+
+        Assert.True(harness.ViewModel.ResetTestRunCommand.CanExecute());
+        harness.ViewModel.ResetTestRunCommand.Execute();
+        Assert.Equal("流程已复位，变量已初始化", harness.ViewModel.StatusText);
+        Assert.Equal(
+            "default-after-cleanup",
+            Assert.Single(harness.ViewModel.RecipeVariables).CurrentValue);
+    }
 }

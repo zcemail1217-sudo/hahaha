@@ -24,6 +24,7 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
         RecordingInspectionSession session,
         RecordingCommunicationChannels channels,
         RecordingRunControl runControl,
+        ImmediateUiDispatcher uiDispatcher,
         ConfigurableFlowEditorDialogService flowEditor,
         ConfigurableAppLogService log)
     {
@@ -35,6 +36,7 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
         Session = session;
         Channels = channels;
         RunControl = runControl;
+        UiDispatcher = uiDispatcher;
         FlowEditor = flowEditor;
         Log = log;
     }
@@ -45,6 +47,7 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
     public RecordingInspectionSession Session { get; }
     public RecordingCommunicationChannels Channels { get; }
     public RecordingRunControl RunControl { get; }
+    public ImmediateUiDispatcher UiDispatcher { get; }
     public ConfigurableFlowEditorDialogService FlowEditor { get; }
     public ConfigurableAppLogService Log { get; }
 
@@ -64,6 +67,7 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
         var execution = new FakeInspectionExecution(session);
         var channels = new RecordingCommunicationChannels();
         var runControl = new RecordingRunControl();
+        var uiDispatcher = new ImmediateUiDispatcher();
         var flowEditor = new ConfigurableFlowEditorDialogService();
         var log = new ConfigurableAppLogService();
         EventAggregator events;
@@ -84,7 +88,7 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
                 execution,
                 channels,
                 runControl,
-                new ImmediateUiDispatcher(),
+                uiDispatcher,
                 new UnsavedChangesService());
         }
         finally
@@ -102,6 +106,7 @@ internal sealed class RecipeManagementTestHarness : IAsyncDisposable
             session,
             channels,
             runControl,
+            uiDispatcher,
             flowEditor,
             log);
     }
@@ -337,6 +342,7 @@ internal sealed class RecordingRunControl : IInspectionRunControl
     public int ResumeCount { get; private set; }
     public int RequestResetCount { get; private set; }
     public Action EndRunHandler { get; set; } = static () => { };
+    public Action ResumeHandler { get; set; } = static () => { };
     public Action RequestResetHandler { get; set; } = static () => { };
     public void BeginRun()
     {
@@ -360,6 +366,7 @@ internal sealed class RecordingRunControl : IInspectionRunControl
     public void Resume()
     {
         ResumeCount++;
+        ResumeHandler();
         IsPaused = false;
     }
 
@@ -374,7 +381,22 @@ internal sealed class RecordingRunControl : IInspectionRunControl
 
 internal sealed class ImmediateUiDispatcher : IUiDispatcher
 {
-    public void Invoke(Action action) => action();
+    private int _invokeDepth;
+
+    public bool IsInvoking => Volatile.Read(ref _invokeDepth) > 0;
+
+    public void Invoke(Action action)
+    {
+        Interlocked.Increment(ref _invokeDepth);
+        try
+        {
+            action();
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _invokeDepth);
+        }
+    }
 }
 
 internal sealed class ImmediateSynchronizationContext : SynchronizationContext
