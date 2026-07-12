@@ -116,6 +116,90 @@ public sealed class ProductionCoordinatorTests
     }
 
     [Fact]
+    public async Task RunSingleAsync_when_session_dispose_fails_before_release_keeps_owner_and_rejects_new_runs()
+    {
+        var executor = new TestInspectionExecutor();
+        var innerExecution = new InspectionExecution(
+            executor,
+            new FakeAppLogService());
+        var execution = new DisposeBeforeReleaseFailingInspectionExecution(innerExecution);
+        var harness = CoordinatorHarness.Create(inspectionExecution: execution);
+
+        try
+        {
+            var exception = await Assert.ThrowsAsync<AggregateException>(async () =>
+            {
+                await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+            });
+            var owner = Assert.IsType<ActiveInspectionRun>(execution.Current);
+
+            Assert.Contains(
+                exception.Flatten().InnerExceptions,
+                error => error.Message == "session-dispose-before-release-failure");
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Equal(owner.SessionId, harness.Coordinator.Snapshot.ActiveSessionId);
+            Assert.Same(owner, execution.Current);
+
+            var start = await harness.Coordinator.StartAsync().WaitAsync(Watchdog);
+            var single = await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+            var global = Assert.IsType<RunAdmission.Rejected>(
+                execution.TryBegin(new InspectionRunIntent(
+                    InspectionRunModes.RecipeTest,
+                    "RecipeManagementViewModel")));
+
+            Assert.Equal(ProductionCommandDisposition.Rejected, start.Disposition);
+            Assert.Equal(RunRejectionReason.Busy, start.Rejection?.Reason);
+            Assert.Same(owner, start.Rejection?.Active);
+            Assert.Equal(ProductionCommandDisposition.Rejected, single.Disposition);
+            Assert.Equal(RunRejectionReason.Busy, single.Rejection?.Reason);
+            Assert.Same(owner, single.Rejection?.Active);
+            Assert.Equal(RunRejectionReason.Busy, global.Rejection.Reason);
+            Assert.Same(owner, global.Rejection.Active);
+            Assert.Equal(1, executor.CallCount);
+            Assert.Equal(1, execution.SessionDisposeCount);
+            Assert.Same(owner, execution.Current);
+        }
+        finally
+        {
+            await execution.ReleaseAsync().WaitAsync(Watchdog);
+        }
+    }
+
+    [Fact]
+    public async Task RunSingleAsync_when_session_dispose_returns_without_release_faults_and_keeps_owner()
+    {
+        var innerExecution = new InspectionExecution(
+            new TestInspectionExecutor(),
+            new FakeAppLogService());
+        var execution = new DisposeBeforeReleaseFailingInspectionExecution(
+            innerExecution,
+            completeDisposeSuccessfully: true);
+        var harness = CoordinatorHarness.Create(inspectionExecution: execution);
+
+        try
+        {
+            var exception = await Assert.ThrowsAsync<AggregateException>(async () =>
+            {
+                await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+            });
+            var owner = Assert.IsType<ActiveInspectionRun>(execution.Current);
+
+            Assert.Contains(
+                exception.Flatten().InnerExceptions,
+                error => error.Message ==
+                         "Inspection session disposal completed without releasing execution ownership.");
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Equal(owner.SessionId, harness.Coordinator.Snapshot.ActiveSessionId);
+            Assert.Same(owner, execution.Current);
+            Assert.Equal(1, execution.SessionDisposeCount);
+        }
+        finally
+        {
+            await execution.ReleaseAsync().WaitAsync(Watchdog);
+        }
+    }
+
+    [Fact]
     public async Task RunSingleAsync_never_projects_reacquired_external_session_as_production_owner()
     {
         var innerExecution = new InspectionExecution(

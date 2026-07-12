@@ -474,16 +474,29 @@ public sealed class ProductionCoordinator
             operation.RecordCleanupFailure(disconnectFailure);
         }
 
+        var ownershipReleased = operation.Session is null;
         if (operation.Session is not null)
         {
+            var disposeFailed = false;
             try
             {
                 await operation.Session.DisposeAsync().ConfigureAwait(false);
             }
             catch (Exception exception)
             {
+                disposeFailed = true;
                 operation.RecordCleanupFailure(exception);
                 LogWarningSafely($"Failed to release inspection session: {exception.Message}");
+            }
+
+            ownershipReleased = _inspectionExecution.Current?.SessionId !=
+                                operation.Session.Run.SessionId;
+            if (!disposeFailed && !ownershipReleased)
+            {
+                var exception = new InvalidOperationException(
+                    "Inspection session disposal completed without releasing execution ownership.");
+                operation.RecordCleanupFailure(exception);
+                LogWarningSafely(exception.Message);
             }
         }
 
@@ -500,13 +513,22 @@ public sealed class ProductionCoordinator
             {
                 if (ReferenceEquals(_activeOperation, operation))
                 {
-                    _activeOperation = null;
-                    var finalState = operation.StopTimedOut ||
-                                     finalFaulted ||
-                                     outcome.HasFailures
-                        ? ProductionState.Faulted
-                        : ProductionState.Stopped;
-                    update = CommitStateLocked(finalState, null);
+                    if (ownershipReleased)
+                    {
+                        _activeOperation = null;
+                        var finalState = operation.StopTimedOut ||
+                                         finalFaulted ||
+                                         outcome.HasFailures
+                            ? ProductionState.Faulted
+                            : ProductionState.Stopped;
+                        update = CommitStateLocked(finalState, null);
+                    }
+                    else
+                    {
+                        update = CommitStateLocked(
+                            ProductionState.Faulted,
+                            operation.Session!.Run.SessionId);
+                    }
                 }
             }
 

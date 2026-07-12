@@ -248,6 +248,98 @@ internal sealed class DisposeAfterReleaseFailingInspectionExecution : IInspectio
     }
 }
 
+internal sealed class DisposeBeforeReleaseFailingInspectionExecution : IInspectionExecution
+{
+    private readonly IInspectionExecution _inner;
+    private readonly bool _completeDisposeSuccessfully;
+    private IInspectionSession? _innerSession;
+    private int _sessionDisposeCount;
+
+    public DisposeBeforeReleaseFailingInspectionExecution(
+        IInspectionExecution inner,
+        bool completeDisposeSuccessfully = false)
+    {
+        _inner = inner;
+        _completeDisposeSuccessfully = completeDisposeSuccessfully;
+    }
+
+    public ActiveInspectionRun? Current => _inner.Current;
+
+    public int SessionDisposeCount => Volatile.Read(ref _sessionDisposeCount);
+
+    public event EventHandler<InspectionExecutionChangedEventArgs>? Changed
+    {
+        add => _inner.Changed += value;
+        remove => _inner.Changed -= value;
+    }
+
+    public event EventHandler<InspectionRunResult>? RunCompleted
+    {
+        add => _inner.RunCompleted += value;
+        remove => _inner.RunCompleted -= value;
+    }
+
+    public RunAdmission TryBegin(InspectionRunIntent intent)
+    {
+        var admission = _inner.TryBegin(intent);
+        if (admission is not RunAdmission.Acquired acquired)
+        {
+            return admission;
+        }
+
+        _innerSession = acquired.Session;
+        return new RunAdmission.Acquired(
+            new DisposeBeforeReleaseFailingSession(acquired.Session, this));
+    }
+
+    public async Task ReleaseAsync()
+    {
+        var session = _innerSession;
+        if (session is null)
+        {
+            return;
+        }
+
+        await session.DisposeAsync();
+        _innerSession = null;
+    }
+
+    private sealed class DisposeBeforeReleaseFailingSession : IInspectionSession
+    {
+        private readonly IInspectionSession _inner;
+        private readonly DisposeBeforeReleaseFailingInspectionExecution _owner;
+
+        public DisposeBeforeReleaseFailingSession(
+            IInspectionSession inner,
+            DisposeBeforeReleaseFailingInspectionExecution owner)
+        {
+            _inner = inner;
+            _owner = owner;
+        }
+
+        public ActiveInspectionRun Run => _inner.Run;
+
+        public Task<InspectionRunResult> ExecuteAsync(
+            InspectionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return _inner.ExecuteAsync(request, cancellationToken);
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref _owner._sessionDisposeCount);
+            if (_owner._completeDisposeSuccessfully)
+            {
+                return ValueTask.CompletedTask;
+            }
+
+            return ValueTask.FromException(
+                new InvalidOperationException("session-dispose-before-release-failure"));
+        }
+    }
+}
+
 internal sealed class DistinctStateRecorder : IDisposable
 {
     private readonly object _syncRoot = new();
