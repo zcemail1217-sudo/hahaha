@@ -4077,15 +4077,27 @@ git push -u origin HEAD
 
 ## 唯一入口
 
-业务代码只注入 `IInspectionExecution`。不要注入、创建或复制内部 Runner、锁或 Session 状态。
+业务代码只注入 `IInspectionExecution`。不要注入、创建或复制内部 Runner、锁或 Session 状态，也不要在扩展模块中直接 `new InspectionExecution(...)`；具体实现的装配只属于应用组合根/DI。
 
 ## 核心不变量
 
 - 全进程最多一个 `IInspectionSession`。
 - `TryBegin` 立即返回 Acquired/Rejected，永不排队。
 - 同一 Session 可以顺序执行多次，但不能并发执行。
-- Session 必须使用 `await using`；Dispose 幂等并等待当前执行结束。
+- Session 必须异步释放；没有额外 owner 状态时优先使用 `await using`。`DisposeAsync` 成功完成才是 owner 已释放的边界。
+- 内置 Session 的重复释放安全，但 `IInspectionSession` 不承诺所有第三方实现都可盲目重试。Dispose 失败且 `IInspectionExecution.Current` 仍为同一 Session 时必须 fail closed，继续报告占用，等待实现特定恢复或外部释放确认。
 - 正常取消不是故障；真实异常由业务编排 module 记录和呈现。
+- `Changed` 与 `RunCompleted` 的订阅者异常由执行模块隔离；UI 订阅者仍必须切回自己的 dispatcher，并在释放后拒绝迟到投影。
+
+## 配方解析与不可变快照
+
+- 需要每次执行读取仓库最新配方时，只传 `RecipeId`；ID 为空时使用 current fallback。
+- 需要稳定复现一次预览、标定、回放或配方试运行时，在准入后构建与 UI 行对象脱离的新 `Recipe`，同时传入 `RecipeId` 和 `RecipeSnapshot`。
+- 提交 `Session.ExecuteAsync` 后，不得再修改快照可达的集合或字典。
+- `RecipeId` 与 `RecipeSnapshot.Id` 按 `OrdinalIgnoreCase` 必须一致；不一致会在仓库、设备和记录副作用前抛 `ArgumentException`。
+- 快照路径完全绕过 `IRecipeRepository`；它保证本次执行输入稳定，但不等价于持久化事务或断电耐久保存。当前 JSON repository 是取消/序列化失败安全的同目录原子替换，未承诺突然断电后的最新写入耐久性。
+
+指南必须给出一个可复制的最小快照请求示例，并明确真实 UI 应通过自己的 snapshot builder 创建全新数组/字典，而不是把可变编辑集合直接塞入请求。
 
 ## 新增单次入口
 
@@ -4214,6 +4226,7 @@ public sealed class RecipePreviewService
         await using var session = ((RunAdmission.Acquired)admission).Session;
         while (true)
         {
+            lifetimeToken.ThrowIfCancellationRequested();
             var observedReset = Volatile.Read(ref _resetVersion);
             using var attempt = CancellationTokenSource.CreateLinkedTokenSource(
                 lifetimeToken);
@@ -4225,9 +4238,15 @@ public sealed class RecipePreviewService
 
             try
             {
-                return await session.ExecuteAsync(
+                var result = await session.ExecuteAsync(
                     requestFactory(),
                     attempt.Token);
+                attempt.Token.ThrowIfCancellationRequested();
+
+                if (Volatile.Read(ref _resetVersion) == observedReset)
+                {
+                    return result;
+                }
             }
             catch (OperationCanceledException) when (
                 Volatile.Read(ref _resetVersion) != observedReset &&
@@ -4241,6 +4260,8 @@ public sealed class RecipePreviewService
                     null,
                     attempt);
             }
+
+            // 执行器可能忽略已取消 token 后迟到成功；版本已变化时循环继续，Reset 仍优先。
         }
     }
 }
@@ -4267,7 +4288,12 @@ public sealed class RecipePreviewService
 - 不用软件取消替代硬件急停。
 ````
 
-在示例后明确说明：`Action<string> showStatus` 是调用方注入的 UI/日志呈现函数，不属于 `IInspectionExecution`；二次开发者可按自身界面框架替换它。
+在示例后明确说明：
+
+- `Action<string> showStatus` 是调用方注入的 UI/日志呈现函数，不属于 `IInspectionExecution`；二次开发者可按自身界面框架替换它。
+- 如果调用方必须在 Session 释放成功后才解除编辑冻结，不使用隐式 `await using` 收尾；应显式 `try/finally` 等待 `DisposeAsync`，并只在确认 `Current` 不再是自己的 Session 后投影空闲。失败时保持 fail closed，不能伪造释放或盲目二次 Dispose。
+- Stop 等待可以有 UI 超时，但超时不能清除 owner；活动任务和 Session 真正结束前，新准入仍应被拒绝。
+- Reset 示例中的 post-return token check 与最终版本仲裁都不能删除，它们处理执行器忽略取消后迟到成功的竞态。
 
 - [ ] **Step 2: 自审 interface 与指南一致性**
 
@@ -4313,7 +4339,7 @@ git diff --check 无输出
 
 - [ ] **Step 5: 使用 requesting-code-review 检查规格覆盖**
 
-审阅者必须逐项核对：全局唯一、立即拒绝、Session 防 ABA、取消不报警、Stop timeout 保持占用、配方零副作用拒绝、二次开发不改核心 implementation。
+审阅者必须逐项核对：全局唯一、立即拒绝、Session 防 ABA、取消不报警、Stop timeout 保持占用、Dispose 成功边界/fail-closed、快照完全绕仓库且身份一致、Reset 忽略取消后的最终仲裁、配方零副作用拒绝、二次开发只依赖 interface 且不改核心 implementation。
 
 - [ ] **Step 6: 修复审阅发现后重新执行 Step 3–4**
 
