@@ -19,13 +19,14 @@ public sealed class InspectionRunnerRecipeResolutionTests
 
         var result = await runner.RunAsync(new InspectionRequest
         {
-            RecipeId = snapshot.Id,
+            RecipeId = "RECIPE-1",
             RecipeSnapshot = snapshot,
             ProcessOnly = true
         });
 
         Assert.Equal("Frozen Snapshot", result.Recipe.Name);
         Assert.Equal("recipe-1", result.Result.RecipeId);
+        Assert.Equal("recipe-1", result.Recipe.Id);
         Assert.Equal(0, recipes.GetAsyncCount);
         Assert.Equal(0, recipes.GetCurrentAsyncCount);
         Assert.Empty(snapshot.Flows);
@@ -53,6 +54,29 @@ public sealed class InspectionRunnerRecipeResolutionTests
     }
 
     [Fact]
+    public async Task RunAsync_rejects_blank_snapshot_id_before_downstream_reads()
+    {
+        var recipes = new RecordingRecipeRepository(
+            CreateProcessOnlyRecipe("recipe-1", "Repository Recipe"));
+        var configuration = new RecordingDeviceConfigurationRepository();
+        var runner = CreateRunner(recipes, configuration);
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            runner.RunAsync(new InspectionRequest
+            {
+                RecipeId = "recipe-1",
+                RecipeSnapshot = CreateProcessOnlyRecipe(" ", "Invalid Snapshot"),
+                ProcessOnly = true
+            }));
+
+        Assert.StartsWith("RecipeSnapshot.Id is required.", error.Message);
+        Assert.Equal("request", error.ParamName);
+        Assert.Equal(0, recipes.GetAsyncCount);
+        Assert.Equal(0, recipes.GetCurrentAsyncCount);
+        Assert.Equal(0, configuration.GetAsyncCount);
+    }
+
+    [Fact]
     public async Task RunAsync_rejects_mismatched_snapshot_before_downstream_reads()
     {
         var recipes = new RecordingRecipeRepository(
@@ -69,6 +93,9 @@ public sealed class InspectionRunnerRecipeResolutionTests
             }));
 
         Assert.Contains("RecipeSnapshot.Id", error.Message);
+        Assert.Contains("recipe-1", error.Message);
+        Assert.Contains("recipe-2", error.Message);
+        Assert.Equal("request", error.ParamName);
         Assert.Equal(0, recipes.GetAsyncCount);
         Assert.Equal(0, recipes.GetCurrentAsyncCount);
         Assert.Equal(0, configuration.GetAsyncCount);
@@ -92,6 +119,69 @@ public sealed class InspectionRunnerRecipeResolutionTests
         Assert.Equal(0, recipes.GetCurrentAsyncCount);
     }
 
+    [Theory]
+    [InlineData("", 0)]
+    [InlineData("missing", 1)]
+    public async Task RunAsync_without_snapshot_falls_back_to_current_recipe(
+        string recipeId,
+        int expectedGetAsyncCount)
+    {
+        var current = CreateProcessOnlyRecipe("current-recipe", "Current Recipe");
+        var recipes = new RecordingRecipeRepository(current);
+        var runner = CreateRunner(recipes, new RecordingDeviceConfigurationRepository());
+
+        var result = await runner.RunAsync(new InspectionRequest
+        {
+            RecipeId = recipeId,
+            RecipeSnapshot = null,
+            ProcessOnly = true
+        });
+
+        Assert.Equal("Current Recipe", result.Recipe.Name);
+        Assert.Equal("current-recipe", result.Recipe.Id);
+        Assert.Equal("current-recipe", result.Result.RecipeId);
+        Assert.Equal(expectedGetAsyncCount, recipes.GetAsyncCount);
+        Assert.Equal(1, recipes.GetCurrentAsyncCount);
+    }
+
+    [Fact]
+    public async Task RunAsync_non_process_only_uses_snapshot_business_id_for_result_trace_and_record()
+    {
+        var snapshot = new Recipe
+        {
+            Id = "recipe-1",
+            Name = "Frozen Snapshot"
+        };
+        var recipes = new RecordingRecipeRepository(
+            CreateProcessOnlyRecipe("repository", "Repository Recipe"));
+        var configuration = new RecordingDeviceConfigurationRepository();
+        var records = new RecordingInspectionRecordRepository();
+        var traceStore = new RecordingImageTraceStore();
+        var runner = CreateRunner(
+            recipes,
+            configuration,
+            new PassThroughVisionPipeline(),
+            records,
+            traceStore);
+
+        var result = await runner.RunAsync(new InspectionRequest
+        {
+            RecipeId = "RECIPE-1",
+            RecipeSnapshot = snapshot,
+            ProcessOnly = false
+        });
+
+        Assert.Equal("recipe-1", result.Result.RecipeId);
+        Assert.Equal("recipe-1", result.Recipe.Id);
+        Assert.Equal("recipe-1", Assert.IsType<Recipe>(traceStore.SavedRecipe).Id);
+        Assert.Equal("recipe-1", Assert.IsType<InspectionResult>(traceStore.SavedResult).RecipeId);
+        Assert.Equal("recipe-1", Assert.IsType<InspectionResult>(records.AddedResult).RecipeId);
+        Assert.Equal(1, traceStore.SaveCount);
+        Assert.Equal(1, records.AddCount);
+        Assert.Equal(0, recipes.GetAsyncCount);
+        Assert.Equal(0, recipes.GetCurrentAsyncCount);
+    }
+
     private static Recipe CreateProcessOnlyRecipe(string id, string name) =>
         new()
         {
@@ -112,6 +202,19 @@ public sealed class InspectionRunnerRecipeResolutionTests
     private static InspectionRunner CreateRunner(
         IRecipeRepository recipes,
         IDeviceConfigurationRepository configurationRepository) =>
+        CreateRunner(
+            recipes,
+            configurationRepository,
+            new UnexpectedVisionPipeline(),
+            new NoOpInspectionRecordRepository(),
+            new UnexpectedImageTraceStore());
+
+    private static InspectionRunner CreateRunner(
+        IRecipeRepository recipes,
+        IDeviceConfigurationRepository configurationRepository,
+        IVisionPipeline pipeline,
+        IInspectionRecordRepository records,
+        IImageTraceStore traceStore) =>
         new(
             new FakeCameraDevice(),
             new StubConfigurableCameraDevice(),
@@ -120,10 +223,10 @@ public sealed class InspectionRunnerRecipeResolutionTests
             new DeviceRuntime(),
             new DeviceConfiguration(),
             configurationRepository,
-            new UnexpectedVisionPipeline(),
+            pipeline,
             recipes,
-            new NoOpInspectionRecordRepository(),
-            new UnexpectedImageTraceStore(),
+            records,
+            traceStore,
             new FakeAppLogService(),
             new FakeCommunicationChannels(),
             new InspectionRunControl());
@@ -222,11 +325,50 @@ public sealed class InspectionRunnerRecipeResolutionTests
             throw new InvalidOperationException("Vision pipeline must not run in this test.");
     }
 
+    private sealed class PassThroughVisionPipeline : IVisionPipeline
+    {
+        public Task<VisionPipelineResult> ExecuteAsync(
+            Recipe recipe,
+            ImageFrame frame,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new VisionPipelineResult(
+                frame,
+                [],
+                InspectionOutcome.Ok,
+                string.Empty,
+                "Inspection passed."));
+        }
+    }
+
     private sealed class NoOpInspectionRecordRepository : IInspectionRecordRepository
     {
         public Task AddAsync(
             InspectionResult result,
             CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task<IReadOnlyList<InspectionResult>> RecentAsync(
+            int count,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<InspectionResult>>([]);
+    }
+
+    private sealed class RecordingInspectionRecordRepository : IInspectionRecordRepository
+    {
+        public int AddCount { get; private set; }
+
+        public InspectionResult? AddedResult { get; private set; }
+
+        public Task AddAsync(
+            InspectionResult result,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            AddCount++;
+            AddedResult = result;
+            return Task.CompletedTask;
+        }
 
         public Task<IReadOnlyList<InspectionResult>> RecentAsync(
             int count,
@@ -243,5 +385,31 @@ public sealed class InspectionRunnerRecipeResolutionTests
             InspectionResult result,
             CancellationToken cancellationToken = default) =>
             throw new InvalidOperationException("Trace store must not run in this test.");
+    }
+
+    private sealed class RecordingImageTraceStore : IImageTraceStore
+    {
+        public int SaveCount { get; private set; }
+
+        public Recipe? SavedRecipe { get; private set; }
+
+        public InspectionResult? SavedResult { get; private set; }
+
+        public Task<ImageTracePaths> SaveAsync(
+            Recipe recipe,
+            ImageFrame originalFrame,
+            ImageFrame resultFrame,
+            InspectionResult result,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            SaveCount++;
+            SavedRecipe = recipe;
+            SavedResult = result;
+            return Task.FromResult(new ImageTracePaths(
+                "original.png",
+                "result.png",
+                "metadata.json"));
+        }
     }
 }

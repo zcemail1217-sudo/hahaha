@@ -171,6 +171,13 @@ public sealed class InspectionRunner : IInspectionRunner
     {
         if (request.RecipeSnapshot is { } snapshot)
         {
+            if (string.IsNullOrWhiteSpace(snapshot.Id))
+            {
+                throw new ArgumentException(
+                    "RecipeSnapshot.Id is required.",
+                    nameof(request));
+            }
+
             if (!string.IsNullOrWhiteSpace(request.RecipeId) &&
                 !string.Equals(
                     request.RecipeId,

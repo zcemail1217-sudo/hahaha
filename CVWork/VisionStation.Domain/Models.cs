@@ -544,6 +544,7 @@ public sealed record InspectionRequest
     /// </summary>
     /// <remarks>
     /// After calling ExecuteAsync, callers must not mutate collections reachable from this snapshot.
+    /// When supplied, <see cref="Recipe.Id" /> must not be null, empty, or whitespace.
     /// When both values are supplied, <see cref="RecipeId" /> must match <see cref="Recipe.Id" />
     /// using <see cref="StringComparison.OrdinalIgnoreCase" />. A mismatch causes the inspection
     /// execution module to throw an <see cref="ArgumentException" /> before any inspection execution
