@@ -1,6 +1,10 @@
 # Production Run Admission Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **状态：已完成，仅作历史实施记录。禁止按未勾选步骤从头重新执行。** 如需继续扩展，先阅读最终开发指南、源码和测试，再为新需求单独制定计划。
+
+> **历史执行说明：** 原实施过程要求 agentic worker 使用 subagent-driven-development（推荐）或 executing-plans，按 Task 完成 Red → Green → Refactor；保留的 `- [ ]` 仅记录原计划格式，不表示当前待办。
+
+> **阅读边界：** 本文是按 Red → Green 顺序保留的施工计划，较早 Task 的代码块可能刻意描述中间态，并会被后续 Task 或“最终实现覆盖”替代。二次开发者应以最终源码、行为测试和 `docs/development/inspection-execution.md` 为权威，不把中间态片段当作当前 API 手册。
 
 **Goal:** 建立不可绕过、立即拒绝冲突的单一检测执行 module，并让生产单次、连续生产和配方试运行共享可信的状态、取消和清理语义。
 
@@ -1903,6 +1907,8 @@ private static RunRejection MapStartRejection(RunRejection rejection)
 }
 ```
 
+> **最终实现覆盖（`8371839`）：** 上面的早期草案不能作为最终清理实现复制。最终 `CompleteOperationAsync` 只有在实时 `Current` 已确认不再是自己的 SessionId 时才清除本地 owner；未确认释放时保留 `Faulted + ActiveSessionId`。`Changed` 只作触发，锁外重读实时 `Current`，release-observed 单调记录；仅在 release-confirmation-pending、Completion 已完成、observed 且 operation/session 身份仍匹配时清除旧 owner。它不重试未知 Session 的 `DisposeAsync`、不重复 cleanup 报警，也不把外部 Session B 投影为 production owner。最终代码与测试是本节清理语义的权威来源。
+
 补齐清理、报警和安全事件 helper：
 
 ```csharp
@@ -2514,7 +2520,7 @@ private SnapshotUpdate? TryMarkStopTimedOut(
 }
 ```
 
-`TryCommitStopping` 已在 timeout 标记存在时返回 null，二次 Stop 只再次取消/有界等待，绝不把 Faulted 改回 Stopping。timeout 只能投影 `operation.Session` 的真实 SessionId；Session 尚未附加时保持 null，绝不能借用全局 `Current`，因为它可能属于配方等外部入口。`AcquireSessionAsync` 后续附加成功时再原子写入真实生产 SessionId。`CompleteOperationAsync` 在同一锁内读取标记并最终提交 `Faulted + ActiveSessionId=null`；Stop 本身不清 Busy、不 Disconnect、不 Dispose Session。
+`TryCommitStopping` 已在 timeout 标记存在时返回 null，二次 Stop 只再次取消/有界等待，绝不把 Faulted 改回 Stopping。timeout 只能投影 `operation.Session` 的真实 SessionId；Session 尚未附加时保持 null，绝不能借用全局 `Current`，因为它可能属于配方等外部入口。`AcquireSessionAsync` 后续附加成功时再原子写入真实生产 SessionId。`CompleteOperationAsync` 在同一锁协议内读取 timeout 标记：只有确认实时 `Current` 已离开原 SessionId 才清除 `ActiveSessionId`；未确认释放时保持 `Faulted + ActiveSessionId`，等待 `Changed` 触发实时 owner 复核。Stop 本身不清 Busy、不 Disconnect、不 Dispose Session。
 
 - [ ] **Step 4: 验证清理次数和全量 Application 测试**
 
@@ -4077,7 +4083,7 @@ git push -u origin HEAD
 
 ## 唯一入口
 
-业务代码只注入 `IInspectionExecution`。不要注入、创建或复制内部 Runner、锁或 Session 状态，也不要在扩展模块中直接 `new InspectionExecution(...)`；具体实现的装配只属于应用组合根/DI。
+业务代码对检测执行能力只注入 `IInspectionExecution`。不要注入、创建或复制内部 Runner、锁或 Session 状态，也不要在扩展模块中直接 `new InspectionExecution(...)`；具体实现的装配只属于应用组合根/DI。状态呈现、日志等调用方职责仍使用各自的抽象。
 
 ## 核心不变量
 
@@ -4085,7 +4091,7 @@ git push -u origin HEAD
 - `TryBegin` 立即返回 Acquired/Rejected，永不排队。
 - 同一 Session 可以顺序执行多次，但不能并发执行。
 - Session 必须异步释放；没有额外 owner 状态时优先使用 `await using`。`DisposeAsync` 成功完成才是 owner 已释放的边界。
-- 内置 Session 的重复释放安全，但 `IInspectionSession` 不承诺所有第三方实现都可盲目重试。Dispose 失败且 `IInspectionExecution.Current` 仍为同一 Session 时必须 fail closed，继续报告占用，等待实现特定恢复或外部释放确认。
+- 内置 Session 的重复释放安全，但 `IInspectionSession` 不承诺所有第三方实现都可盲目重试。Dispose 失败且 `IInspectionExecution.Current` 仍为同一 Session，或无法读取 `Current` 以确认释放时，必须 fail closed，继续报告占用，等待实现特定恢复或外部释放确认；若实时 `Current` 已确认离开原 SessionId，则保留 cleanup 故障但不保留旧 owner 投影。
 - 正常取消不是故障；真实异常由业务编排 module 记录和呈现。
 - `Changed` 与 `RunCompleted` 的订阅者异常由执行模块隔离；UI 订阅者仍必须切回自己的 dispatcher，并在释放后拒绝迟到投影。
 
@@ -4182,7 +4188,12 @@ public static class BatchInspectionService
 
 ## Reset 重跑
 
+Reset 需要同时解决三个竞态：Reset 可能发生在 attempt 发布取消源之前；执行器可能忽略已取消 token 并迟到返回成功；Reset 还可能发生在执行返回与 attempt 清理之间。下面示例用单调递增的 reset version 做最终仲裁，并在释放 attempt `CancellationTokenSource` 之前等待 `CancelAsync` 完成。`RequestReset()` 返回 `true` 表示请求已进入本次运行的正常完成仲裁；返回 `false` 表示完成门已经关闭。生命周期取消或非 Reset 的真实异常优先级更高，可以终止本次运行，调用方不得把 `true` 理解成对致命故障的重试承诺。
+
 ```csharp
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using VisionStation.Application;
 using VisionStation.Domain;
 
@@ -4190,82 +4201,187 @@ namespace InspectionExtensionExample;
 
 public sealed class RecipePreviewService
 {
+    private readonly object _attemptGate = new();
     private readonly IInspectionExecution _execution;
     private CancellationTokenSource? _attemptCancellation;
+    private Task _attemptCancellationCompletion = Task.CompletedTask;
     private long _resetVersion;
+    private bool _acceptsReset;
 
     public RecipePreviewService(IInspectionExecution execution)
     {
         _execution = execution;
     }
 
-    public void RequestReset()
+    public bool RequestReset()
     {
-        Interlocked.Increment(ref _resetVersion);
-        try
+        lock (_attemptGate)
         {
-            Volatile.Read(ref _attemptCancellation)?.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
+            if (!_acceptsReset)
+            {
+                return false;
+            }
+
+            _resetVersion++;
+            if (_attemptCancellation is null)
+            {
+                return true;
+            }
+
+            var currentCancellation = _attemptCancellation.CancelAsync();
+            _attemptCancellationCompletion = Task.WhenAll(
+                _attemptCancellationCompletion,
+                currentCancellation);
+            return true;
         }
     }
 
     public async Task<InspectionRunResult?> RunAsync(
-        Func<InspectionRequest> requestFactory,
+        Func<bool, InspectionRequest> requestFactory,
+        Action<string> showStatus,
         CancellationToken lifetimeToken)
     {
         var admission = _execution.TryBegin(new InspectionRunIntent(
             InspectionRunModes.RecipeTest,
             nameof(RecipePreviewService)));
-        if (admission is RunAdmission.Rejected)
+
+        if (admission is RunAdmission.Rejected rejected)
         {
+            var active = rejected.Rejection.Active;
+            showStatus(
+                $"{active.Intent.Mode.DisplayName}（{active.Intent.EntryPoint}）正在占用检测执行");
             return null;
         }
 
-        await using var session = ((RunAdmission.Acquired)admission).Session;
+        var session = ((RunAdmission.Acquired)admission).Session;
+        long initialResetVersion;
+        lock (_attemptGate)
+        {
+            initialResetVersion = _resetVersion;
+            _acceptsReset = true;
+        }
+
+        InspectionRunResult? finalResult;
+        try
+        {
+            finalResult = await RunAttemptsAsync(
+                session,
+                requestFactory,
+                showStatus,
+                initialResetVersion,
+                lifetimeToken);
+        }
+        finally
+        {
+            lock (_attemptGate)
+            {
+                _acceptsReset = false;
+                _attemptCancellation = null;
+            }
+
+            await session.DisposeAsync();
+        }
+
+        return finalResult;
+    }
+
+    private async Task<InspectionRunResult> RunAttemptsAsync(
+        IInspectionSession session,
+        Func<bool, InspectionRequest> requestFactory,
+        Action<string> showStatus,
+        long initialResetVersion,
+        CancellationToken lifetimeToken)
+    {
         while (true)
         {
             lifetimeToken.ThrowIfCancellationRequested();
-            var observedReset = Volatile.Read(ref _resetVersion);
             using var attempt = CancellationTokenSource.CreateLinkedTokenSource(
                 lifetimeToken);
-            Volatile.Write(ref _attemptCancellation, attempt);
-            if (Volatile.Read(ref _resetVersion) != observedReset)
+
+            long observedResetVersion;
+            lock (_attemptGate)
             {
-                attempt.Cancel();
+                observedResetVersion = _resetVersion;
+                _attemptCancellation = attempt;
+                _attemptCancellationCompletion = Task.CompletedTask;
             }
 
+            InspectionRunResult? attemptResult = null;
             try
             {
-                var result = await session.ExecuteAsync(
-                    requestFactory(),
+                attemptResult = await session.ExecuteAsync(
+                    requestFactory(observedResetVersion != initialResetVersion),
                     attempt.Token);
-                attempt.Token.ThrowIfCancellationRequested();
 
-                if (Volatile.Read(ref _resetVersion) == observedReset)
-                {
-                    return result;
-                }
+                // 执行器可能忽略取消并迟到返回成功。
+                attempt.Token.ThrowIfCancellationRequested();
             }
             catch (OperationCanceledException) when (
-                Volatile.Read(ref _resetVersion) != observedReset &&
+                WasResetAfter(observedResetVersion) &&
                 !lifetimeToken.IsCancellationRequested)
             {
+                // Reset 是控制流；清理 attempt 后由最终版本仲裁决定重跑。
             }
             finally
             {
-                Interlocked.CompareExchange(
-                    ref _attemptCancellation,
-                    null,
-                    attempt);
+                Task cancellationCompletion;
+                lock (_attemptGate)
+                {
+                    if (ReferenceEquals(_attemptCancellation, attempt))
+                    {
+                        _attemptCancellation = null;
+                    }
+
+                    cancellationCompletion = _attemptCancellationCompletion;
+                    _attemptCancellationCompletion = Task.CompletedTask;
+                }
+
+                await cancellationCompletion;
             }
 
-            // 执行器可能忽略已取消 token 后迟到成功；版本已变化时循环继续，Reset 仍优先。
+            lifetimeToken.ThrowIfCancellationRequested();
+
+            bool restartRequested;
+            lock (_attemptGate)
+            {
+                restartRequested = _resetVersion != observedResetVersion;
+                if (!restartRequested)
+                {
+                    // 与 RequestReset 使用同一边界：之后到达的 Reset 明确被拒绝，不会丢失。
+                    _acceptsReset = false;
+                }
+            }
+
+            if (restartRequested)
+            {
+                showStatus("Reset 已接受，使用默认值创建下一次快照");
+                continue;
+            }
+
+            return attemptResult!;
+        }
+    }
+
+    private bool WasResetAfter(long observedResetVersion)
+    {
+        lock (_attemptGate)
+        {
+            return _resetVersion != observedResetVersion;
         }
     }
 }
 ```
+
+`requestFactory(bool useResetDefaults)` 每次必须创建新 `InspectionRequest`。`useResetDefaults == true` 时，它应从本次会话的基础结构快照派生 `CurrentValue = DefaultValue` 的新快照，而不是把旧基础快照再保存到仓库。上例的 `_attemptGate` 只保护这个服务自己的 Reset/attempt 交接，不是第二套全局准入。
+
+正常完成路径上，`RequestReset` 与最终 return 使用同一把 `_attemptGate`：Reset 先取得 gate 就触发下一次 attempt，最终仲裁先关闭 gate 就使后续 Reset 明确返回 `false`。若生命周期取消或真实异常正在终止运行，它们优先于 Reset；UI 应同时关闭 Reset 命令，并按取消/异常通道呈现结果。
+
+除了 acceptance gate，下面两个执行细节也不能删除：
+
+1. `ExecuteAsync` 返回后立即执行 `attempt.Token.ThrowIfCancellationRequested()`。
+2. `finally` 清除 attempt 并等待 `CancelAsync` 完成后，再与 `RequestReset` 在同一同步边界内读取 reset version 并决定返回或重跑。
+
+前者处理“已取消却迟到成功”，后者处理“成功返回与 attempt 清理之间又收到 Reset”。仅依赖 `OperationCanceledException` 会丢失这两类竞态。
 
 ## UI 接入
 
@@ -4293,7 +4409,7 @@ public sealed class RecipePreviewService
 - `Action<string> showStatus` 是调用方注入的 UI/日志呈现函数，不属于 `IInspectionExecution`；二次开发者可按自身界面框架替换它。
 - 如果调用方必须在 Session 释放成功后才解除编辑冻结，不使用隐式 `await using` 收尾；应显式 `try/finally` 等待 `DisposeAsync`，并只在确认 `Current` 不再是自己的 Session 后投影空闲。失败时保持 fail closed，不能伪造释放或盲目二次 Dispose。
 - Stop 等待可以有 UI 超时，但超时不能清除 owner；活动任务和 Session 真正结束前，新准入仍应被拒绝。
-- Reset 示例中的 post-return token check 与最终版本仲裁都不能删除，它们处理执行器忽略取消后迟到成功的竞态。
+- Reset 示例中的三道边界都不能删除：`RequestReset()` 必须通过 acceptance gate 明确返回接受/拒绝；`CancelAsync` 的完成必须在 attempt CTS 释放前等待；post-return token check 与 `RequestReset` 共用 gate 的最终版本仲裁必须同时保留。它们共同处理执行器忽略取消后迟到成功，以及 Reset 与完成清理交错的竞态。生命周期取消或非 Reset 的真实异常优先终止运行，不承诺自动重试致命故障。
 
 - [ ] **Step 2: 自审 interface 与指南一致性**
 
