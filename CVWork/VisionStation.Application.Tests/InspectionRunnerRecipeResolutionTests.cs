@@ -27,6 +27,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
         Assert.Equal("Frozen Snapshot", result.Recipe.Name);
         Assert.Equal("recipe-1", result.Result.RecipeId);
         Assert.Equal("recipe-1", result.Recipe.Id);
+        Assert.Equal(0, recipes.TotalCalls);
         Assert.Equal(0, recipes.GetAsyncCount);
         Assert.Equal(0, recipes.GetCurrentAsyncCount);
         Assert.Empty(snapshot.Flows);
@@ -49,6 +50,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
 
         Assert.Equal("snapshot-only", result.Result.RecipeId);
         Assert.Equal("snapshot-only", result.Recipe.Id);
+        Assert.Equal(0, recipes.TotalCalls);
         Assert.Equal(0, recipes.GetAsyncCount);
         Assert.Equal(0, recipes.GetCurrentAsyncCount);
     }
@@ -71,6 +73,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
 
         Assert.StartsWith("RecipeSnapshot.Id is required.", error.Message);
         Assert.Equal("request", error.ParamName);
+        Assert.Equal(0, recipes.TotalCalls);
         Assert.Equal(0, recipes.GetAsyncCount);
         Assert.Equal(0, recipes.GetCurrentAsyncCount);
         Assert.Equal(0, configuration.GetAsyncCount);
@@ -96,6 +99,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
         Assert.Contains("recipe-1", error.Message);
         Assert.Contains("recipe-2", error.Message);
         Assert.Equal("request", error.ParamName);
+        Assert.Equal(0, recipes.TotalCalls);
         Assert.Equal(0, recipes.GetAsyncCount);
         Assert.Equal(0, recipes.GetCurrentAsyncCount);
         Assert.Equal(0, configuration.GetAsyncCount);
@@ -115,6 +119,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
         });
 
         Assert.Equal("Repository Recipe", result.Recipe.Name);
+        Assert.Equal(1, recipes.TotalCalls);
         Assert.Equal(1, recipes.GetAsyncCount);
         Assert.Equal(0, recipes.GetCurrentAsyncCount);
     }
@@ -140,6 +145,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
         Assert.Equal("Current Recipe", result.Recipe.Name);
         Assert.Equal("current-recipe", result.Recipe.Id);
         Assert.Equal("current-recipe", result.Result.RecipeId);
+        Assert.Equal(expectedGetAsyncCount + 1, recipes.TotalCalls);
         Assert.Equal(expectedGetAsyncCount, recipes.GetAsyncCount);
         Assert.Equal(1, recipes.GetCurrentAsyncCount);
     }
@@ -178,6 +184,7 @@ public sealed class InspectionRunnerRecipeResolutionTests
         Assert.Equal("recipe-1", Assert.IsType<InspectionResult>(records.AddedResult).RecipeId);
         Assert.Equal(1, traceStore.SaveCount);
         Assert.Equal(1, records.AddCount);
+        Assert.Equal(0, recipes.TotalCalls);
         Assert.Equal(0, recipes.GetAsyncCount);
         Assert.Equal(0, recipes.GetCurrentAsyncCount);
     }
@@ -237,27 +244,38 @@ public sealed class InspectionRunnerRecipeResolutionTests
 
         public RecordingRecipeRepository(Recipe recipe) => _recipe = recipe;
 
+        public int TotalCalls { get; private set; }
+
         public int GetAsyncCount { get; private set; }
 
         public int GetCurrentAsyncCount { get; private set; }
 
         public Task<Recipe> GetCurrentAsync(CancellationToken cancellationToken = default)
         {
+            TotalCalls++;
             GetCurrentAsyncCount++;
             return Task.FromResult(_recipe);
         }
 
-        public Task<string> GetCurrentRecipeIdAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(_recipe.Id);
+        public Task<string> GetCurrentRecipeIdAsync(CancellationToken cancellationToken = default)
+        {
+            TotalCalls++;
+            return Task.FromResult(_recipe.Id);
+        }
 
         public Task SetCurrentRecipeAsync(
             string recipeId,
-            CancellationToken cancellationToken = default) => Task.CompletedTask;
+            CancellationToken cancellationToken = default)
+        {
+            TotalCalls++;
+            return Task.CompletedTask;
+        }
 
         public Task<Recipe?> GetAsync(
             string recipeId,
             CancellationToken cancellationToken = default)
         {
+            TotalCalls++;
             GetAsyncCount++;
             return Task.FromResult<Recipe?>(
                 string.Equals(recipeId, _recipe.Id, StringComparison.OrdinalIgnoreCase)
@@ -266,16 +284,27 @@ public sealed class InspectionRunnerRecipeResolutionTests
         }
 
         public Task<IReadOnlyList<Recipe>> ListAsync(
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<Recipe>>([_recipe]);
+            CancellationToken cancellationToken = default)
+        {
+            TotalCalls++;
+            return Task.FromResult<IReadOnlyList<Recipe>>([_recipe]);
+        }
 
         public Task SaveAsync(
             Recipe recipe,
-            CancellationToken cancellationToken = default) => Task.CompletedTask;
+            CancellationToken cancellationToken = default)
+        {
+            TotalCalls++;
+            return Task.CompletedTask;
+        }
 
         public Task DeleteAsync(
             string recipeId,
-            CancellationToken cancellationToken = default) => Task.CompletedTask;
+            CancellationToken cancellationToken = default)
+        {
+            TotalCalls++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RecordingDeviceConfigurationRepository : IDeviceConfigurationRepository

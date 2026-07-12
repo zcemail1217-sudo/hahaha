@@ -48,7 +48,13 @@ public interface IInspectionExecution
 /// </summary>
 /// <remarks>
 /// A session must be asynchronously disposed to release its execution ownership. Callers should
-/// use <see langword="await using" /> whenever possible.
+/// use <see langword="await using" /> whenever possible. Successful completion of
+/// <see cref="IAsyncDisposable.DisposeAsync" /> is the ownership-release boundary: an implementation
+/// must not complete successfully until <see cref="IInspectionExecution.Current" /> no longer
+/// identifies this session's <see cref="Run" />. Callers must continue to report the owner as active
+/// until that boundary is reached. If disposal fails while <see cref="IInspectionExecution.Current" />
+/// still identifies the same session, callers must fail closed: they must not report execution as
+/// idle or blindly retry disposal without implementation-specific recovery or release confirmation.
 /// </remarks>
 public interface IInspectionSession : IAsyncDisposable
 {
