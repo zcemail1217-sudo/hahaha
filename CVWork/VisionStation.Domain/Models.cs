@@ -539,11 +539,15 @@ public sealed record InspectionRequest
 
     /// <summary>
     /// Gets the logical immutable recipe snapshot for this inspection.
-    /// When null, the runner resolves <see cref="RecipeId" /> from the recipe repository.
+    /// When null, the inspection execution module resolves <see cref="RecipeId" />
+    /// from the recipe repository.
     /// </summary>
     /// <remarks>
     /// After calling ExecuteAsync, callers must not mutate collections reachable from this snapshot.
-    /// When both values are supplied, <see cref="RecipeId" /> must match <see cref="Recipe.Id" />.
+    /// When both values are supplied, <see cref="RecipeId" /> must match <see cref="Recipe.Id" />
+    /// using <see cref="StringComparison.OrdinalIgnoreCase" />. A mismatch causes the inspection
+    /// execution module to throw an <see cref="ArgumentException" /> before any inspection execution
+    /// side effects occur.
     /// </remarks>
     public Recipe? RecipeSnapshot { get; init; }
 

@@ -98,6 +98,12 @@ public sealed class InspectionExecutionContractTests
         Assert.Equal(typeof(Recipe), property.PropertyType);
         Assert.True(property.CanRead);
         Assert.NotNull(property.SetMethod);
+        var nullability = new NullabilityInfoContext().Create(property);
+        Assert.Equal(NullabilityState.Nullable, nullability.ReadState);
+        Assert.Equal(NullabilityState.Nullable, nullability.WriteState);
+        Assert.Contains(
+            typeof(System.Runtime.CompilerServices.IsExternalInit),
+            property.SetMethod.ReturnParameter.GetRequiredCustomModifiers());
         Assert.Null(property.GetValue(new InspectionRequest()));
     }
 
