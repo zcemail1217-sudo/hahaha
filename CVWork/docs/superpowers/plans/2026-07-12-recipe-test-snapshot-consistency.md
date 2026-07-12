@@ -108,7 +108,7 @@ git push
 
 - [ ] **Step 1: 创建真实 Runner 行为测试**
 
-创建 `InspectionRunnerRecipeResolutionTests`，包含下面四个测试。测试必须实例化真实 `InspectionRunner`；现有 `FakeCameraDevice`、`FakeAxisController`、`FakePlcClient`、`FakeCommunicationChannels` 和 `FakeAppLogService` 可直接复用。
+创建 `InspectionRunnerRecipeResolutionTests`，先实现下面四个核心测试。复审加固同时覆盖空白快照 ID、空请求 ID 的 current fallback、missing ID 的 current fallback，以及 result/trace/record 的规范快照业务 ID。测试必须实例化真实 `InspectionRunner`；现有 `FakeCameraDevice`、`FakeAxisController`、`FakePlcClient`、`FakeCommunicationChannels` 和 `FakeAppLogService` 可直接复用。
 
 文件顶部使用：
 
@@ -391,6 +391,13 @@ private async Task<Recipe> ResolveRecipeAsync(
 {
     if (request.RecipeSnapshot is { } snapshot)
     {
+        if (string.IsNullOrWhiteSpace(snapshot.Id))
+        {
+            throw new ArgumentException(
+                "RecipeSnapshot.Id is required.",
+                nameof(request));
+        }
+
         if (!string.IsNullOrWhiteSpace(request.RecipeId) &&
             !string.Equals(
                 request.RecipeId,
@@ -875,7 +882,10 @@ git push
 重点检查：
 
 - snapshot ID mismatch 是否在配置/设备/记录副作用前失败；
+- 空白 snapshot ID 是否在所有下游读取前失败；
 - Runner 快照路径是否完全绕过 recipe repository；
+- OrdinalIgnoreCase、空 ID/current fallback、missing ID/current fallback 是否有 mutation 证据；
+- 结果、追溯与记录是否统一采用 snapshot 的规范业务 ID；
 - Reset 是否只有一次业务配方保存；
 - 外部 writer 更新是否不再被 Reset 覆盖；
 - Catch 是否不迁移 owner 状态且只经 dispatcher 更新 UI；

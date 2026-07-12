@@ -73,6 +73,7 @@ public Recipe? RecipeSnapshot { get; init; }
 
 - `RecipeSnapshot is null`：保持现有行为。`RecipeId` 非空时按 ID 查询，空时回退到当前配方。
 - `RecipeSnapshot is not null`：Runner 不调用配方仓库，直接规范化并执行该快照。
+- 快照存在时，`RecipeSnapshot.Id` 必须为非空白业务 ID；否则在任何下游读取或执行副作用前抛出 `ArgumentException`。
 - 快照存在且 `RecipeId` 为空：逻辑 ID 取 `RecipeSnapshot.Id`。
 - 快照存在且 `RecipeId` 非空：必须与 `RecipeSnapshot.Id` 按忽略大小写相等；否则在任何设备、通信或记录副作用前抛出 `ArgumentException`。
 - 结果、记录和追溯始终使用最终快照自身的业务配方 ID。
@@ -159,7 +160,9 @@ public Recipe? RecipeSnapshot { get; init; }
 ### 10.1 Application
 
 - 请求带快照时，Runner 不访问 `IRecipeRepository.GetAsync/GetCurrentAsync`，实际结果来自快照。
+- 快照 ID 为空白时，在配方仓库、配置、设备、追溯和记录访问前失败。
 - `RecipeId` 与快照 ID 不一致时，在任何执行副作用前失败。
+- 请求 ID 与快照 ID 仅大小写不同时允许执行，结果、追溯和记录统一使用快照中的业务 ID。
 - 不带快照的现有请求仍按 ID/current 读取仓库。
 
 ### 10.2 Recipe Management
