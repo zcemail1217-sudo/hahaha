@@ -252,7 +252,11 @@ internal sealed class DisposeBeforeReleaseFailingInspectionExecution : IInspecti
 {
     private readonly IInspectionExecution _inner;
     private readonly bool _completeDisposeSuccessfully;
+    private readonly object _syncRoot = new();
     private IInspectionSession? _innerSession;
+    private ActiveInspectionRun? _lastAcquiredRun;
+    private int _allowCurrentReadDepth;
+    private int _currentReadCount;
     private int _sessionDisposeCount;
 
     public DisposeBeforeReleaseFailingInspectionExecution(
@@ -261,23 +265,91 @@ internal sealed class DisposeBeforeReleaseFailingInspectionExecution : IInspecti
     {
         _inner = inner;
         _completeDisposeSuccessfully = completeDisposeSuccessfully;
+        _inner.Changed += OnInnerChanged;
+        _inner.RunCompleted += OnInnerRunCompleted;
     }
 
-    public ActiveInspectionRun? Current => _inner.Current;
+    public ActiveInspectionRun? Current
+    {
+        get
+        {
+            var currentReadCount = Interlocked.Increment(ref _currentReadCount);
+            var allowCurrentRead = Volatile.Read(ref _allowCurrentReadDepth) != 0;
+            if (!allowCurrentRead && CaptureCurrentBeforeBlockOnCount == currentReadCount)
+            {
+                var captured = _inner.Current;
+                CapturedCurrentReadEntered.TrySetResult();
+                AllowCapturedCurrentRead.Task.GetAwaiter().GetResult();
+                return captured;
+            }
+
+            if (!allowCurrentRead && BlockCurrentReadOnCount == currentReadCount)
+            {
+                CountedCurrentReadEntered.TrySetResult();
+                AllowCountedCurrentRead.Task.GetAwaiter().GetResult();
+            }
+
+            if (!allowCurrentRead && BlockCurrentRead)
+            {
+                CurrentReadEntered.TrySetResult();
+                AllowCurrentRead.Task.GetAwaiter().GetResult();
+            }
+
+            if (!allowCurrentRead && ThrowOnCurrentRead)
+            {
+                throw new InvalidOperationException("current-read-failure");
+            }
+
+            return _inner.Current;
+        }
+    }
+
+    public ActiveInspectionRun? LastAcquiredRun
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return _lastAcquiredRun;
+            }
+        }
+    }
 
     public int SessionDisposeCount => Volatile.Read(ref _sessionDisposeCount);
 
-    public event EventHandler<InspectionExecutionChangedEventArgs>? Changed
-    {
-        add => _inner.Changed += value;
-        remove => _inner.Changed -= value;
-    }
+    public int CurrentReadCount => Volatile.Read(ref _currentReadCount);
 
-    public event EventHandler<InspectionRunResult>? RunCompleted
-    {
-        add => _inner.RunCompleted += value;
-        remove => _inner.RunCompleted -= value;
-    }
+    public bool BlockCurrentRead { get; set; }
+
+    public int BlockCurrentReadOnCount { get; set; }
+
+    public int CaptureCurrentBeforeBlockOnCount { get; set; }
+
+    public bool AllowCurrentReadDuringChanged { get; set; }
+
+    public bool PassThroughDispose { get; set; }
+
+    public bool ThrowOnCurrentRead { get; set; }
+
+    public TaskCompletionSource CurrentReadEntered { get; } = CoordinatorHarness.NewSignal();
+
+    public TaskCompletionSource AllowCurrentRead { get; } = CoordinatorHarness.NewSignal();
+
+    public TaskCompletionSource CountedCurrentReadEntered { get; } =
+        CoordinatorHarness.NewSignal();
+
+    public TaskCompletionSource AllowCountedCurrentRead { get; } =
+        CoordinatorHarness.NewSignal();
+
+    public TaskCompletionSource CapturedCurrentReadEntered { get; } =
+        CoordinatorHarness.NewSignal();
+
+    public TaskCompletionSource AllowCapturedCurrentRead { get; } =
+        CoordinatorHarness.NewSignal();
+
+    public event EventHandler<InspectionExecutionChangedEventArgs>? Changed;
+
+    public event EventHandler<InspectionRunResult>? RunCompleted;
 
     public RunAdmission TryBegin(InspectionRunIntent intent)
     {
@@ -287,21 +359,75 @@ internal sealed class DisposeBeforeReleaseFailingInspectionExecution : IInspecti
             return admission;
         }
 
-        _innerSession = acquired.Session;
+        lock (_syncRoot)
+        {
+            _innerSession = acquired.Session;
+            _lastAcquiredRun = acquired.Session.Run;
+        }
+
         return new RunAdmission.Acquired(
             new DisposeBeforeReleaseFailingSession(acquired.Session, this));
     }
 
     public async Task ReleaseAsync()
     {
-        var session = _innerSession;
+        IInspectionSession? session;
+        lock (_syncRoot)
+        {
+            session = _innerSession;
+        }
+
         if (session is null)
         {
             return;
         }
 
+        await ReleaseInnerAsync(session);
+    }
+
+    public void PublishChangedForTest(ActiveInspectionRun? current)
+    {
+        Changed?.Invoke(this, new InspectionExecutionChangedEventArgs(current));
+    }
+
+    private async ValueTask ReleaseInnerAsync(IInspectionSession session)
+    {
         await session.DisposeAsync();
-        _innerSession = null;
+        lock (_syncRoot)
+        {
+            if (ReferenceEquals(_innerSession, session))
+            {
+                _innerSession = null;
+            }
+        }
+    }
+
+    private void OnInnerChanged(
+        object? sender,
+        InspectionExecutionChangedEventArgs args)
+    {
+        var allowCurrentRead = AllowCurrentReadDuringChanged;
+        if (allowCurrentRead)
+        {
+            Interlocked.Increment(ref _allowCurrentReadDepth);
+        }
+
+        try
+        {
+            Changed?.Invoke(this, args);
+        }
+        finally
+        {
+            if (allowCurrentRead)
+            {
+                Interlocked.Decrement(ref _allowCurrentReadDepth);
+            }
+        }
+    }
+
+    private void OnInnerRunCompleted(object? sender, InspectionRunResult result)
+    {
+        RunCompleted?.Invoke(this, result);
     }
 
     private sealed class DisposeBeforeReleaseFailingSession : IInspectionSession
@@ -326,16 +452,21 @@ internal sealed class DisposeBeforeReleaseFailingInspectionExecution : IInspecti
             return _inner.ExecuteAsync(request, cancellationToken);
         }
 
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
             Interlocked.Increment(ref _owner._sessionDisposeCount);
-            if (_owner._completeDisposeSuccessfully)
+            if (_owner.PassThroughDispose)
             {
-                return ValueTask.CompletedTask;
+                await _owner.ReleaseInnerAsync(_inner);
+                return;
             }
 
-            return ValueTask.FromException(
-                new InvalidOperationException("session-dispose-before-release-failure"));
+            if (_owner._completeDisposeSuccessfully)
+            {
+                return;
+            }
+
+            throw new InvalidOperationException("session-dispose-before-release-failure");
         }
     }
 }

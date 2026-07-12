@@ -200,6 +200,448 @@ public sealed class ProductionCoordinatorTests
     }
 
     [Fact]
+    public async Task RunSingleAsync_when_current_confirmation_throws_completes_waiters_fail_closed()
+    {
+        var innerExecution = new InspectionExecution(
+            new TestInspectionExecutor(),
+            new FakeAppLogService());
+        var execution = new DisposeBeforeReleaseFailingInspectionExecution(innerExecution)
+        {
+            BlockCurrentRead = true,
+            ThrowOnCurrentRead = true
+        };
+        var harness = CoordinatorHarness.Create(
+            stopWaitTimeoutMs: 1000,
+            inspectionExecution: execution);
+        var runTask = Task.Run(() => harness.Coordinator.RunSingleAsync());
+        Task<ProductionCommandResult>? stopTask = null;
+
+        try
+        {
+            await execution.CurrentReadEntered.Task.WaitAsync(Watchdog);
+            var owner = execution.LastAcquiredRun;
+            Assert.NotNull(owner);
+
+            stopTask = harness.Coordinator.StopAsync();
+            Assert.False(stopTask.IsCompleted);
+            execution.AllowCurrentRead.TrySetResult();
+
+            var runException = await Assert.ThrowsAsync<AggregateException>(async () =>
+            {
+                await runTask.WaitAsync(Watchdog);
+            });
+            var stopException = await Assert.ThrowsAsync<AggregateException>(async () =>
+            {
+                await stopTask.WaitAsync(Watchdog);
+            });
+
+            Assert.All(
+                [runException, stopException],
+                exception => Assert.Equal(
+                    ["session-dispose-before-release-failure", "current-read-failure"],
+                    exception.Flatten().InnerExceptions
+                        .Select(error => error.Message)
+                        .ToArray()));
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Equal(owner.SessionId, harness.Coordinator.Snapshot.ActiveSessionId);
+            Assert.Equal(1, execution.SessionDisposeCount);
+            Assert.Single(
+                harness.Alarms.Raised,
+                item => item.Id == "production:cleanup" &&
+                        item.Severity == AlarmSeverity.Critical);
+            Assert.DoesNotContain(
+                harness.Alarms.Raised,
+                item => item.Id == "production:stop-timeout");
+        }
+        finally
+        {
+            execution.AllowCurrentRead.TrySetResult();
+            execution.BlockCurrentRead = false;
+            execution.ThrowOnCurrentRead = false;
+            try
+            {
+                await runTask.WaitAsync(Watchdog);
+            }
+            catch (Exception)
+            {
+            }
+
+            if (stopTask is not null)
+            {
+                try
+                {
+                    await stopTask.WaitAsync(Watchdog);
+                }
+                catch (Exception)
+                {
+                }
+            }
+
+            await execution.ReleaseAsync().WaitAsync(Watchdog);
+        }
+    }
+
+    [Fact]
+    public async Task RunSingleAsync_never_reads_external_current_after_completing_cleanup()
+    {
+        var innerExecution = new InspectionExecution(
+            new TestInspectionExecutor(),
+            new FakeAppLogService());
+        var execution = new DisposeBeforeReleaseFailingInspectionExecution(innerExecution)
+        {
+            BlockCurrentReadOnCount = 2
+        };
+        var harness = CoordinatorHarness.Create(inspectionExecution: execution);
+        var runTask = Task.Run(() => harness.Coordinator.RunSingleAsync());
+
+        try
+        {
+            var firstCompletion = await Task.WhenAny(
+                    runTask,
+                    execution.CountedCurrentReadEntered.Task)
+                .WaitAsync(Watchdog);
+            if (ReferenceEquals(firstCompletion, execution.CountedCurrentReadEntered.Task))
+            {
+                var replayTask = harness.Coordinator.StopAsync();
+                Assert.True(replayTask.IsCompleted);
+                var replayException = await Assert.ThrowsAsync<AggregateException>(async () =>
+                {
+                    await replayTask.WaitAsync(Watchdog);
+                });
+                Assert.Contains(
+                    replayException.Flatten().InnerExceptions,
+                    error => error.Message == "session-dispose-before-release-failure");
+                Assert.False(runTask.IsCompleted);
+            }
+
+            Assert.Same(runTask, firstCompletion);
+            var runException = await Assert.ThrowsAsync<AggregateException>(async () =>
+            {
+                await runTask.WaitAsync(Watchdog);
+            });
+
+            Assert.Contains(
+                runException.Flatten().InnerExceptions,
+                error => error.Message == "session-dispose-before-release-failure");
+            Assert.Equal(1, execution.CurrentReadCount);
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.NotNull(harness.Coordinator.Snapshot.ActiveSessionId);
+
+            var stopTask = harness.Coordinator.StopAsync();
+            Assert.True(stopTask.IsCompleted);
+            await Assert.ThrowsAsync<AggregateException>(async () =>
+            {
+                await stopTask.WaitAsync(Watchdog);
+            });
+        }
+        finally
+        {
+            execution.AllowCountedCurrentRead.TrySetResult();
+            execution.BlockCurrentReadOnCount = 0;
+            try
+            {
+                await runTask.WaitAsync(Watchdog);
+            }
+            catch (Exception)
+            {
+            }
+
+            await execution.ReleaseAsync().WaitAsync(Watchdog);
+        }
+    }
+
+    [Fact]
+    public async Task Older_same_session_read_never_erases_a_newer_release_observation()
+    {
+        var executor = new TestInspectionExecutor();
+        var innerExecution = new InspectionExecution(executor, new FakeAppLogService());
+        var execution = new DisposeBeforeReleaseFailingInspectionExecution(innerExecution)
+        {
+            CaptureCurrentBeforeBlockOnCount = 1
+        };
+        var harness = CoordinatorHarness.Create(inspectionExecution: execution);
+        var runTask = Task.Run(() => harness.Coordinator.RunSingleAsync());
+
+        try
+        {
+            await execution.CapturedCurrentReadEntered.Task.WaitAsync(Watchdog);
+            await execution.ReleaseAsync().WaitAsync(Watchdog);
+            execution.AllowCapturedCurrentRead.TrySetResult();
+
+            var exception = await Assert.ThrowsAsync<AggregateException>(async () =>
+            {
+                await runTask.WaitAsync(Watchdog);
+            });
+
+            Assert.Contains(
+                exception.Flatten().InnerExceptions,
+                error => error.Message == "session-dispose-before-release-failure");
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Null(harness.Coordinator.Snapshot.ActiveSessionId);
+            Assert.Equal(1, execution.SessionDisposeCount);
+
+            execution.PassThroughDispose = true;
+            var next = await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+
+            Assert.Equal(ProductionCommandDisposition.Completed, next.Disposition);
+            Assert.Equal(2, executor.CallCount);
+        }
+        finally
+        {
+            execution.AllowCapturedCurrentRead.TrySetResult();
+            execution.CaptureCurrentBeforeBlockOnCount = 0;
+            execution.PassThroughDispose = true;
+            try
+            {
+                await runTask.WaitAsync(Watchdog);
+            }
+            catch (Exception)
+            {
+            }
+
+            await execution.ReleaseAsync().WaitAsync(Watchdog);
+        }
+    }
+
+    [Fact]
+    public async Task RunSingleAsync_when_post_dispose_confirmation_throws_uses_early_live_release_observation()
+    {
+        var executor = new TestInspectionExecutor();
+        var innerExecution = new InspectionExecution(executor, new FakeAppLogService());
+        var execution = new DisposeBeforeReleaseFailingInspectionExecution(innerExecution)
+        {
+            AllowCurrentReadDuringChanged = true,
+            PassThroughDispose = true,
+            ThrowOnCurrentRead = true
+        };
+        var harness = CoordinatorHarness.Create(inspectionExecution: execution);
+
+        try
+        {
+            var exception = await Assert.ThrowsAsync<AggregateException>(async () =>
+            {
+                await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+            });
+
+            Assert.Equal(
+                ["current-read-failure"],
+                exception.Flatten().InnerExceptions
+                    .Select(error => error.Message)
+                    .ToArray());
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Null(harness.Coordinator.Snapshot.ActiveSessionId);
+            Assert.Equal(1, execution.SessionDisposeCount);
+
+            execution.ThrowOnCurrentRead = false;
+            var next = await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+
+            Assert.Equal(ProductionCommandDisposition.Completed, next.Disposition);
+            Assert.Equal(2, executor.CallCount);
+            Assert.Equal(ProductionState.Stopped, harness.Coordinator.Snapshot.State);
+            Assert.Null(harness.Coordinator.Snapshot.ActiveSessionId);
+        }
+        finally
+        {
+            execution.ThrowOnCurrentRead = false;
+            await execution.ReleaseAsync().WaitAsync(Watchdog);
+        }
+    }
+
+    [Fact]
+    public async Task Stale_changed_release_payload_never_clears_live_failed_owner()
+    {
+        var innerExecution = new InspectionExecution(
+            new TestInspectionExecutor(),
+            new FakeAppLogService());
+        var execution = new DisposeBeforeReleaseFailingInspectionExecution(innerExecution);
+        var harness = CoordinatorHarness.Create(inspectionExecution: execution);
+
+        try
+        {
+            await Assert.ThrowsAsync<AggregateException>(async () =>
+            {
+                await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+            });
+            var owner = execution.LastAcquiredRun;
+            Assert.NotNull(owner);
+
+            execution.PublishChangedForTest(null);
+
+            Assert.Equal(owner.SessionId, harness.Coordinator.Snapshot.ActiveSessionId);
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Same(owner, execution.Current);
+            var rejected = await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+            Assert.Equal(ProductionCommandDisposition.Rejected, rejected.Disposition);
+            Assert.Same(owner, rejected.Rejection?.Active);
+            Assert.Equal(1, execution.SessionDisposeCount);
+        }
+        finally
+        {
+            await execution.ReleaseAsync().WaitAsync(Watchdog);
+        }
+    }
+
+    [Fact]
+    public async Task Release_signal_during_fault_snapshot_never_opens_a_run_before_cleanup_completion()
+    {
+        var executor = new TestInspectionExecutor();
+        var innerExecution = new InspectionExecution(executor, new FakeAppLogService());
+        var execution = new DisposeBeforeReleaseFailingInspectionExecution(innerExecution);
+        var harness = CoordinatorHarness.Create(inspectionExecution: execution);
+        var reentrantAttempt = new TaskCompletionSource<(
+            bool WasAlreadyCompleted,
+            ProductionCommandResult<InspectionRunResult> Result)>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseTriggered = 0;
+        EventHandler<ProductionSnapshot> releaseDuringFault = (_, snapshot) =>
+        {
+            if (snapshot.State != ProductionState.Faulted ||
+                snapshot.ActiveSessionId is null ||
+                Interlocked.Exchange(ref releaseTriggered, 1) != 0)
+            {
+                return;
+            }
+
+            try
+            {
+                execution.PassThroughDispose = true;
+                execution.ReleaseAsync().GetAwaiter().GetResult();
+                var command = harness.Coordinator.RunSingleAsync();
+                var wasAlreadyCompleted = command.IsCompleted;
+                var result = command.GetAwaiter().GetResult();
+                reentrantAttempt.TrySetResult((wasAlreadyCompleted, result));
+            }
+            catch (Exception exception)
+            {
+                reentrantAttempt.TrySetException(exception);
+            }
+        };
+        harness.Coordinator.SnapshotChanged += releaseDuringFault;
+
+        try
+        {
+            await Assert.ThrowsAsync<AggregateException>(async () =>
+            {
+                await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+            });
+            var owner = execution.LastAcquiredRun;
+            Assert.NotNull(owner);
+            var observed = await reentrantAttempt.Task.WaitAsync(Watchdog);
+
+            Assert.True(observed.WasAlreadyCompleted);
+            Assert.Equal(ProductionCommandDisposition.Rejected, observed.Result.Disposition);
+            Assert.Equal(RunRejectionReason.Busy, observed.Result.Rejection?.Reason);
+            Assert.Same(owner, observed.Result.Rejection?.Active);
+            Assert.Equal(1, executor.CallCount);
+            Assert.Equal(1, execution.SessionDisposeCount);
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Null(harness.Coordinator.Snapshot.ActiveSessionId);
+
+            var next = await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+
+            Assert.Equal(ProductionCommandDisposition.Completed, next.Disposition);
+            Assert.Equal(2, executor.CallCount);
+        }
+        finally
+        {
+            harness.Coordinator.SnapshotChanged -= releaseDuringFault;
+            execution.PassThroughDispose = true;
+            await execution.ReleaseAsync().WaitAsync(Watchdog);
+        }
+    }
+
+    [Fact]
+    public async Task Failed_session_release_confirmation_clears_owner_and_allows_next_run()
+    {
+        var executor = new TestInspectionExecutor();
+        var innerExecution = new InspectionExecution(executor, new FakeAppLogService());
+        var execution = new DisposeBeforeReleaseFailingInspectionExecution(innerExecution);
+        var harness = CoordinatorHarness.Create(inspectionExecution: execution);
+
+        try
+        {
+            await Assert.ThrowsAsync<AggregateException>(async () =>
+            {
+                await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+            });
+            var failedOwner = execution.LastAcquiredRun;
+            Assert.NotNull(failedOwner);
+            Assert.Equal(failedOwner.SessionId, harness.Coordinator.Snapshot.ActiveSessionId);
+
+            execution.PassThroughDispose = true;
+            await execution.ReleaseAsync().WaitAsync(Watchdog);
+            await CoordinatorHarness.WaitUntilAsync(
+                () => harness.Coordinator.Snapshot.ActiveSessionId is null);
+
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Equal(1, execution.SessionDisposeCount);
+            Assert.Single(
+                harness.Alarms.Raised,
+                item => item.Id == "production:cleanup" &&
+                        item.Severity == AlarmSeverity.Critical);
+
+            var next = await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+
+            Assert.Equal(ProductionCommandDisposition.Completed, next.Disposition);
+            Assert.Equal(2, executor.CallCount);
+            Assert.Equal(2, execution.SessionDisposeCount);
+            Assert.Equal(ProductionState.Stopped, harness.Coordinator.Snapshot.State);
+            Assert.Null(harness.Coordinator.Snapshot.ActiveSessionId);
+            Assert.Single(
+                harness.Alarms.Raised,
+                item => item.Id == "production:cleanup" &&
+                        item.Severity == AlarmSeverity.Critical);
+        }
+        finally
+        {
+            execution.PassThroughDispose = true;
+            await execution.ReleaseAsync().WaitAsync(Watchdog);
+        }
+    }
+
+    [Fact]
+    public async Task Released_failed_session_never_projects_immediately_acquired_external_owner()
+    {
+        var innerExecution = new InspectionExecution(
+            new TestInspectionExecutor(),
+            new FakeAppLogService());
+        var execution = new DisposeBeforeReleaseFailingInspectionExecution(innerExecution);
+        var harness = CoordinatorHarness.Create(inspectionExecution: execution);
+
+        try
+        {
+            await Assert.ThrowsAsync<AggregateException>(async () =>
+            {
+                await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+            });
+            var failedOwner = execution.LastAcquiredRun;
+            Assert.NotNull(failedOwner);
+
+            await execution.ReleaseAsync().WaitAsync(Watchdog);
+            var externalAdmission = Assert.IsType<RunAdmission.Acquired>(
+                execution.TryBegin(new InspectionRunIntent(
+                    InspectionRunModes.RecipeTest,
+                    "RecipeManagementViewModel")));
+            await CoordinatorHarness.WaitUntilAsync(
+                () => harness.Coordinator.Snapshot.ActiveSessionId is null);
+
+            var rejected = await harness.Coordinator.RunSingleAsync().WaitAsync(Watchdog);
+
+            Assert.Equal(ProductionCommandDisposition.Rejected, rejected.Disposition);
+            Assert.Equal(RunRejectionReason.Busy, rejected.Rejection?.Reason);
+            Assert.Same(externalAdmission.Session.Run, rejected.Rejection?.Active);
+            Assert.NotEqual(failedOwner.SessionId, externalAdmission.Session.Run.SessionId);
+            Assert.Equal(ProductionState.Faulted, harness.Coordinator.Snapshot.State);
+            Assert.Null(harness.Coordinator.Snapshot.ActiveSessionId);
+            Assert.Equal(1, execution.SessionDisposeCount);
+        }
+        finally
+        {
+            await execution.ReleaseAsync().WaitAsync(Watchdog);
+        }
+    }
+
+    [Fact]
     public async Task RunSingleAsync_never_projects_reacquired_external_session_as_production_owner()
     {
         var innerExecution = new InspectionExecution(

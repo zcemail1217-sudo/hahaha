@@ -61,6 +61,7 @@ public sealed class ProductionCoordinator
         _communicationChannels = communicationChannels;
         _productionSettings = configuration.SystemSettings.Production;
 
+        _inspectionExecution.Changed += OnInspectionExecutionChanged;
         _camera.StateChanged += OnDeviceStateChanged;
         _plc.StateChanged += OnDeviceStateChanged;
         _axis.StateChanged += OnDeviceStateChanged;
@@ -467,48 +468,70 @@ public sealed class ProductionCoordinator
             return await operation.Completion.ConfigureAwait(false);
         }
 
-        PublishSnapshot(TryCommitStopping(operation));
-        var disconnectFailure = await DisconnectProductionSafelyAsync().ConfigureAwait(false);
-        if (disconnectFailure is not null)
-        {
-            operation.RecordCleanupFailure(disconnectFailure);
-        }
-
-        var ownershipReleased = operation.Session is null;
-        if (operation.Session is not null)
-        {
-            var disposeFailed = false;
-            try
-            {
-                await operation.Session.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                disposeFailed = true;
-                operation.RecordCleanupFailure(exception);
-                LogWarningSafely($"Failed to release inspection session: {exception.Message}");
-            }
-
-            ownershipReleased = _inspectionExecution.Current?.SessionId !=
-                                operation.Session.Run.SessionId;
-            if (!disposeFailed && !ownershipReleased)
-            {
-                var exception = new InvalidOperationException(
-                    "Inspection session disposal completed without releasing execution ownership.");
-                operation.RecordCleanupFailure(exception);
-                LogWarningSafely(exception.Message);
-            }
-        }
-
-        var outcome = operation.CaptureCleanupOutcome();
-        if (outcome.HasFailures)
-        {
-            ReportCleanupFailureSafely(outcome.ToException());
-        }
-
+        CleanupOutcome outcome;
         try
         {
+            PublishSnapshot(TryCommitStopping(operation));
+            var disconnectFailure = await DisconnectProductionSafelyAsync().ConfigureAwait(false);
+            if (disconnectFailure is not null)
+            {
+                operation.RecordCleanupFailure(disconnectFailure);
+            }
+
+            var session = operation.Session;
+            var ownershipReleased = session is null;
+            if (session is not null)
+            {
+                Exception? disposeFailure = null;
+                try
+                {
+                    await session.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    disposeFailure = exception;
+                }
+
+                if (disposeFailure is not null)
+                {
+                    operation.RecordCleanupFailure(disposeFailure);
+                    LogWarningSafely(
+                        $"Failed to release inspection session: {disposeFailure.Message}");
+                }
+
+                if (TryReadInspectionCurrent(out var current, out var currentReadFailure))
+                {
+                    ownershipReleased = current?.SessionId != session.Run.SessionId;
+                    if (ownershipReleased)
+                    {
+                        operation.MarkReleaseObserved();
+                    }
+
+                    if (disposeFailure is null && !ownershipReleased)
+                    {
+                        var exception = new InvalidOperationException(
+                            "Inspection session disposal completed without releasing execution ownership.");
+                        operation.RecordCleanupFailure(exception);
+                        LogWarningSafely(exception.Message);
+                    }
+                }
+                else
+                {
+                    operation.RecordCleanupFailure(currentReadFailure!);
+                    LogWarningSafely(
+                        $"Failed to confirm inspection session release: {currentReadFailure!.Message}");
+                    ownershipReleased = operation.ReleaseObserved;
+                }
+            }
+
+            outcome = operation.CaptureCleanupOutcome();
+            if (outcome.HasFailures)
+            {
+                ReportCleanupFailureSafely(outcome.ToException());
+            }
+
             SnapshotUpdate? update = null;
+            var retainReleaseConfirmation = false;
             lock (_syncRoot)
             {
                 if (ReferenceEquals(_activeOperation, operation))
@@ -527,20 +550,49 @@ public sealed class ProductionCoordinator
                     {
                         update = CommitStateLocked(
                             ProductionState.Faulted,
-                            operation.Session!.Run.SessionId);
+                            session!.Run.SessionId);
+                        retainReleaseConfirmation = true;
                     }
                 }
+            }
+
+            if (retainReleaseConfirmation)
+            {
+                operation.MarkReleaseConfirmationPending();
             }
 
             PublishSnapshot(update);
         }
         finally
         {
+            var completionOutcome = operation.CaptureCleanupOutcome();
             operation.DisposeCancellation();
-            operation.CompletionSource.TrySetResult(outcome);
+            operation.CompletionSource.TrySetResult(completionOutcome);
+            if (operation.Session is not null)
+            {
+                TryReconcileObservedRelease(operation, operation.Session);
+            }
         }
 
         return outcome;
+    }
+
+    private bool TryReadInspectionCurrent(
+        out ActiveInspectionRun? current,
+        out Exception? failure)
+    {
+        try
+        {
+            current = _inspectionExecution.Current;
+            failure = null;
+            return true;
+        }
+        catch (Exception exception)
+        {
+            current = null;
+            failure = exception;
+            return false;
+        }
     }
 
     private SnapshotUpdate? TryCommitStopping(ActiveProductionOperation operation)
@@ -712,6 +764,65 @@ public sealed class ProductionCoordinator
         }
 
         PublishSafely(DeviceStateChanged, snapshot, nameof(DeviceStateChanged));
+    }
+
+    private void OnInspectionExecutionChanged(
+        object? sender,
+        InspectionExecutionChangedEventArgs args)
+    {
+        ActiveProductionOperation? operation;
+        IInspectionSession? session;
+        lock (_syncRoot)
+        {
+            operation = _activeOperation;
+            session = operation?.Session;
+        }
+
+        if (operation is not null && session is not null)
+        {
+            TryObserveAndReconcileReleasedOperation(operation, session);
+        }
+    }
+
+    private void TryObserveAndReconcileReleasedOperation(
+        ActiveProductionOperation operation,
+        IInspectionSession session)
+    {
+        if (TryReadInspectionCurrent(out var current, out var currentReadFailure))
+        {
+            if (current?.SessionId != session.Run.SessionId)
+            {
+                operation.MarkReleaseObserved();
+            }
+        }
+        else
+        {
+            LogWarningSafely(
+                $"Failed to observe inspection session release: {currentReadFailure!.Message}");
+        }
+
+        TryReconcileObservedRelease(operation, session);
+    }
+
+    private void TryReconcileObservedRelease(
+        ActiveProductionOperation operation,
+        IInspectionSession session)
+    {
+        SnapshotUpdate? update = null;
+        lock (_syncRoot)
+        {
+            if (ReferenceEquals(_activeOperation, operation) &&
+                ReferenceEquals(operation.Session, session) &&
+                operation.ReleaseConfirmationPending &&
+                operation.Completion.IsCompleted &&
+                operation.ReleaseObserved)
+            {
+                _activeOperation = null;
+                update = CommitStateLocked(ProductionState.Faulted, null);
+            }
+        }
+
+        PublishSnapshot(update);
     }
 
     private async Task<Exception?> ClearInspectionBusyAsync()
@@ -931,6 +1042,8 @@ public sealed class ProductionCoordinator
         private readonly List<Exception> _cleanupFailures = [];
         private CancellationTokenRegistration _callerCancellationRegistration;
         private int _completionStarted;
+        private int _releaseConfirmationPending;
+        private int _releaseObserved;
         private bool _cancellationRequested;
         private bool _cancelInProgress;
         private bool _disposeRequested;
@@ -983,6 +1096,11 @@ public sealed class ProductionCoordinator
 
         public bool StopTimedOut { get; set; }
 
+        public bool ReleaseConfirmationPending =>
+            Volatile.Read(ref _releaseConfirmationPending) != 0;
+
+        public bool ReleaseObserved => Volatile.Read(ref _releaseObserved) != 0;
+
         public void AttachSession(IInspectionSession session)
         {
             if (Session is not null)
@@ -997,6 +1115,16 @@ public sealed class ProductionCoordinator
         public bool TryBeginCompletion()
         {
             return Interlocked.CompareExchange(ref _completionStarted, 1, 0) == 0;
+        }
+
+        public void MarkReleaseConfirmationPending()
+        {
+            Interlocked.Exchange(ref _releaseConfirmationPending, 1);
+        }
+
+        public void MarkReleaseObserved()
+        {
+            Interlocked.Exchange(ref _releaseObserved, 1);
         }
 
         public bool HasCleanupFailures
