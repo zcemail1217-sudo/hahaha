@@ -41,7 +41,7 @@ public sealed class TemplateLocateTool : IVisionTool
 
         stopwatch.Stop();
 
-        var data = new Dictionary<string, string>
+        var data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["overlaySchemaVersion"] = OverlaySchemaVersion,
             ["score"] = match.Score.ToInvariant(),

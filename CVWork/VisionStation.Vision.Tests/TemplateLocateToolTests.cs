@@ -52,6 +52,8 @@ public sealed class TemplateLocateToolTests
 
         var result = await new TemplateLocateTool().ExecuteAsync(locateTool, context);
 
+        Assert.True(result.Data.TryGetValue("OVERLAYSCHEMAVERSION", out var schemaVersion));
+        Assert.Equal("2", schemaVersion);
         Assert.Equal("2", result.Data["overlaySchemaVersion"]);
         var shapeContours = result.Data["shapeContours"];
         var matchedTemplateRoiContours = result.Data["matchedTemplateRoiContours"];
@@ -76,9 +78,17 @@ public sealed class TemplateLocateToolTests
         var deserialized = JsonSerializer.Deserialize<ToolResult>(serialized);
 
         Assert.NotNull(deserialized);
-        Assert.Equal(
-            matchedTemplateRoiContours,
-            deserialized.Data["matchedTemplateRoiContours"]);
+        foreach (var key in new[]
+                 {
+                     "overlaySchemaVersion",
+                     "shapeContours",
+                     "matchedTemplateRoiContours",
+                     "shapeCoverage",
+                     "shapeReverseScore"
+                 })
+        {
+            Assert.Equal(result.Data[key], deserialized.Data[key]);
+        }
     }
 
     [Fact]
