@@ -1,4 +1,5 @@
 using VisionStation.Domain;
+using VisionStation.Infrastructure;
 using VisionStation.Vision.UI.ViewModels;
 using Xunit;
 
@@ -6,6 +7,28 @@ namespace VisionStation.Vision.UI.Tests;
 
 public sealed class VisionToolCatalogTests
 {
+    [Fact]
+    public void TemplateLocateDefaults_EnableShapeV2WithoutChangingMultiTargetDefaults()
+    {
+        var catalogParameters = VisionToolItem.Create(VisionToolKind.TemplateLocate, 1)
+            .ToDefinition()
+            .Parameters;
+        var recipeParameters = DefaultRecipeFactory.Create()
+            .Tools
+            .Single(tool => tool.Kind == VisionToolKind.TemplateLocate)
+            .Parameters;
+        var multiTargetParameters = VisionToolItem.Create(VisionToolKind.MultiTargetMatch, 1)
+            .ToDefinition()
+            .Parameters;
+
+        Assert.Equal("2", catalogParameters["shapeScoreVersion"]);
+        Assert.Equal("3", catalogParameters["shapeCoverageDistance"]);
+        Assert.Equal("2", recipeParameters["shapeScoreVersion"]);
+        Assert.Equal("3", recipeParameters["shapeCoverageDistance"]);
+        Assert.False(multiTargetParameters.ContainsKey("shapeScoreVersion"));
+        Assert.False(multiTargetParameters.ContainsKey("shapeCoverageDistance"));
+    }
+
     [Fact]
     public void ResultTool_DefaultsToSingleTypedInputAndNoOutputPorts()
     {

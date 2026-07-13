@@ -12,6 +12,58 @@ namespace VisionStation.Vision.UI.Tests;
 
 public sealed class TemplateLocateToolDialogViewModelTests
 {
+    [Theory]
+    [InlineData(null, "3")]
+    [InlineData("4.5", "4.5")]
+    public void ApplyTo_LegacyTemplateLocateShape_MigratesToShapeV2(
+        string? existingCoverageDistance,
+        string expectedCoverageDistance)
+    {
+        using var tempDirectory = new TempDirectory();
+        var tool = new VisionToolItem
+        {
+            Id = "legacy-template-tool",
+            Name = "Legacy Template",
+            Kind = VisionToolKind.TemplateLocate,
+            Enabled = true,
+            ParametersText = existingCoverageDistance is null
+                ? "matchMode=Shape"
+                : $"matchMode=Shape; shapeCoverageDistance={existingCoverageDistance}"
+        };
+        var viewModel = CreateViewModel(tool, tempDirectory);
+
+        viewModel.ApplyTo(tool);
+
+        var parameters = tool.ToDefinition().Parameters;
+        Assert.Equal("2", parameters["shapeScoreVersion"]);
+        Assert.Equal(expectedCoverageDistance, parameters["shapeCoverageDistance"]);
+    }
+
+    [Theory]
+    [InlineData(VisionToolKind.TemplateLocate, "GrayNcc")]
+    [InlineData(VisionToolKind.MultiTargetMatch, "Shape")]
+    public void ApplyTo_NonSingleTargetShape_DoesNotAddShapeV2Parameters(
+        VisionToolKind toolKind,
+        string matchMode)
+    {
+        using var tempDirectory = new TempDirectory();
+        var tool = new VisionToolItem
+        {
+            Id = "legacy-template-tool",
+            Name = "Legacy Template",
+            Kind = toolKind,
+            Enabled = true,
+            ParametersText = $"matchMode={matchMode}"
+        };
+        var viewModel = CreateViewModel(tool, tempDirectory);
+
+        viewModel.ApplyTo(tool);
+
+        var parameters = tool.ToDefinition().Parameters;
+        Assert.False(parameters.ContainsKey("shapeScoreVersion"));
+        Assert.False(parameters.ContainsKey("shapeCoverageDistance"));
+    }
+
     [Fact]
     public void PlacingSearchRoiAfterTemplateKeepsSearchRegionBelowTemplateRoi()
     {
@@ -264,6 +316,20 @@ public sealed class TemplateLocateToolDialogViewModelTests
             new byte[width * height],
             DateTimeOffset.UtcNow,
             "test");
+    }
+
+    private static TemplateLocateToolDialogViewModel CreateViewModel(
+        VisionToolItem tool,
+        TempDirectory tempDirectory)
+    {
+        return new TemplateLocateToolDialogViewModel(
+            tool,
+            Array.Empty<RoiChoiceItem>(),
+            Array.Empty<RoiDefinition>(),
+            "Flow",
+            currentFrame: null,
+            new RuntimePaths(tempDirectory.Path),
+            new NullAppLogService());
     }
 
     private sealed class NullAppLogService : IAppLogService

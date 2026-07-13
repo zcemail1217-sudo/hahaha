@@ -67,7 +67,9 @@ public static class DefaultRecipeFactory
                     ["angleExtent"] = "90",
                     ["angleStep"] = "2",
                     ["cannyLow"] = "60",
-                    ["cannyHigh"] = "160"
+                    ["cannyHigh"] = "160",
+                    ["shapeScoreVersion"] = "2",
+                    ["shapeCoverageDistance"] = "3"
                 }
             },
             new()

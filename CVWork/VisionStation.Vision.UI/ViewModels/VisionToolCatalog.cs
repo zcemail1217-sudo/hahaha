@@ -288,7 +288,9 @@ public static class VisionToolCatalog
                 ["cannyHigh"] = "160",
                 ["orbMaxFeatures"] = "600",
                 ["orbMinMatches"] = "8",
-                ["orbRatio"] = "0.75"
+                ["orbRatio"] = "0.75",
+                ["shapeScoreVersion"] = "2",
+                ["shapeCoverageDistance"] = "3"
             },
             VisionToolKind.MultiTargetMatch => new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {

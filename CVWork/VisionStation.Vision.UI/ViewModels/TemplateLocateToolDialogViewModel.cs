@@ -1872,6 +1872,13 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             ["enabledOutputs"] = FormatEnabledOutputKeys()
         };
 
+        if (_toolKind == VisionToolKind.TemplateLocate &&
+            SelectedMatchMode.Equals("Shape", StringComparison.OrdinalIgnoreCase))
+        {
+            parameters["shapeScoreVersion"] = "2";
+            parameters["shapeCoverageDistance"] = GetParameterValue("shapeCoverageDistance", "3");
+        }
+
         return parameters;
     }
 
