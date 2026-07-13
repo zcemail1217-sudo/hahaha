@@ -120,14 +120,61 @@ public sealed class TemplateLocateToolDialogViewModelTests
         }
         finally
         {
-            finished = queuedContext.RunUntil(() => !viewModel.IsBusy, TimeSpan.FromSeconds(10));
-            queuedContext.Drain();
-            SynchronizationContext.SetSynchronizationContext(previousContext);
+            finished = CompleteQueuedRun(
+                queuedContext,
+                previousContext,
+                () => !viewModel.IsBusy,
+                TimeSpan.FromSeconds(10));
         }
 
+        Assert.Same(previousContext, SynchronizationContext.Current);
         Assert.True(startedBusy, "Second template matching completed before its queued continuation could be observed.");
         Assert.True(oldResultWasCleared, "The previous result overlays remained visible after the new run started.");
         Assert.True(finished, $"Second template matching did not finish: {viewModel.StatusText}");
+    }
+
+    [Fact]
+    public void CompleteQueuedRunRestoresPreviousContextWhenCallbackThrows()
+    {
+        var initialContext = SynchronizationContext.Current;
+        var expectedPrevious = new SynchronizationContext();
+        using var queuedContext = new QueuedSynchronizationContext();
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(expectedPrevious);
+            var previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+            queuedContext.Post(_ => throw new InvalidOperationException("queued failure"), null);
+
+            Assert.Throws<InvalidOperationException>(() => CompleteQueuedRun(
+                queuedContext,
+                previousContext,
+                () => false,
+                TimeSpan.FromSeconds(1)));
+            Assert.Same(expectedPrevious, SynchronizationContext.Current);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(initialContext);
+        }
+    }
+
+    private static bool CompleteQueuedRun(
+        QueuedSynchronizationContext queuedContext,
+        SynchronizationContext? previousContext,
+        Func<bool> predicate,
+        TimeSpan timeout)
+    {
+        try
+        {
+            var finished = queuedContext.RunUntil(predicate, timeout);
+            queuedContext.Drain();
+            return finished;
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+        }
     }
 
     private static Dictionary<string, string> CreateLearnedPolygonTemplateParameters(ImageFrame frame)
