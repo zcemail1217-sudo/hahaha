@@ -24,7 +24,8 @@ public enum VisionOverlayState
     Neutral,
     Ok,
     Ng,
-    Warning
+    Warning,
+    Info
 }
 
 public sealed record VisionOverlayItem

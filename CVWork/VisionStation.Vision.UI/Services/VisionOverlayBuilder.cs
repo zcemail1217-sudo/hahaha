@@ -33,7 +33,7 @@ public sealed class VisionOverlayBuilder : IVisionOverlayBuilder
             switch (result.Kind)
             {
                 case VisionToolKind.TemplateLocate:
-                    AddLocateOverlay(overlays, result, toolState);
+                    overlays.AddRange(TemplateLocateOverlayFactory.Create(result));
                     break;
                 case VisionToolKind.MultiTargetMatch:
                     AddMultiTargetOverlay(overlays, result, toolState);
@@ -113,71 +113,6 @@ public sealed class VisionOverlayBuilder : IVisionOverlayBuilder
         }
 
         return ids;
-    }
-
-    private static void AddLocateOverlay(List<VisionOverlayItem> overlays, ToolResult result, VisionOverlayState state)
-    {
-        if (!TryGetDouble(result.Data, "x", out var x) ||
-            !TryGetDouble(result.Data, "y", out var y) ||
-            !TryGetDouble(result.Data, "angle", out var angle))
-        {
-            return;
-        }
-
-        var hasShapePoints = TryParsePointList(result.Data.GetValueOrDefault("shapePoints"), out var shapePoints);
-        var shapeContours = ParseContours(result.Data.GetValueOrDefault("shapeContours")).ToArray();
-        var hasShapeOverlay = hasShapePoints || shapeContours.Length > 0;
-
-        if (!hasShapeOverlay &&
-            TryGetDouble(result.Data, "templateWidth", out var width) &&
-            TryGetDouble(result.Data, "templateHeight", out var height) &&
-            width > 0 &&
-            height > 0)
-        {
-            overlays.Add(new VisionOverlayItem
-            {
-                Kind = VisionOverlayKind.RotatedRectangle,
-                State = state,
-                Label = $"Template {result.Data.GetValueOrDefault("score", "-")}",
-                X = x,
-                Y = y,
-                Width = width,
-                Height = height,
-                Angle = angle
-            });
-        }
-
-        if (hasShapePoints)
-        {
-            overlays.Add(new VisionOverlayItem
-            {
-                Kind = VisionOverlayKind.PointCloud,
-                State = VisionOverlayState.Warning,
-                Label = string.Empty,
-                Points = shapePoints
-            });
-        }
-
-        foreach (var contour in shapeContours)
-        {
-            overlays.Add(new VisionOverlayItem
-            {
-                Kind = VisionOverlayKind.Polyline,
-                State = VisionOverlayState.Warning,
-                Label = string.Empty,
-                Points = contour
-            });
-        }
-
-        overlays.Add(new VisionOverlayItem
-        {
-            Kind = VisionOverlayKind.Cross,
-            State = state,
-            Label = $"Locate {result.Data.GetValueOrDefault("score", "-")}",
-            X = x,
-            Y = y,
-            Angle = angle
-        });
     }
 
     private static void AddMultiTargetOverlay(List<VisionOverlayItem> overlays, ToolResult result, VisionOverlayState state)
@@ -289,25 +224,6 @@ public sealed class VisionOverlayBuilder : IVisionOverlayBuilder
         }
 
         return parsed.Count > 0;
-    }
-
-    private static IReadOnlyList<IReadOnlyList<Point2D>> ParseContours(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return Array.Empty<IReadOnlyList<Point2D>>();
-        }
-
-        var contours = new List<IReadOnlyList<Point2D>>();
-        foreach (var contourText in text.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            if (TryParsePointList(contourText, out var contour) && contour.Count >= 2)
-            {
-                contours.Add(contour);
-            }
-        }
-
-        return contours;
     }
 
     private static void AddFindLineOverlay(List<VisionOverlayItem> overlays, ToolResult result, VisionOverlayState state)

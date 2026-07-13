@@ -291,6 +291,7 @@ public sealed class ResultOverlayCanvas : FrameworkElement
             VisionOverlayState.Ok => Color.FromRgb(66, 229, 142),
             VisionOverlayState.Ng => Color.FromRgb(255, 92, 122),
             VisionOverlayState.Warning => Color.FromRgb(255, 200, 87),
+            VisionOverlayState.Info => Color.FromRgb(35, 211, 245),
             _ => Color.FromRgb(35, 211, 245)
         };
 
@@ -309,6 +310,7 @@ public sealed class ResultOverlayCanvas : FrameworkElement
             VisionOverlayState.Ok => Color.FromArgb(18, 66, 229, 142),
             VisionOverlayState.Ng => Color.FromArgb(20, 255, 92, 122),
             VisionOverlayState.Warning => Color.FromArgb(18, 255, 200, 87),
+            VisionOverlayState.Info => Color.FromArgb(18, 35, 211, 245),
             _ => Color.FromArgb(14, 35, 211, 245)
         };
 
@@ -322,6 +324,7 @@ public sealed class ResultOverlayCanvas : FrameworkElement
             VisionOverlayState.Ok => Color.FromArgb(220, 66, 229, 142),
             VisionOverlayState.Ng => Color.FromArgb(230, 255, 92, 122),
             VisionOverlayState.Warning => Color.FromArgb(220, 255, 200, 87),
+            VisionOverlayState.Info => Color.FromArgb(220, 35, 211, 245),
             _ => Color.FromArgb(220, 35, 211, 245)
         };
 

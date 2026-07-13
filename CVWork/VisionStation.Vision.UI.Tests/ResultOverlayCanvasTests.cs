@@ -17,7 +17,7 @@ public sealed class ResultOverlayCanvasTests
     {
         RunOnSta(() =>
         {
-            var surface = RenderLine(scale: 4);
+            var surface = RenderLine(scale: 4, VisionOverlayState.Ok);
             var bitmap = surface.Bitmap;
             var thickness = MeasureMaximumGreenRun(bitmap, y: 200);
 
@@ -30,7 +30,7 @@ public sealed class ResultOverlayCanvasTests
     {
         RunOnSta(() =>
         {
-            var surface = RenderLine(scale: 1);
+            var surface = RenderLine(scale: 1, VisionOverlayState.Ok);
             surface.ScaledContent.RenderTransform = new ScaleTransform(4, 4);
             surface.ScaledContent.InvalidateVisual();
 
@@ -41,7 +41,22 @@ public sealed class ResultOverlayCanvasTests
         });
     }
 
-    private static TestSurface RenderLine(double scale)
+    [Fact]
+    public void InfoLineRendersCyan()
+    {
+        RunOnSta(() =>
+        {
+            var surface = RenderLine(scale: 1, VisionOverlayState.Info, surfaceSize: 100);
+
+            var pixel = ReadPixel(surface.Bitmap, 50, 50);
+
+            Assert.True(pixel.Green > 180, $"Green was {pixel.Green}.");
+            Assert.True(pixel.Blue > 180, $"Blue was {pixel.Blue}.");
+            Assert.True(pixel.Red < 100, $"Red was {pixel.Red}.");
+        });
+    }
+
+    private static TestSurface RenderLine(double scale, VisionOverlayState state, int surfaceSize = 400)
     {
         var canvas = new ResultOverlayCanvas
         {
@@ -53,10 +68,10 @@ public sealed class ResultOverlayCanvasTests
                 new VisionOverlayItem
                 {
                     Kind = VisionOverlayKind.LineSegment,
-                    State = VisionOverlayState.Ok,
-                    X = 50,
+                    State = state,
+                    X = 50.5,
                     Y = 0,
-                    X2 = 50,
+                    X2 = 50.5,
                     Y2 = 100
                 }
             }
@@ -73,22 +88,22 @@ public sealed class ResultOverlayCanvasTests
 
         var root = new Grid
         {
-            Width = 400,
-            Height = 400,
+            Width = surfaceSize,
+            Height = surfaceSize,
             Background = Brushes.Transparent
         };
         root.Children.Add(scaledContent);
 
-        root.Measure(new Size(400, 400));
-        root.Arrange(new Rect(0, 0, 400, 400));
+        root.Measure(new Size(surfaceSize, surfaceSize));
+        root.Arrange(new Rect(0, 0, surfaceSize, surfaceSize));
         root.UpdateLayout();
 
-        return new TestSurface(root, scaledContent, RenderRoot(root));
+        return new TestSurface(root, scaledContent, RenderRoot(root, surfaceSize));
     }
 
-    private static RenderTargetBitmap RenderRoot(UIElement root)
+    private static RenderTargetBitmap RenderRoot(UIElement root, int surfaceSize = 400)
     {
-        var bitmap = new RenderTargetBitmap(400, 400, 96, 96, PixelFormats.Pbgra32);
+        var bitmap = new RenderTargetBitmap(surfaceSize, surfaceSize, 96, 96, PixelFormats.Pbgra32);
         bitmap.Render(root);
         return bitmap;
     }
@@ -119,6 +134,13 @@ public sealed class ResultOverlayCanvasTests
         }
 
         return max;
+    }
+
+    private static (byte Blue, byte Green, byte Red, byte Alpha) ReadPixel(BitmapSource bitmap, int x, int y)
+    {
+        var pixel = new byte[4];
+        bitmap.CopyPixels(new Int32Rect(x, y, 1, 1), pixel, 4, 0);
+        return (pixel[0], pixel[1], pixel[2], pixel[3]);
     }
 
     private static ImageFrame CreateFrame(int width, int height)
