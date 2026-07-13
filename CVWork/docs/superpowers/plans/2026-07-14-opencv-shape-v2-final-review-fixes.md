@@ -406,4 +406,3 @@ git diff --name-only fb2f7b7..HEAD
 ```
 
 Expected: 工作区干净、ahead/behind 为 `0 0`，功能范围没有 BMP/PNG/JPG/TIFF/GIF。
-
