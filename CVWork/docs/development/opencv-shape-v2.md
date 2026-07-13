@@ -141,6 +141,7 @@ Score        = min(ForwardScore, ReverseScore) * Coverage
 
 ```powershell
 $env:VISIONSTATION_TEMPLATE_DATASET='C:\现场数据\图像'
+dotnet restore .\CVWork.sln
 dotnet test .\VisionStation.Vision.Tests\VisionStation.Vision.Tests.csproj `
   -c Release --no-restore `
   --filter "FullyQualifiedName~LocalTemplateDatasetAcceptanceTests" `

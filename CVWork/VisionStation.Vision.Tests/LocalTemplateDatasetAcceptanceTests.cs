@@ -41,10 +41,19 @@ public sealed class LocalTemplateDatasetAcceptanceTests
             return;
         }
 
-        var positivePath = Path.Combine(directory, "正.bmp");
-        Assert.True(File.Exists(positivePath), $"Local dataset must contain '{positivePath}'.");
+        var imagePaths = Directory
+            .EnumerateFiles(directory, "*.bmp", SearchOption.TopDirectoryOnly)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        Assert.Equal(6, imagePaths.Length);
+        foreach (var expectedName in new[] { "正.bmp", "反.bmp", "散乱.bmp", "密集.bmp", "堆叠.bmp" })
+        {
+            Assert.True(
+                imagePaths.Any(path => Path.GetFileName(path).Equals(expectedName, StringComparison.OrdinalIgnoreCase)),
+                $"Local dataset must contain '{expectedName}'.");
+        }
 
-        var report = LocalTemplateDatasetFixture.Run(directory, _output);
+        var report = LocalTemplateDatasetFixture.Run(imagePaths, _output);
         var positive = Assert.Single(
             report.Results,
             item => Path.GetFileName(item.Path).Equals("正.bmp", StringComparison.OrdinalIgnoreCase));
@@ -68,6 +77,28 @@ public sealed class LocalTemplateDatasetAcceptanceTests
             $"V2 total {report.V2Elapsed.TotalMilliseconds:0.0} ms exceeds " +
             $"1.30 x V1 total {report.V1Elapsed.TotalMilliseconds:0.0} ms.");
     }
+
+    [Fact]
+    public void Shape_contour_diagnostics_report_product_width_and_height_separately()
+    {
+        IReadOnlyList<IReadOnlyList<Point2D>> contours =
+        [
+            [
+                new Point2D(10, 10),
+                new Point2D(90, 10),
+                new Point2D(90, 30),
+                new Point2D(10, 30)
+            ]
+        ];
+
+        var ratios = LocalTemplateDatasetFixture.GetContourToProductRatios(
+            contours,
+            new Rect(0, 0, 100, 40));
+
+        Assert.NotNull(ratios);
+        Assert.Equal(0.8, ratios.Value.WidthRatio, 6);
+        Assert.Equal(0.5, ratios.Value.HeightRatio, 6);
+    }
 }
 
 internal sealed record LocalTemplateDatasetImageResult(
@@ -85,40 +116,38 @@ internal sealed record LocalTemplateDatasetReport(
 internal sealed record LocalTemplateDatasetLearned(
     ImageFrame PositiveFrame,
     Dictionary<string, string> Parameters,
-    Rect ProductBounds,
-    Rect TemplateBounds);
+    Rect ProductBounds);
 
 internal static class LocalTemplateDatasetFixture
 {
     private const int ProductMargin = 14;
 
-    public static LocalTemplateDatasetReport Run(string directory, ITestOutputHelper output)
+    public static LocalTemplateDatasetReport Run(
+        IReadOnlyList<string> imagePaths,
+        ITestOutputHelper output)
     {
-        var positivePath = Path.Combine(directory, "正.bmp");
+        if (imagePaths.Count == 0)
+        {
+            throw new InvalidOperationException("No BMP files were provided for the local dataset run.");
+        }
+
+        var positivePath = imagePaths.Single(path =>
+            Path.GetFileName(path).Equals("正.bmp", StringComparison.OrdinalIgnoreCase));
         var learned = LearnFromPositive(positivePath);
         var v2Parameters = learned.Parameters;
         var v1Parameters = new Dictionary<string, string>(v2Parameters, StringComparer.OrdinalIgnoreCase);
         v1Parameters.Remove("shapeScoreVersion");
 
-        var frames = Directory
-            .EnumerateFiles(directory, "*.bmp", SearchOption.TopDirectoryOnly)
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .Select(path => (Path: path, Frame: LoadFrame(path)))
-            .ToArray();
-        if (frames.Length == 0)
-        {
-            throw new InvalidOperationException($"No BMP files were found in local dataset '{directory}'.");
-        }
-
         _ = TemplateMatcher.Match(learned.PositiveFrame, null, v1Parameters);
         _ = TemplateMatcher.Match(learned.PositiveFrame, null, v2Parameters);
 
-        var results = new List<LocalTemplateDatasetImageResult>(frames.Length);
+        var results = new List<LocalTemplateDatasetImageResult>(imagePaths.Count);
         var v1Total = TimeSpan.Zero;
         var v2Total = TimeSpan.Zero;
-        for (var index = 0; index < frames.Length; index++)
+        for (var index = 0; index < imagePaths.Count; index++)
         {
-            var item = frames[index];
+            var path = imagePaths[index];
+            var frame = LoadFrame(path);
             TemplateMatchResult v1;
             TemplateMatchResult v2;
             TimeSpan v1Elapsed;
@@ -126,19 +155,19 @@ internal static class LocalTemplateDatasetFixture
 
             if (index % 2 == 0)
             {
-                (v1, v1Elapsed) = Measure(() => TemplateMatcher.Match(item.Frame, null, v1Parameters));
-                (v2, v2Elapsed) = Measure(() => TemplateMatcher.Match(item.Frame, null, v2Parameters));
+                (v1, v1Elapsed) = Measure(() => TemplateMatcher.Match(frame, null, v1Parameters));
+                (v2, v2Elapsed) = Measure(() => TemplateMatcher.Match(frame, null, v2Parameters));
             }
             else
             {
-                (v2, v2Elapsed) = Measure(() => TemplateMatcher.Match(item.Frame, null, v2Parameters));
-                (v1, v1Elapsed) = Measure(() => TemplateMatcher.Match(item.Frame, null, v1Parameters));
+                (v2, v2Elapsed) = Measure(() => TemplateMatcher.Match(frame, null, v2Parameters));
+                (v1, v1Elapsed) = Measure(() => TemplateMatcher.Match(frame, null, v1Parameters));
             }
 
             v1Total += v1Elapsed;
             v2Total += v2Elapsed;
-            results.Add(new LocalTemplateDatasetImageResult(item.Path, v1, v2, v1Elapsed, v2Elapsed));
-            output.WriteLine(FormatImageResult(item.Path, v1, v2, v1Elapsed, v2Elapsed));
+            results.Add(new LocalTemplateDatasetImageResult(path, v1, v2, v1Elapsed, v2Elapsed));
+            output.WriteLine(FormatImageResult(path, v1, v2, v1Elapsed, v2Elapsed));
         }
 
         var ratio = v1Total > TimeSpan.Zero
@@ -187,7 +216,7 @@ internal static class LocalTemplateDatasetFixture
             parameters[item.Key] = item.Value;
         }
 
-        return new LocalTemplateDatasetLearned(positiveFrame, parameters, productBounds, templateBounds);
+        return new LocalTemplateDatasetLearned(positiveFrame, parameters, productBounds);
     }
 
     private static ImageFrame LoadFrame(string path)
@@ -302,26 +331,28 @@ internal static class LocalTemplateDatasetFixture
             Math.Pow(positive.Pose.Y - expectedY, 2));
         var angleModulo180 = Math.Abs(positive.Pose.Angle % 180.0);
         var angleError = Math.Min(angleModulo180, 180.0 - angleModulo180);
-        var contourRangeRatio = GetContourRangeRatio(positive, learned.TemplateBounds);
+        var contourRatios = GetContourToProductRatios(positive.ShapeContours, learned.ProductBounds);
         output.WriteLine(FormattableString.Invariant(
-            $"POSITIVE diagnostics centerError={centerError:0.00}px angleErrorMod180={angleError:0.00}deg shapeToTemplateRange={FormatNullable(contourRangeRatio)}"));
+            $"POSITIVE diagnostics centerError={centerError:0.00}px angleErrorMod180={angleError:0.00}deg shapeToProductWidth={FormatNullable(contourRatios?.WidthRatio)} shapeToProductHeight={FormatNullable(contourRatios?.HeightRatio)}"));
     }
 
-    private static double? GetContourRangeRatio(
-        TemplateMatchResult result,
-        Rect templateBounds)
+    internal static (double WidthRatio, double HeightRatio)? GetContourToProductRatios(
+        IReadOnlyList<IReadOnlyList<Point2D>>? shapeContours,
+        Rect productBounds)
     {
-        var points = result.ShapeContours?
+        var points = shapeContours?
             .SelectMany(contour => contour)
             .ToArray();
-        if (points is not { Length: > 0 } || templateBounds.Width <= 0 || templateBounds.Height <= 0)
+        if (points is not { Length: > 0 } || productBounds.Width <= 0 || productBounds.Height <= 0)
         {
             return null;
         }
 
         var contourWidth = points.Max(point => point.X) - points.Min(point => point.X);
         var contourHeight = points.Max(point => point.Y) - points.Min(point => point.Y);
-        return Math.Max(contourWidth / templateBounds.Width, contourHeight / templateBounds.Height);
+        return (
+            contourWidth / productBounds.Width,
+            contourHeight / productBounds.Height);
     }
 
     private sealed record ContourCandidate(Rect Bounds, double Area);
