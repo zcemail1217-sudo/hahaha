@@ -107,6 +107,7 @@ Score        = min(ForwardScore, ReverseScore) * Coverage
 
 `TemplateLocateTool` 将结果写入 `ToolResult.Data`：
 
+- `hasMatch`：是否存在真实定位候选；新结果始终写入 `True` 或 `False`
 - `shapeContours`
 - `matchedTemplateRoiContours`
 - `shapeCoverage`
@@ -114,6 +115,8 @@ Score        = min(ForwardScore, ReverseScore) * Coverage
 - `overlaySchemaVersion=2`
 
 `overlaySchemaVersion=2` 表示评分轮廓和完整 ROI 已分离。旧历史结果没有版本字段时，`shapeContours` 只能按旧的混合橙色轮廓显示；禁止根据“最后一条轮廓”或外接框猜测并拆分旧数据。
+
+`hasMatch=False` 表示没有真实候选，UI 不得创建定位 Cross 或回退旋转矩形；合法的点云、评分轮廓和模板 ROI 仍可独立容错显示。持久化结果中即使 `hasMatch=True`，也只有 `x`、`y`、`angle`、`score` 四个主字段都存在且为有限数时才允许创建位置叠加；空值、`1` 或其他不可解析文本均按无候选关闭。兼容没有 `hasMatch` 的旧历史结果时，同样只用这四个有限主字段推断候选，`Outcome` 不能代替候选标志，因此真实的低分 NG 候选仍可显示。回退旋转矩形还要求模板宽高均为有限正数，轮廓是否显示不依赖这些位置字段。
 
 ## 7. UI 消费约束
 

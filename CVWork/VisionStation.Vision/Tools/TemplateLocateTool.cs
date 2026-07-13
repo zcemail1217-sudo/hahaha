@@ -20,7 +20,8 @@ public sealed class TemplateLocateTool : IVisionTool
             {
                 Data = new Dictionary<string, string>(missingInputResult.Data, StringComparer.OrdinalIgnoreCase)
                 {
-                    ["overlaySchemaVersion"] = OverlaySchemaVersion
+                    ["overlaySchemaVersion"] = OverlaySchemaVersion,
+                    ["hasMatch"] = false.ToString()
                 }
             });
         }
@@ -44,6 +45,7 @@ public sealed class TemplateLocateTool : IVisionTool
         var data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["overlaySchemaVersion"] = OverlaySchemaVersion,
+            ["hasMatch"] = match.HasMatch.ToString(),
             ["score"] = match.Score.ToInvariant(),
             ["x"] = match.Pose.X.ToInvariant(),
             ["y"] = match.Pose.Y.ToInvariant(),

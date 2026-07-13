@@ -37,6 +37,7 @@ public sealed class TemplateLocateOverlayFactoryTests
             ["shapeContours"] = $"{source.Data["shapeContours"]}|{source.Data["matchedTemplateRoiContours"]}"
         };
         data.Remove("overlaySchemaVersion");
+        data.Remove("hasMatch");
         data.Remove("matchedTemplateRoiContours");
         var legacy = source with { Data = data };
 
@@ -100,33 +101,143 @@ public sealed class TemplateLocateOverlayFactoryTests
         Assert.Equal([new Point2D(10, 20), new Point2D(30, 40)], info.Points);
     }
 
+    [Fact]
+    public void MissingInputResultDoesNotCreatePositionOverlay()
+    {
+        var result = new ToolResult
+        {
+            ToolId = "locate",
+            Kind = VisionToolKind.TemplateLocate,
+            Outcome = InspectionOutcome.Ng,
+            Data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["overlaySchemaVersion"] = "2",
+                ["hasMatch"] = "False",
+                ["missingInput"] = "ImageInput"
+            }
+        };
+
+        var projected = VisionResultOverlayProjector.Project(TemplateLocateOverlayFactory.Create(result));
+
+        Assert.Empty(projected);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void CreateDefaultsInvalidPrimaryFieldsAndStillAddsCrossAndFallback(bool isV2)
+    public void CreateInvalidPrimaryFieldsKeepsContoursWithoutPositionOverlay(bool includesHasMatch)
     {
         var source = CreateV2ToolResult();
         var data = new Dictionary<string, string>(source.Data, StringComparer.OrdinalIgnoreCase);
         data.Remove("x");
         data["score"] = "NaN";
-        data.Remove("shapeContours");
-        data.Remove("matchedTemplateRoiContours");
-        if (!isV2)
+        if (!includesHasMatch)
         {
-            data.Remove("overlaySchemaVersion");
+            data.Remove("hasMatch");
         }
 
         var overlays = TemplateLocateOverlayFactory.Create(source with { Data = data });
 
+        Assert.Single(overlays, item =>
+            item.Kind == VisionOverlayKind.Polyline && item.State == VisionOverlayState.Warning);
+        Assert.Single(overlays, item =>
+            item.Kind == VisionOverlayKind.Polyline && item.State == VisionOverlayState.Info);
+        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.Cross);
+        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.RotatedRectangle);
+    }
+
+    [Theory]
+    [InlineData("False")]
+    [InlineData("")]
+    [InlineData("1")]
+    [InlineData("garbage")]
+    public void CreateExplicitMissingOrInvalidMatchFlagFailsClosed(string rawHasMatch)
+    {
+        var source = CreateV2ToolResult();
+        var data = new Dictionary<string, string>(source.Data, StringComparer.OrdinalIgnoreCase)
+        {
+            ["hasMatch"] = rawHasMatch
+        };
+        data.Remove("shapeContours");
+        data.Remove("matchedTemplateRoiContours");
+
+        var overlays = TemplateLocateOverlayFactory.Create(source with { Data = data });
+
+        Assert.Empty(overlays);
+    }
+
+    [Fact]
+    public void CreateLegacyFiniteLowScoreCandidateKeepsCrossAndFallback()
+    {
+        var source = CreateV2ToolResult();
+        var data = new Dictionary<string, string>(source.Data, StringComparer.OrdinalIgnoreCase)
+        {
+            ["score"] = ".123"
+        };
+        data.Remove("hasMatch");
+        data.Remove("shapeContours");
+        data.Remove("matchedTemplateRoiContours");
+        var legacy = source with { Outcome = InspectionOutcome.Ng, Data = data };
+
+        var overlays = TemplateLocateOverlayFactory.Create(legacy);
+
         var rectangle = Assert.Single(overlays, item => item.Kind == VisionOverlayKind.RotatedRectangle);
         var cross = Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Cross);
-        Assert.Equal(0, rectangle.X);
-        Assert.Equal(0, cross.X);
-        Assert.True(double.IsFinite(cross.X));
-        Assert.True(double.IsFinite(cross.Y));
-        Assert.True(double.IsFinite(cross.Angle));
-        Assert.Contains("S=0.000", cross.Label);
-        Assert.DoesNotContain("NaN", cross.Label, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(VisionOverlayState.Ng, rectangle.State);
+        Assert.Equal(VisionOverlayState.Ng, cross.State);
+        Assert.Contains("S=0.123", cross.Label);
+    }
+
+    [Fact]
+    public void CreateStructuredNoMatchKeepsContoursWithoutPositionOverlay()
+    {
+        var result = new TemplateMatchResult(
+            HasMatch: false,
+            Outcome: InspectionOutcome.Ng,
+            Score: 0.923,
+            Pose: new Pose2D(100, 120, 35),
+            MatchX: 0,
+            MatchY: 0,
+            TemplateWidth: 300,
+            TemplateHeight: 100,
+            SearchRegion: new TemplateSearchRegion(0, 0, 640, 480),
+            Message: "No match",
+            UsedAutoTemplate: false,
+            ShapeContours: [[new Point2D(1, 2), new Point2D(3, 4)]])
+        {
+            MatchedTemplateRoiContours = [[new Point2D(10, 20), new Point2D(30, 40)]]
+        };
+
+        var overlays = TemplateLocateOverlayFactory.Create(result);
+
+        Assert.Single(overlays, item =>
+            item.Kind == VisionOverlayKind.Polyline && item.State == VisionOverlayState.Warning);
+        Assert.Single(overlays, item =>
+            item.Kind == VisionOverlayKind.Polyline && item.State == VisionOverlayState.Info);
+        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.Cross);
+        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.RotatedRectangle);
+    }
+
+    [Theory]
+    [InlineData("0", "100")]
+    [InlineData("300", "NaN")]
+    public void CreateValidMatchWithInvalidTemplateSizeKeepsCrossWithoutFallback(
+        string templateWidth,
+        string templateHeight)
+    {
+        var source = CreateV2ToolResult();
+        var data = new Dictionary<string, string>(source.Data, StringComparer.OrdinalIgnoreCase)
+        {
+            ["templateWidth"] = templateWidth,
+            ["templateHeight"] = templateHeight
+        };
+        data.Remove("shapeContours");
+        data.Remove("matchedTemplateRoiContours");
+
+        var overlays = TemplateLocateOverlayFactory.Create(source with { Data = data });
+
+        Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Cross);
+        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.RotatedRectangle);
     }
 
     [Fact]
@@ -170,6 +281,7 @@ public sealed class TemplateLocateOverlayFactoryTests
                 ["score"] = ".923",
                 ["shapeCoverage"] = ".887",
                 ["overlaySchemaVersion"] = "2",
+                ["hasMatch"] = "True",
                 ["shapeContours"] = "1,2;3,4",
                 ["matchedTemplateRoiContours"] = "10,20;30,40"
             }

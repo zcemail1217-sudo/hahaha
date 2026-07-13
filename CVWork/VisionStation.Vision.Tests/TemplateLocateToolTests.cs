@@ -73,6 +73,7 @@ public sealed class TemplateLocateToolTests
         Assert.True(result.Data.TryGetValue("OVERLAYSCHEMAVERSION", out var schemaVersion));
         Assert.Equal("2", schemaVersion);
         Assert.Equal("2", result.Data["overlaySchemaVersion"]);
+        Assert.Equal("True", result.Data["hasMatch"]);
         var shapeContours = result.Data["shapeContours"];
         var matchedTemplateRoiContours = result.Data["matchedTemplateRoiContours"];
         Assert.False(string.IsNullOrWhiteSpace(shapeContours));
@@ -99,6 +100,7 @@ public sealed class TemplateLocateToolTests
         foreach (var key in new[]
                  {
                      "overlaySchemaVersion",
+                     "hasMatch",
                      "shapeContours",
                      "matchedTemplateRoiContours",
                      "shapeCoverage",
@@ -132,5 +134,6 @@ public sealed class TemplateLocateToolTests
         Assert.Equal(InspectionOutcome.Ng, result.Outcome);
         Assert.Equal("ImageInput", result.Data["missingInput"]);
         Assert.Equal("2", result.Data["overlaySchemaVersion"]);
+        Assert.Equal("False", result.Data["hasMatch"]);
     }
 }

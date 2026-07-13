@@ -9,7 +9,14 @@ public static class TemplateLocateOverlayFactory
 {
     public static IReadOnlyList<VisionOverlayItem> Create(TemplateMatchResult result)
     {
+        var hasPosition = result.HasMatch &&
+                          double.IsFinite(result.Pose.X) &&
+                          double.IsFinite(result.Pose.Y) &&
+                          double.IsFinite(result.Pose.Angle) &&
+                          double.IsFinite(result.Score);
+
         return CreateCore(
+            hasPosition,
             result.Pose.X,
             result.Pose.Y,
             result.Pose.Angle,
@@ -25,12 +32,19 @@ public static class TemplateLocateOverlayFactory
 
     public static IReadOnlyList<VisionOverlayItem> Create(ToolResult result)
     {
-        TryGetDouble(result.Data, "x", out var x);
-        TryGetDouble(result.Data, "y", out var y);
-        TryGetDouble(result.Data, "angle", out var angle);
+        var hasX = TryGetDouble(result.Data, "x", out var x);
+        var hasY = TryGetDouble(result.Data, "y", out var y);
+        var hasAngle = TryGetDouble(result.Data, "angle", out var angle);
         TryGetDouble(result.Data, "templateWidth", out var templateWidth);
         TryGetDouble(result.Data, "templateHeight", out var templateHeight);
-        TryGetDouble(result.Data, "score", out var score);
+        var hasScore = TryGetDouble(result.Data, "score", out var score);
+        var hasPosition = hasX && hasY && hasAngle && hasScore;
+        if (result.Data.TryGetValue("hasMatch", out var rawHasMatch))
+        {
+            hasPosition = bool.TryParse(rawHasMatch, out var parsedHasMatch) &&
+                          parsedHasMatch &&
+                          hasPosition;
+        }
 
         double? coverage = TryGetDouble(result.Data, "shapeCoverage", out var parsedCoverage)
             ? parsedCoverage
@@ -45,6 +59,7 @@ public static class TemplateLocateOverlayFactory
             : Array.Empty<IReadOnlyList<Point2D>>();
 
         return CreateCore(
+            hasPosition,
             x,
             y,
             angle,
@@ -59,6 +74,7 @@ public static class TemplateLocateOverlayFactory
     }
 
     private static IReadOnlyList<VisionOverlayItem> CreateCore(
+        bool hasPosition,
         double x,
         double y,
         double angle,
@@ -105,7 +121,12 @@ public static class TemplateLocateOverlayFactory
         }
 
         var hasShapeOverlay = shapePoints.Count > 0 || shapeContours.Count > 0 || roiContours.Count > 0;
-        if (!hasShapeOverlay)
+        if (hasPosition &&
+            !hasShapeOverlay &&
+            double.IsFinite(templateWidth) &&
+            double.IsFinite(templateHeight) &&
+            templateWidth > 0 &&
+            templateHeight > 0)
         {
             overlays.Add(new VisionOverlayItem
             {
@@ -119,18 +140,21 @@ public static class TemplateLocateOverlayFactory
             });
         }
 
-        overlays.Add(new VisionOverlayItem
+        if (hasPosition)
         {
-            Kind = VisionOverlayKind.Cross,
-            State = state,
-            PreserveLabelInResult = true,
-            Label = coverage is { } shapeCoverage
-                ? $"匹配 S={score.ToString("0.000", CultureInfo.InvariantCulture)} C={shapeCoverage.ToString("0.000", CultureInfo.InvariantCulture)}"
-                : $"匹配 S={score.ToString("0.000", CultureInfo.InvariantCulture)}",
-            X = x,
-            Y = y,
-            Angle = angle
-        });
+            overlays.Add(new VisionOverlayItem
+            {
+                Kind = VisionOverlayKind.Cross,
+                State = state,
+                PreserveLabelInResult = true,
+                Label = coverage is { } shapeCoverage
+                    ? $"匹配 S={score.ToString("0.000", CultureInfo.InvariantCulture)} C={shapeCoverage.ToString("0.000", CultureInfo.InvariantCulture)}"
+                    : $"匹配 S={score.ToString("0.000", CultureInfo.InvariantCulture)}",
+                X = x,
+                Y = y,
+                Angle = angle
+            });
+        }
 
         return overlays;
     }
