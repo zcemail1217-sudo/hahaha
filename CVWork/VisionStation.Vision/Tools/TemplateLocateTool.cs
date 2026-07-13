@@ -5,6 +5,8 @@ namespace VisionStation.Vision.Tools;
 
 public sealed class TemplateLocateTool : IVisionTool
 {
+    private const string OverlaySchemaVersion = "2";
+
     public VisionToolKind Kind => VisionToolKind.TemplateLocate;
 
     public Task<ToolResult> ExecuteAsync(VisionToolDefinition definition, VisionToolContext context, CancellationToken cancellationToken = default)
@@ -13,7 +15,14 @@ public sealed class TemplateLocateTool : IVisionTool
         if (!context.TryGetInputImage(definition, out var frame))
         {
             stopwatch.Stop();
-            return Task.FromResult(GeometryToolSupport.CreateMissingImageInputResult(definition, Kind, stopwatch.Elapsed));
+            var missingInputResult = GeometryToolSupport.CreateMissingImageInputResult(definition, Kind, stopwatch.Elapsed);
+            return Task.FromResult(missingInputResult with
+            {
+                Data = new Dictionary<string, string>(missingInputResult.Data, StringComparer.OrdinalIgnoreCase)
+                {
+                    ["overlaySchemaVersion"] = OverlaySchemaVersion
+                }
+            });
         }
 
         var roi = FindBoundRoi(context.Recipe, definition);
@@ -34,7 +43,7 @@ public sealed class TemplateLocateTool : IVisionTool
 
         var data = new Dictionary<string, string>
         {
-            ["overlaySchemaVersion"] = "2",
+            ["overlaySchemaVersion"] = OverlaySchemaVersion,
             ["score"] = match.Score.ToInvariant(),
             ["x"] = match.Pose.X.ToInvariant(),
             ["y"] = match.Pose.Y.ToInvariant(),

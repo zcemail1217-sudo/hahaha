@@ -80,4 +80,29 @@ public sealed class TemplateLocateToolTests
             matchedTemplateRoiContours,
             deserialized.Data["matchedTemplateRoiContours"]);
     }
+
+    [Fact]
+    public async Task ExecuteAsyncMissingInputStillWritesOverlaySchemaVersion()
+    {
+        var fixture = TemplateMatcherTestData.CreatePolygonTemplateFixture();
+        var locateTool = new VisionToolDefinition
+        {
+            Id = "locate",
+            Kind = VisionToolKind.TemplateLocate,
+            Parameters = fixture.Parameters
+        };
+        var recipe = new Recipe
+        {
+            Tools = [locateTool]
+        };
+        using var context = new VisionToolContext(recipe, fixture.SearchFrame);
+
+        var result = await new TemplateLocateTool().ExecuteAsync(locateTool, context);
+
+        Assert.Equal("locate", result.ToolId);
+        Assert.Equal(VisionToolKind.TemplateLocate, result.Kind);
+        Assert.Equal(InspectionOutcome.Ng, result.Outcome);
+        Assert.Equal("ImageInput", result.Data["missingInput"]);
+        Assert.Equal("2", result.Data["overlaySchemaVersion"]);
+    }
 }
