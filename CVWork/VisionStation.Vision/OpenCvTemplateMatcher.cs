@@ -46,13 +46,9 @@ internal static class OpenCvTemplateMatcher
 
         if (GetMatchMode(parameters).Equals("Shape", StringComparison.OrdinalIgnoreCase))
         {
-            using var templateEdges = CreateShapeBaseEdges(template, parameters, templateMask);
-            if (Cv2.CountNonZero(templateEdges) >= 8)
-            {
-                learned["shapeScoreVersion"] = "2";
-                learned["shapeCoverageDistance"] = GetNormalizedShapeCoverageDistance(parameters)
-                    .ToString("0.###", CultureInfo.InvariantCulture);
-            }
+            learned["shapeScoreVersion"] = "2";
+            learned["shapeCoverageDistance"] = GetNormalizedShapeCoverageDistance(parameters)
+                .ToString("0.###", CultureInfo.InvariantCulture);
         }
 
         return learned;
@@ -616,7 +612,6 @@ internal static class OpenCvTemplateMatcher
                 var quality = EvaluateShapeV2(
                     searchEdges,
                     edgeDistance,
-                    template,
                     rotatedEdges,
                     rotatedSupport,
                     minLocation,
@@ -655,6 +650,11 @@ internal static class OpenCvTemplateMatcher
     {
         var mode = GetMatchMode(parameters);
         if (mode != "Shape")
+        {
+            return mode;
+        }
+
+        if (TryGetShapeScoreVersion(parameters, out var scoreVersion) && scoreVersion == 2)
         {
             return mode;
         }
@@ -738,7 +738,6 @@ internal static class OpenCvTemplateMatcher
     private static ShapeQuality? EvaluateShapeV2(
         Mat searchEdges,
         Mat searchDistance,
-        Mat currentTemplate,
         Mat rotatedEdges,
         Mat rotatedSupport,
         Point location,
@@ -780,7 +779,7 @@ internal static class OpenCvTemplateMatcher
             DistanceTransformMasks.Mask3);
         var reverseMean = Cv2.Mean(templateDistance, supportedSearchEdges).Val0;
 
-        var scale = GetShapeV2ScoreScale(currentTemplate, parameters, passScale);
+        var scale = GetShapeV2ScoreScale(rotatedEdges.Size(), parameters, passScale);
         var forward = Math.Exp(-Math.Max(0, forwardMean) / scale);
         var reverse = Math.Exp(-Math.Max(0, reverseMean) / scale);
         var reverseScore = Math.Clamp(reverse, 0, 1);
@@ -1089,7 +1088,7 @@ internal static class OpenCvTemplateMatcher
     }
 
     private static double GetShapeV2ScoreScale(
-        Mat currentTemplate,
+        Size currentTemplate,
         IReadOnlyDictionary<string, string> parameters,
         double passScale)
     {

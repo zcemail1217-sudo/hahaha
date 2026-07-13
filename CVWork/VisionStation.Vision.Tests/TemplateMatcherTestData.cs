@@ -23,6 +23,29 @@ internal static class TemplateMatcherTestData
         return CreateProductFrame(220, 380, new Point2d(110, 190), 0);
     }
 
+    public static ImageFrame CreateUniformTrainingFrame()
+    {
+        using var image = new Mat(380, 220, MatType.CV_8UC1, Scalar.White);
+        return CreateFrame(image, "synthetic-uniform-training");
+    }
+
+    public static ImageFrame CreateLowContrastGradientFrame()
+    {
+        const int width = 220;
+        const int height = 380;
+        var pixels = new byte[width * height];
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                pixels[y * width + x] = (byte)(100 + x * 10 / (width - 1) + y * 10 / (height - 1));
+            }
+        }
+
+        using var image = Mat.FromPixelData(height, width, MatType.CV_8UC1, pixels);
+        return CreateFrame(image, "synthetic-low-contrast-gradient");
+    }
+
     public static Dictionary<string, string> CreateLearningParameters()
     {
         return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -120,6 +143,28 @@ internal static class TemplateMatcherTestData
     {
         using var image = CreateProductMat(width, height, center, clockwiseAngle);
         return CreateFrame(image, "synthetic-product");
+    }
+
+    public static ImageFrame CreateRotatedSearchFrameWithLocalEdge(double clockwiseAngle)
+    {
+        const int width = 500;
+        const int height = 500;
+        var center = new Point2d(250, 250);
+        using var image = CreateProductMat(width, height, center, clockwiseAngle);
+        var start = RotateAroundCenter(new Point2d(35, -50));
+        var end = RotateAroundCenter(new Point2d(35, 50));
+        Cv2.Line(image, start, end, Scalar.Black, 2);
+        return CreateFrame(image, "synthetic-rotated-search");
+
+        Point RotateAroundCenter(Point2d point)
+        {
+            var radians = clockwiseAngle * Math.PI / 180.0;
+            var cos = Math.Cos(radians);
+            var sin = Math.Sin(radians);
+            return new Point(
+                (int)Math.Round(center.X + point.X * cos - point.Y * sin),
+                (int)Math.Round(center.Y + point.X * sin + point.Y * cos));
+        }
     }
 
     private static Mat CreateProductMat(

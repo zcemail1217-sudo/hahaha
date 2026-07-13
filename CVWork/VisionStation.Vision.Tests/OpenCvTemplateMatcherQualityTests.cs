@@ -18,6 +18,18 @@ public sealed class OpenCvTemplateMatcherQualityTests
     }
 
     [Fact]
+    public void LearnOpenCvShapeWithoutEdgesStillWritesV2ScoringMetadata()
+    {
+        var learned = TemplateMatcher.Learn(
+            TemplateMatcherTestData.CreateUniformTrainingFrame(),
+            null,
+            TemplateMatcherTestData.CreateLearningParameters());
+
+        Assert.Equal("2", learned["shapeScoreVersion"]);
+        Assert.Equal("3", learned["shapeCoverageDistance"]);
+    }
+
+    [Fact]
     public void ShapeV2ExtraEdgesInsideSupportLowerReverseScore()
     {
         var runtime = TemplateMatcherTestData.LearnRuntimeParameters();
@@ -72,6 +84,52 @@ public sealed class OpenCvTemplateMatcherQualityTests
         Assert.True(result.ShapeReverseScore > 0.95, $"Reverse score was {result.ShapeReverseScore:0.000}.");
     }
 
+    [Fact]
+    public void ShapeV2RotatedCanvasUsesItsShortSideForDefaultScale()
+    {
+        var defaultScale = TemplateMatcherTestData.LearnRuntimeParameters();
+        defaultScale["angleStart"] = "-45";
+        defaultScale["angleExtent"] = "0.5";
+        defaultScale["angleStep"] = "1";
+        defaultScale["minScore"] = "0";
+        var explicitScale = new Dictionary<string, string>(defaultScale, StringComparer.OrdinalIgnoreCase)
+        {
+            ["shapeScoreScale"] = "30"
+        };
+        var search = TemplateMatcherTestData.CreateRotatedSearchFrameWithLocalEdge(45);
+
+        var defaultResult = TemplateMatcher.Match(search, null, defaultScale);
+        var explicitResult = TemplateMatcher.Match(search, null, explicitScale);
+
+        Assert.True(defaultResult.HasMatch, defaultResult.Message);
+        Assert.True(explicitResult.HasMatch, explicitResult.Message);
+        Assert.NotNull(defaultResult.ShapeReverseScore);
+        Assert.NotNull(explicitResult.ShapeReverseScore);
+        Assert.Equal(45, defaultResult.Pose.Angle, 3);
+        Assert.Equal(explicitResult.ShapeReverseScore.Value, defaultResult.ShapeReverseScore.Value, 6);
+        Assert.Equal(explicitResult.Score, defaultResult.Score, 6);
+    }
+
+    [Fact]
+    public void ShapeV2LowEdgeModelDoesNotFallBackToGrayMatching()
+    {
+        var frame = TemplateMatcherTestData.CreateLowContrastGradientFrame();
+        var parameters = TemplateMatcherTestData.CreateLearningParameters();
+        parameters["angleStart"] = "0";
+        parameters["angleExtent"] = "0";
+        var learned = TemplateMatcher.Learn(frame, null, parameters);
+        foreach (var parameter in learned)
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        var result = TemplateMatcher.Match(frame, null, parameters);
+
+        Assert.Equal("2", parameters["shapeScoreVersion"]);
+        Assert.False(result.HasMatch);
+        Assert.Equal(InspectionOutcome.Ng, result.Outcome);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -108,7 +166,7 @@ public sealed class OpenCvTemplateMatcherQualityTests
 
         Assert.False(result.HasMatch);
         Assert.Equal(InspectionOutcome.Ng, result.Outcome);
-        Assert.Contains("Unsupported OpenCV Shape score version.", result.Message, StringComparison.Ordinal);
+        Assert.Equal("Unsupported OpenCV Shape score version.", result.Message);
     }
 
     [Fact]
