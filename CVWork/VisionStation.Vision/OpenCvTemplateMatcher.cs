@@ -149,7 +149,6 @@ internal static class OpenCvTemplateMatcher
                 ? CreateMatchedShapeContours(template, candidate, runtimeParameters, searchRegion)
                 : Array.Empty<IReadOnlyList<Point2D>>();
             var matchedRoiContours = CreateMatchedTemplateRoiContours(candidate, runtimeParameters, searchRegion);
-            var overlayContours = shapeContours.Concat(matchedRoiContours).ToArray();
             var modeName = GetMatchModeDisplayName(mode);
             var message = outcome == InspectionOutcome.Ok
                 ? $"OpenCV {modeName} match OK, score {candidate.Score.ToString("0.000", CultureInfo.InvariantCulture)}"
@@ -172,8 +171,9 @@ internal static class OpenCvTemplateMatcher
                 searchRegion,
                 message,
                 usedAutoTemplate,
-                ShapeContours: overlayContours)
+                ShapeContours: shapeContours)
             {
+                MatchedTemplateRoiContours = matchedRoiContours,
                 ShapeCoverage = candidate.ShapeCoverage,
                 ShapeReverseScore = candidate.ShapeReverseScore
             };

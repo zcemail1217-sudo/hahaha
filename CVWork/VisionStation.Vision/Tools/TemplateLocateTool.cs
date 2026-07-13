@@ -34,6 +34,7 @@ public sealed class TemplateLocateTool : IVisionTool
 
         var data = new Dictionary<string, string>
         {
+            ["overlaySchemaVersion"] = "2",
             ["score"] = match.Score.ToInvariant(),
             ["x"] = match.Pose.X.ToInvariant(),
             ["y"] = match.Pose.Y.ToInvariant(),
@@ -59,11 +60,30 @@ public sealed class TemplateLocateTool : IVisionTool
 
         if (match.ShapeContours is { Count: > 0 })
         {
-            data["shapeContours"] = string.Join(
-                "|",
-                match.ShapeContours
-                    .Where(contour => contour.Count >= 2)
-                    .Select(contour => string.Join(";", contour.Select(point => $"{point.X.ToInvariant()},{point.Y.ToInvariant()}"))));
+            var shapeContours = SerializeContours(match.ShapeContours);
+            if (!string.IsNullOrEmpty(shapeContours))
+            {
+                data["shapeContours"] = shapeContours;
+            }
+        }
+
+        if (match.MatchedTemplateRoiContours is { Count: > 0 })
+        {
+            var matchedTemplateRoiContours = SerializeContours(match.MatchedTemplateRoiContours);
+            if (!string.IsNullOrEmpty(matchedTemplateRoiContours))
+            {
+                data["matchedTemplateRoiContours"] = matchedTemplateRoiContours;
+            }
+        }
+
+        if (match.ShapeCoverage is { } shapeCoverage)
+        {
+            data["shapeCoverage"] = shapeCoverage.ToInvariant();
+        }
+
+        if (match.ShapeReverseScore is { } shapeReverseScore)
+        {
+            data["shapeReverseScore"] = shapeReverseScore.ToInvariant();
         }
 
         return Task.FromResult(new ToolResult
@@ -76,6 +96,17 @@ public sealed class TemplateLocateTool : IVisionTool
             Message = match.Message,
             Data = data
         });
+    }
+
+    private static string SerializeContours(IEnumerable<IReadOnlyList<Point2D>> contours)
+    {
+        return string.Join(
+            "|",
+            contours
+                .Where(contour => contour.Count >= 2)
+                .Select(contour => string.Join(
+                    ";",
+                    contour.Select(point => $"{point.X.ToInvariant()},{point.Y.ToInvariant()}"))));
     }
 
     private static RoiDefinition? FindBoundRoi(Recipe recipe, VisionToolDefinition definition)
