@@ -610,7 +610,9 @@ internal static class OpenCvTemplateMatcher
             Cv2.MatchTemplate(edgeDistance, chamferKernel, result, TemplateMatchModes.CCorr);
             Cv2.MinMaxLoc(result, out var minDistance, out _, out var minLocation, out _);
 
-            var score = CreateShapeScore(minDistance, rotatedEdges.Width, rotatedEdges.Height, parameters);
+            var score = scoreVersion == 1
+                ? CreateShapeScore(minDistance, templateEdges.Width, templateEdges.Height, parameters)
+                : 0;
             double? coverage = null;
             double? reverseScore = null;
             if (scoreVersion == 2)

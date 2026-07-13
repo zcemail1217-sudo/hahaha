@@ -1,3 +1,4 @@
+using System.Globalization;
 using VisionStation.Domain;
 using Xunit;
 
@@ -108,6 +109,34 @@ public sealed class OpenCvTemplateMatcherQualityTests
         Assert.Equal(45, defaultResult.Pose.Angle, 3);
         Assert.Equal(explicitResult.ShapeReverseScore.Value, defaultResult.ShapeReverseScore.Value, 6);
         Assert.Equal(explicitResult.Score, defaultResult.Score, 6);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(35)]
+    [InlineData(90)]
+    [InlineData(-135)]
+    public void LegacyShapeDefaultScaleUsesUnrotatedPassSize(double clockwiseAngle)
+    {
+        var defaults = TemplateMatcherTestData.LearnRuntimeParameters();
+        defaults.Remove("shapeScoreVersion");
+        defaults["angleStart"] = (-clockwiseAngle).ToString(CultureInfo.InvariantCulture);
+        defaults["angleExtent"] = "0.5";
+        defaults["angleStep"] = "1";
+        defaults["minScore"] = "0";
+        var explicitLegacyScale = new Dictionary<string, string>(defaults, StringComparer.OrdinalIgnoreCase)
+        {
+            ["shapeScoreScale"] = "18"
+        };
+        var search = TemplateMatcherTestData.CreateRotatedFragmentSearchFrame(clockwiseAngle);
+
+        var actual = TemplateMatcher.Match(search, null, defaults);
+        var expected = TemplateMatcher.Match(search, null, explicitLegacyScale);
+
+        Assert.True(actual.HasMatch, actual.Message);
+        Assert.True(expected.HasMatch, expected.Message);
+        Assert.InRange(expected.Score, 0.01, 0.999999);
+        Assert.Equal(expected.Score, actual.Score, 6);
     }
 
     [Fact]

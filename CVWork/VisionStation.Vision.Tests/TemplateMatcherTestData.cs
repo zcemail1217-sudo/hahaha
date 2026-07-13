@@ -167,6 +167,29 @@ internal static class TemplateMatcherTestData
         }
     }
 
+    public static ImageFrame CreateRotatedFragmentSearchFrame(double clockwiseAngle)
+    {
+        const int width = 500;
+        const int height = 500;
+        var center = new Point2d(250, 250);
+        using var image = CreateProductMat(width, height, center, clockwiseAngle);
+        var radians = clockwiseAngle * Math.PI / 180.0;
+        var cos = Math.Cos(radians);
+        var sin = Math.Sin(radians);
+        Point Transform(Point2d point) => new(
+            (int)Math.Round(center.X + point.X * cos - point.Y * sin),
+            (int)Math.Round(center.Y + point.X * sin + point.Y * cos));
+        var eraser = new[]
+        {
+            Transform(new Point2d(-60, -150)),
+            Transform(new Point2d(60, -150)),
+            Transform(new Point2d(60, -60)),
+            Transform(new Point2d(-60, -60))
+        };
+        Cv2.FillPoly(image, [eraser], Scalar.White);
+        return CreateFrame(image, "synthetic-rotated-fragment-search");
+    }
+
     private static Mat CreateProductMat(
         int width,
         int height,
