@@ -664,11 +664,11 @@ internal static class OpenCvTemplateMatcher
 
     private static KeepBoundsRotation CreateKeepBoundsRotation(Size sourceSize, double angle)
     {
-        var sourceCenter = new Point2f(sourceSize.Width / 2.0f, sourceSize.Height / 2.0f);
+        var sourceCenter = new Point2f((sourceSize.Width - 1) / 2.0f, (sourceSize.Height - 1) / 2.0f);
         var canvasSize = GetRotatedCanvasSize(sourceSize, angle);
         var matrix = Cv2.GetRotationMatrix2D(sourceCenter, angle, 1.0);
-        matrix.Set(0, 2, matrix.At<double>(0, 2) + canvasSize.Width / 2.0 - sourceCenter.X);
-        matrix.Set(1, 2, matrix.At<double>(1, 2) + canvasSize.Height / 2.0 - sourceCenter.Y);
+        matrix.Set(0, 2, matrix.At<double>(0, 2) + (canvasSize.Width - 1) / 2.0 - sourceCenter.X);
+        matrix.Set(1, 2, matrix.At<double>(1, 2) + (canvasSize.Height - 1) / 2.0 - sourceCenter.Y);
         return new KeepBoundsRotation(canvasSize, matrix);
     }
 

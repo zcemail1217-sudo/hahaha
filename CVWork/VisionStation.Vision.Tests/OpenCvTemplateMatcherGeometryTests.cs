@@ -14,6 +14,17 @@ public sealed class OpenCvTemplateMatcherGeometryTests
         [new(-42, 70), new(16, 70), new(16, 110), new(-42, 110)]
     ];
 
+    private static readonly (int Start, int End)[] BoundarySegments =
+    [
+        (8, 19),
+        (33, 48),
+        (67, 84),
+        (109, 137),
+        (173, 191),
+        (226, 259),
+        (276, 289)
+    ];
+
     [Theory]
     [InlineData(0)]
     [InlineData(35)]
@@ -47,6 +58,28 @@ public sealed class OpenCvTemplateMatcherGeometryTests
         Assert.True(result.HasMatch, result.Message);
         Assert.Equal(300, result.TemplateWidth);
         Assert.Equal(100, result.TemplateHeight);
+    }
+
+    [Fact]
+    public void QuarterTurnKeepsBoundaryPixelsInsideEvenSizedCanvas()
+    {
+        var parameters = CreateParameters(clockwiseAngle: -90, direct: true);
+        var learnedParameters = TemplateMatcher.Learn(CreateBoundaryTrainingFrame(), null, parameters);
+        foreach (var parameter in learnedParameters)
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        parameters["templateMaskPng"] = CreateLeftBoundaryMaskPng();
+        var result = TemplateMatcher.Match(CreateBoundaryRotatedSearchFrame(), null, parameters);
+
+        // The mask retains only source x=0 edges, so a match proves the quarter-turn kept them in bounds.
+        Assert.True(result.HasMatch, result.Message);
+        Assert.Equal(300, result.TemplateWidth);
+        Assert.Equal(100, result.TemplateHeight);
+        Assert.InRange(Math.Abs(result.Pose.X - 150), 0, 0.001);
+        Assert.InRange(Math.Abs(result.Pose.Y - 50), 0, 0.001);
+        Assert.InRange(AngleDistance(result.Pose.Angle, -90), 0, 0.001);
     }
 
     private static TemplateMatchResult LearnAndMatch(
@@ -110,6 +143,59 @@ public sealed class OpenCvTemplateMatcherGeometryTests
         image.GetArray(out byte[] pixels);
         return new ImageFrame(
             "synthetic-product",
+            width,
+            height,
+            width,
+            PixelFormatKind.Gray8,
+            pixels,
+            DateTimeOffset.UnixEpoch,
+            "Synthetic");
+    }
+
+    private static ImageFrame CreateBoundaryTrainingFrame()
+    {
+        const int width = 220;
+        const int height = 380;
+        var pixels = new byte[width * height];
+        foreach (var (start, end) in BoundarySegments)
+        {
+            for (var y = start; y <= end; y++)
+            {
+                pixels[(40 + y) * width + 60] = 255;
+            }
+        }
+
+        return CreateGrayFrame(width, height, pixels);
+    }
+
+    private static ImageFrame CreateBoundaryRotatedSearchFrame()
+    {
+        const int width = 300;
+        const int height = 100;
+        var pixels = new byte[width * height];
+        foreach (var (start, end) in BoundarySegments)
+        {
+            for (var sourceY = start; sourceY <= end; sourceY++)
+            {
+                // A +90 degree OpenCV rotation about pixel centers maps (0, y) to (y, 99).
+                pixels[99 * width + sourceY] = 255;
+            }
+        }
+
+        return CreateGrayFrame(width, height, pixels);
+    }
+
+    private static string CreateLeftBoundaryMaskPng()
+    {
+        using var mask = new Mat(300, 100, MatType.CV_8UC1, Scalar.Black);
+        Cv2.Line(mask, new Point(0, 0), new Point(0, 299), Scalar.White);
+        return Convert.ToBase64String(mask.ToBytes(".png"));
+    }
+
+    private static ImageFrame CreateGrayFrame(int width, int height, byte[] pixels)
+    {
+        return new ImageFrame(
+            "boundary-pixels",
             width,
             height,
             width,
