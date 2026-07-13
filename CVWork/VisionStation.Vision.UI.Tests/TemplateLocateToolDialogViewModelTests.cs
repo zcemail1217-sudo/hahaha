@@ -65,6 +65,52 @@ public sealed class TemplateLocateToolDialogViewModelTests
     }
 
     [Fact]
+    public void MultiTargetLearnThenApplyDoesNotPersistSingleTargetShapeV2Parameters()
+    {
+        using var tempDirectory = new TempDirectory();
+        var frame = CreateShapeFrame();
+        var tool = new VisionToolItem
+        {
+            Id = "multi-target",
+            Name = "Multi target",
+            Kind = VisionToolKind.MultiTargetMatch,
+            Enabled = true,
+            ParametersText =
+                "engine=OpenCv; matchMode=Shape; minScore=0.80; " +
+                "angleStart=0; angleExtent=0; angleStep=1; matchCount=1; " +
+                "templateRoiX=60; templateRoiY=40; " +
+                "templateRoiWidth=100; templateRoiHeight=300"
+        };
+        var viewModel = new TemplateLocateToolDialogViewModel(
+            tool,
+            Array.Empty<RoiChoiceItem>(),
+            Array.Empty<RoiDefinition>(),
+            "Flow",
+            frame,
+            new RuntimePaths(tempDirectory.Path),
+            new NullAppLogService());
+
+        viewModel.LearnTemplateCommand.Execute();
+
+        Assert.True(
+            SpinWait.SpinUntil(
+                () => !viewModel.IsBusy && viewModel.ScoreText != "-",
+                TimeSpan.FromSeconds(10)),
+            $"Learn/match did not finish: IsBusy={viewModel.IsBusy}; " +
+            $"Score={viewModel.ScoreText}; Status={viewModel.StatusText}");
+        Assert.False(
+            string.IsNullOrWhiteSpace(viewModel.TemplatePreviewImagePng),
+            viewModel.StatusText);
+
+        viewModel.ApplyTo(tool);
+
+        var parameters = tool.ToDefinition().Parameters;
+        Assert.True(parameters.ContainsKey("templateImagePng"));
+        Assert.False(parameters.ContainsKey("shapeScoreVersion"));
+        Assert.False(parameters.ContainsKey("shapeCoverageDistance"));
+    }
+
+    [Fact]
     public void PlacingSearchRoiAfterTemplateKeepsSearchRegionBelowTemplateRoi()
     {
         using var tempDirectory = new TempDirectory();
