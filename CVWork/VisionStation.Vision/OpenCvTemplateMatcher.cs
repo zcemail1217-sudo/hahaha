@@ -222,6 +222,13 @@ internal static class OpenCvTemplateMatcher
     {
         return roi.Shape switch
         {
+            RoiShapeKind.Rectangle =>
+            [
+                new Point2D(roi.X, roi.Y),
+                new Point2D(roi.X + roi.Width, roi.Y),
+                new Point2D(roi.X + roi.Width, roi.Y + roi.Height),
+                new Point2D(roi.X, roi.Y + roi.Height)
+            ],
             RoiShapeKind.Polygon when roi.Points.Count >= 3 => roi.Points,
             RoiShapeKind.Circle => Enumerable.Range(0, 64)
                 .Select(index =>

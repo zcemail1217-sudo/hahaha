@@ -60,6 +60,8 @@ public sealed class LocalTemplateDatasetAcceptanceTests
 
         Assert.True(positive.V2.HasMatch, positive.V2.Message);
         Assert.Equal(InspectionOutcome.Ok, positive.V2.Outcome);
+        Assert.NotNull(positive.V2.MatchedTemplateRoiContours);
+        Assert.NotEmpty(positive.V2.MatchedTemplateRoiContours);
         Assert.NotNull(positive.V2.ShapeCoverage);
         Assert.True(
             positive.V2.ShapeCoverage.Value >= 0.90,

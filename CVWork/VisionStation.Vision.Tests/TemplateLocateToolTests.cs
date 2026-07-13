@@ -28,9 +28,27 @@ public sealed class TemplateLocateToolTests
     }
 
     [Fact]
+    public void MatchReturnsCompleteRectangleTemplateRoiContour()
+    {
+        var parameters = TemplateMatcherTestData.LearnRuntimeParameters();
+
+        var match = TemplateMatcher.Match(TemplateMatcherTestData.CreateSearchFrame(), null, parameters);
+
+        Assert.True(match.HasMatch, match.Message);
+        var contour = Assert.Single(match.MatchedTemplateRoiContours!);
+        Assert.Equal(4, contour.Count);
+        Assert.Equal(60, contour.Min(point => point.X), 3);
+        Assert.Equal(160, contour.Max(point => point.X), 3);
+        Assert.Equal(40, contour.Min(point => point.Y), 3);
+        Assert.Equal(340, contour.Max(point => point.Y), 3);
+    }
+
+    [Fact]
     public async Task ExecuteAsyncSerializesVersionedSeparatedOverlayDiagnostics()
     {
-        var fixture = TemplateMatcherTestData.CreatePolygonTemplateFixture();
+        var fixture = new TemplateMatcherFixture(
+            TemplateMatcherTestData.CreateSearchFrame(),
+            TemplateMatcherTestData.LearnRuntimeParameters());
         fixture.Parameters["inputImageToolId"] = "source";
         var sourceTool = new VisionToolDefinition
         {
