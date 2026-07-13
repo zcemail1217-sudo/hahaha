@@ -89,7 +89,11 @@ internal static class OpenCvTemplateMatcher
         using (template)
         {
             var searchRegion = TemplateMatcher.GetSearchRegion(frame, searchRoi);
-            if (searchRegion.Width < template.Width || searchRegion.Height < template.Height)
+            using var searchView = new Mat(gray, ToCvRect(searchRegion));
+            using var search = searchView.Clone();
+            var mode = ResolveEffectiveMode(search, template, runtimeParameters);
+            if (!mode.Equals("Shape", StringComparison.OrdinalIgnoreCase) &&
+                (searchRegion.Width < template.Width || searchRegion.Height < template.Height))
             {
                 return CreateFailedResult(
                     frame,
@@ -100,9 +104,6 @@ internal static class OpenCvTemplateMatcher
                     template.Height);
             }
 
-            using var searchView = new Mat(gray, ToCvRect(searchRegion));
-            using var search = searchView.Clone();
-            var mode = ResolveEffectiveMode(search, template, runtimeParameters);
             var candidate = FindBest(search, template, mode, runtimeParameters, cancellationToken);
 
             if (!candidate.HasMatch)
@@ -643,23 +644,57 @@ internal static class OpenCvTemplateMatcher
 
     private static Mat RotateShapeEdges(Mat templateEdges, double angle)
     {
-        if (Math.Abs(angle) < 0.001)
-        {
-            return templateEdges.Clone();
-        }
+        return WarpBinaryKeepBounds(templateEdges, angle);
+    }
 
-        var center = new Point2f((templateEdges.Width - 1) / 2.0f, (templateEdges.Height - 1) / 2.0f);
-        using var matrix = Cv2.GetRotationMatrix2D(center, angle, 1.0);
-        var rotatedEdges = new Mat();
+    private static Mat WarpBinaryKeepBounds(Mat source, double angle)
+    {
+        using var rotation = CreateKeepBoundsRotation(source.Size(), angle);
+        var rotated = new Mat();
         Cv2.WarpAffine(
-            templateEdges,
-            rotatedEdges,
-            matrix,
-            templateEdges.Size(),
+            source,
+            rotated,
+            rotation.Matrix,
+            rotation.CanvasSize,
             InterpolationFlags.Nearest,
             BorderTypes.Constant,
             Scalar.Black);
-        return rotatedEdges;
+        return rotated;
+    }
+
+    private static KeepBoundsRotation CreateKeepBoundsRotation(Size sourceSize, double angle)
+    {
+        var sourceCenter = new Point2f(sourceSize.Width / 2.0f, sourceSize.Height / 2.0f);
+        var canvasSize = GetRotatedCanvasSize(sourceSize, angle);
+        var matrix = Cv2.GetRotationMatrix2D(sourceCenter, angle, 1.0);
+        matrix.Set(0, 2, matrix.At<double>(0, 2) + canvasSize.Width / 2.0 - sourceCenter.X);
+        matrix.Set(1, 2, matrix.At<double>(1, 2) + canvasSize.Height / 2.0 - sourceCenter.Y);
+        return new KeepBoundsRotation(canvasSize, matrix);
+    }
+
+    private static Size GetRotatedCanvasSize(Size sourceSize, double angle)
+    {
+        var radians = angle * Math.PI / 180.0;
+        var cos = Math.Abs(SnapTrig(Math.Cos(radians)));
+        var sin = Math.Abs(SnapTrig(Math.Sin(radians)));
+        var width = Math.Max(1, (int)Math.Ceiling(sourceSize.Width * cos + sourceSize.Height * sin));
+        var height = Math.Max(1, (int)Math.Ceiling(sourceSize.Width * sin + sourceSize.Height * cos));
+        return new Size(width, height);
+    }
+
+    private static double SnapTrig(double value)
+    {
+        if (Math.Abs(value) < 1e-12)
+        {
+            return 0;
+        }
+
+        if (Math.Abs(Math.Abs(value) - 1) < 1e-12)
+        {
+            return Math.Sign(value);
+        }
+
+        return value;
     }
 
     private static byte[] CreateTemplateEdgeOverlay(Mat template, IReadOnlyDictionary<string, string> parameters, Mat? templateMask)
@@ -1309,5 +1344,23 @@ internal static class OpenCvTemplateMatcher
         double Score)
     {
         public static MatchCandidate None { get; } = new(false, 0, 0, 0, 0, 0, double.NegativeInfinity);
+    }
+
+    private sealed class KeepBoundsRotation : IDisposable
+    {
+        public KeepBoundsRotation(Size canvasSize, Mat matrix)
+        {
+            CanvasSize = canvasSize;
+            Matrix = matrix;
+        }
+
+        public Size CanvasSize { get; }
+
+        public Mat Matrix { get; }
+
+        public void Dispose()
+        {
+            Matrix.Dispose();
+        }
     }
 }
