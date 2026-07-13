@@ -441,7 +441,7 @@ public sealed class ProductionDashboardViewModel : BindableBase
             ResultFields.Add(item);
         }
 
-        foreach (var overlay in CreateResultPreviewOverlays(_overlayBuilder.Build(run.Recipe, run.ResultFrame, run.Result.ToolResults, run.Result.Outcome)))
+        foreach (var overlay in VisionResultOverlayProjector.Project(_overlayBuilder.Build(run.Recipe, run.ResultFrame, run.Result.ToolResults, run.Result.Outcome)))
         {
             Overlays.Add(overlay);
         }
@@ -478,7 +478,7 @@ public sealed class ProductionDashboardViewModel : BindableBase
         foreach (var flowResult in flowResults)
         {
             var flowRecipe = ResolveFlowRecipe(run.Recipe, flowResult.FlowId);
-            var overlays = CreateResultPreviewOverlays(_overlayBuilder.Build(
+            var overlays = VisionResultOverlayProjector.Project(_overlayBuilder.Build(
                 flowRecipe,
                 flowResult.ResultFrame,
                 flowResult.ToolResults,
@@ -531,15 +531,6 @@ public sealed class ProductionDashboardViewModel : BindableBase
         pane.LastMessage = message;
         pane.LastBarcode = "-";
         pane.Overlays.Clear();
-    }
-
-    private static IReadOnlyList<VisionOverlayItem> CreateResultPreviewOverlays(IReadOnlyList<VisionOverlayItem> overlays)
-    {
-        return overlays
-            .Where(overlay => overlay.Kind != VisionOverlayKind.DirectionAxis)
-            .Where(overlay => overlay.State != VisionOverlayState.Neutral)
-            .Select(overlay => overlay with { Label = string.Empty })
-            .ToArray();
     }
 
     private static Recipe ResolveFlowRecipe(Recipe recipe, string flowId)

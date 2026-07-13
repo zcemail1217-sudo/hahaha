@@ -817,7 +817,7 @@ public sealed class VisionDebugViewModel : BindableBase
                 }
 
                 Overlays.Clear();
-                foreach (var overlay in CreateResultPreviewOverlays(_overlayBuilder.Build(recipe, result.ResultFrame, result.ToolResults, result.Outcome)))
+                foreach (var overlay in VisionResultOverlayProjector.Project(_overlayBuilder.Build(recipe, result.ResultFrame, result.ToolResults, result.Outcome)))
                 {
                     Overlays.Add(overlay);
                 }
@@ -3831,14 +3831,14 @@ public sealed class VisionDebugViewModel : BindableBase
     {
         FlowResultImages.Clear();
 
-        var finalOverlays = CreateResultPreviewOverlays(_overlayBuilder.Build(recipe, result.ResultFrame, result.ToolResults, result.Outcome));
+        var finalOverlays = VisionResultOverlayProjector.Project(_overlayBuilder.Build(recipe, result.ResultFrame, result.ToolResults, result.Outcome));
         FlowResultImages.Add(new FlowResultImageItem("final", "最终结果", result.ResultFrame, finalOverlays));
 
         for (var index = 0; index < result.ToolResults.Count; index++)
         {
             var toolResult = result.ToolResults[index];
             var frame = result.ToolFrames?.GetValueOrDefault(toolResult.ToolId) ?? result.ResultFrame;
-            var overlays = CreateResultPreviewOverlays(_overlayBuilder.Build(recipe, frame, [toolResult], toolResult.Outcome));
+            var overlays = VisionResultOverlayProjector.Project(_overlayBuilder.Build(recipe, frame, [toolResult], toolResult.Outcome));
             FlowResultImages.Add(new FlowResultImageItem(
                 toolResult.ToolId,
                 $"{index + 1:00}. {toolResult.ToolName}",
@@ -4288,15 +4288,6 @@ public sealed class VisionDebugViewModel : BindableBase
         }
 
         return "Text";
-    }
-
-    private static IReadOnlyList<VisionOverlayItem> CreateResultPreviewOverlays(IReadOnlyList<VisionOverlayItem> overlays)
-    {
-        return overlays
-            .Where(overlay => overlay.Kind != VisionOverlayKind.DirectionAxis)
-            .Where(overlay => overlay.State != VisionOverlayState.Neutral)
-            .Select(overlay => overlay with { Label = string.Empty })
-            .ToArray();
     }
 
     private void AddDebugLog(string level, string message)
