@@ -28,7 +28,8 @@ public sealed class VisionResultOverlayProjectorTests
             {
                 Kind = VisionOverlayKind.Cross,
                 State = VisionOverlayState.Ok,
-                Label = locateLabel
+                Label = locateLabel,
+                PreserveLabelInResult = true
             },
             new VisionOverlayItem
             {
@@ -49,5 +50,21 @@ public sealed class VisionResultOverlayProjectorTests
         var cross = Assert.Single(result, item => item.Kind == VisionOverlayKind.Cross);
         Assert.Equal(locateLabel, cross.Label);
         Assert.All(result.Where(item => item.Kind != VisionOverlayKind.Cross), item => Assert.Empty(item.Label));
+    }
+
+    [Fact]
+    public void ProjectClearsLabelFromUnmarkedCross()
+    {
+        var overlay = new VisionOverlayItem
+        {
+            Kind = VisionOverlayKind.Cross,
+            State = VisionOverlayState.Ok,
+            Label = "交点"
+        };
+
+        var result = VisionResultOverlayProjector.Project([overlay]);
+
+        var cross = Assert.Single(result);
+        Assert.Empty(cross.Label);
     }
 }

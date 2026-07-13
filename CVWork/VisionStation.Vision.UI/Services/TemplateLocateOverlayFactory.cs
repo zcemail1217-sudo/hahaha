@@ -123,6 +123,7 @@ public static class TemplateLocateOverlayFactory
         {
             Kind = VisionOverlayKind.Cross,
             State = state,
+            PreserveLabelInResult = true,
             Label = coverage is { } shapeCoverage
                 ? $"匹配 S={score.ToString("0.000", CultureInfo.InvariantCulture)} C={shapeCoverage.ToString("0.000", CultureInfo.InvariantCulture)}"
                 : $"匹配 S={score.ToString("0.000", CultureInfo.InvariantCulture)}",

@@ -9,7 +9,7 @@ public static class VisionResultOverlayProjector
         return overlays
             .Where(overlay => overlay.Kind != VisionOverlayKind.DirectionAxis)
             .Where(overlay => overlay.State != VisionOverlayState.Neutral)
-            .Select(overlay => overlay.Kind == VisionOverlayKind.Cross
+            .Select(overlay => overlay.PreserveLabelInResult
                 ? overlay
                 : overlay with { Label = string.Empty })
             .ToArray();

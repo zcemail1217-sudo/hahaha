@@ -36,6 +36,8 @@ public sealed record VisionOverlayItem
 
     public string Label { get; init; } = string.Empty;
 
+    public bool PreserveLabelInResult { get; init; }
+
     public double X { get; init; }
 
     public double Y { get; init; }

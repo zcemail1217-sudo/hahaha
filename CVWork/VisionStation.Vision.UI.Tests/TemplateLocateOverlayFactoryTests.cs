@@ -23,6 +23,7 @@ public sealed class TemplateLocateOverlayFactoryTests
         Assert.Equal([new Point2D(10, 20), new Point2D(30, 40)], info.Points);
 
         var cross = Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Cross);
+        Assert.True(cross.PreserveLabelInResult);
         Assert.Contains("S=0.923", cross.Label);
         Assert.Contains("C=0.887", cross.Label);
     }
