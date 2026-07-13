@@ -25,15 +25,12 @@ public static class TemplateLocateOverlayFactory
 
     public static IReadOnlyList<VisionOverlayItem> Create(ToolResult result)
     {
-        if (!TryGetDouble(result.Data, "x", out var x) ||
-            !TryGetDouble(result.Data, "y", out var y) ||
-            !TryGetDouble(result.Data, "angle", out var angle) ||
-            !TryGetDouble(result.Data, "templateWidth", out var templateWidth) ||
-            !TryGetDouble(result.Data, "templateHeight", out var templateHeight) ||
-            !TryGetDouble(result.Data, "score", out var score))
-        {
-            return Array.Empty<VisionOverlayItem>();
-        }
+        TryGetDouble(result.Data, "x", out var x);
+        TryGetDouble(result.Data, "y", out var y);
+        TryGetDouble(result.Data, "angle", out var angle);
+        TryGetDouble(result.Data, "templateWidth", out var templateWidth);
+        TryGetDouble(result.Data, "templateHeight", out var templateHeight);
+        TryGetDouble(result.Data, "score", out var score);
 
         double? coverage = TryGetDouble(result.Data, "shapeCoverage", out var parsedCoverage)
             ? parsedCoverage
@@ -107,9 +104,7 @@ public static class TemplateLocateOverlayFactory
             });
         }
 
-        var hasShapeOverlay = shapePoints.Count > 0 ||
-                              shapeContours.Any(contour => contour.Count >= 2) ||
-                              roiContours.Any(contour => contour.Count >= 2);
+        var hasShapeOverlay = shapePoints.Count > 0 || shapeContours.Count > 0 || roiContours.Count > 0;
         if (!hasShapeOverlay)
         {
             overlays.Add(new VisionOverlayItem
@@ -188,8 +183,14 @@ public static class TemplateLocateOverlayFactory
     private static bool TryGetDouble(IReadOnlyDictionary<string, string> data, string key, out double value)
     {
         value = 0;
-        return data.TryGetValue(key, out var raw) &&
-               double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value) &&
-               double.IsFinite(value);
+        if (!data.TryGetValue(key, out var raw) ||
+            !double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ||
+            !double.IsFinite(parsed))
+        {
+            return false;
+        }
+
+        value = parsed;
+        return true;
     }
 }

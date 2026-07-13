@@ -1000,6 +1000,9 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         var stopwatch = Stopwatch.StartNew();
         try
         {
+            _lastTemplateMatch = null;
+            _hasMatchResult = false;
+            RefreshPreviewOverlays();
             SyncEditorRois();
             var frame = CurrentFrame!;
             if (!await CaptureRoiReferencePoseIfNeededAsync())

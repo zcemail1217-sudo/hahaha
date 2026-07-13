@@ -99,6 +99,58 @@ public sealed class TemplateLocateOverlayFactoryTests
         Assert.Equal([new Point2D(10, 20), new Point2D(30, 40)], info.Points);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CreateDefaultsInvalidPrimaryFieldsAndStillAddsCrossAndFallback(bool isV2)
+    {
+        var source = CreateV2ToolResult();
+        var data = new Dictionary<string, string>(source.Data, StringComparer.OrdinalIgnoreCase);
+        data.Remove("x");
+        data["score"] = "NaN";
+        data.Remove("shapeContours");
+        data.Remove("matchedTemplateRoiContours");
+        if (!isV2)
+        {
+            data.Remove("overlaySchemaVersion");
+        }
+
+        var overlays = TemplateLocateOverlayFactory.Create(source with { Data = data });
+
+        var rectangle = Assert.Single(overlays, item => item.Kind == VisionOverlayKind.RotatedRectangle);
+        var cross = Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Cross);
+        Assert.Equal(0, rectangle.X);
+        Assert.Equal(0, cross.X);
+        Assert.True(double.IsFinite(cross.X));
+        Assert.True(double.IsFinite(cross.Y));
+        Assert.True(double.IsFinite(cross.Angle));
+        Assert.Contains("S=0.000", cross.Label);
+        Assert.DoesNotContain("NaN", cross.Label, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CreateStructuredSinglePointContourSuppressesFallbackRectangle()
+    {
+        var result = new TemplateMatchResult(
+            HasMatch: true,
+            Outcome: InspectionOutcome.Ok,
+            Score: 0.923,
+            Pose: new Pose2D(100, 120, 35),
+            MatchX: 0,
+            MatchY: 0,
+            TemplateWidth: 300,
+            TemplateHeight: 100,
+            SearchRegion: new TemplateSearchRegion(0, 0, 640, 480),
+            Message: "OK",
+            UsedAutoTemplate: false,
+            ShapeContours: [[new Point2D(1, 2)]]);
+
+        var overlays = TemplateLocateOverlayFactory.Create(result);
+
+        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.RotatedRectangle);
+        Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Cross);
+    }
+
     private static ToolResult CreateV2ToolResult()
     {
         return new ToolResult

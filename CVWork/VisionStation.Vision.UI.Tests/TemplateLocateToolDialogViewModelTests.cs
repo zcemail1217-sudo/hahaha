@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using VisionStation.Domain;
 using VisionStation.Infrastructure;
@@ -70,6 +72,62 @@ public sealed class TemplateLocateToolDialogViewModelTests
             item.Kind == VisionOverlayKind.Polyline && item.State == VisionOverlayState.Warning);
         Assert.Contains(viewModel.PreviewOverlays, item =>
             item.Kind == VisionOverlayKind.Polyline && item.State == VisionOverlayState.Info);
+    }
+
+    [Fact]
+    public void StartingNewRunClearsPreviousSingleMatchOverlaysBeforeAwaitingResult()
+    {
+        using var tempDirectory = new TempDirectory();
+        var frame = CreateShapeFrame();
+        var parameters = CreateLearnedPolygonTemplateParameters(frame);
+        var viewModel = new TemplateLocateToolDialogViewModel(
+            new VisionToolItem
+            {
+                Id = "template-tool",
+                Name = "Template",
+                Kind = VisionToolKind.TemplateLocate,
+                Enabled = true,
+                ParametersText = string.Join("; ", parameters.Select(item => $"{item.Key}={item.Value}"))
+            },
+            Array.Empty<RoiChoiceItem>(),
+            Array.Empty<RoiDefinition>(),
+            "Flow",
+            frame,
+            new RuntimePaths(tempDirectory.Path),
+            new NullAppLogService());
+        viewModel.RunToolCommand.Execute();
+        Assert.True(
+            SpinWait.SpinUntil(() => !viewModel.IsBusy, TimeSpan.FromSeconds(10)),
+            $"Initial template matching did not finish: {viewModel.StatusText}");
+        Assert.Contains(viewModel.PreviewOverlays, item =>
+            item.Kind == VisionOverlayKind.Polyline && item.State == VisionOverlayState.Warning);
+        Assert.Contains(viewModel.PreviewOverlays, item =>
+            item.Kind == VisionOverlayKind.Polyline && item.State == VisionOverlayState.Info);
+
+        viewModel.AngleStart = -180;
+        viewModel.AngleExtent = 360;
+        var previousContext = SynchronizationContext.Current;
+        using var queuedContext = new QueuedSynchronizationContext();
+        var startedBusy = false;
+        var oldResultWasCleared = false;
+        var finished = false;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+            viewModel.RunToolCommand.Execute();
+            startedBusy = viewModel.IsBusy;
+            oldResultWasCleared = !viewModel.PreviewOverlays.Any(item => item.Kind == VisionOverlayKind.Polyline);
+        }
+        finally
+        {
+            finished = queuedContext.RunUntil(() => !viewModel.IsBusy, TimeSpan.FromSeconds(10));
+            queuedContext.Drain();
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+        }
+
+        Assert.True(startedBusy, "Second template matching completed before its queued continuation could be observed.");
+        Assert.True(oldResultWasCleared, "The previous result overlays remained visible after the new run started.");
+        Assert.True(finished, $"Second template matching did not finish: {viewModel.StatusText}");
     }
 
     private static Dictionary<string, string> CreateLearnedPolygonTemplateParameters(ImageFrame frame)
@@ -188,6 +246,56 @@ public sealed class TemplateLocateToolDialogViewModelTests
         public IReadOnlyList<AppLogEntry> Recent(int count)
         {
             return Array.Empty<AppLogEntry>();
+        }
+    }
+
+    private sealed class QueuedSynchronizationContext : SynchronizationContext, IDisposable
+    {
+        private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> _callbacks = new();
+        private readonly AutoResetEvent _callbackAvailable = new(false);
+
+        public override void Post(SendOrPostCallback callback, object? state)
+        {
+            _callbacks.Enqueue((callback, state));
+            _callbackAvailable.Set();
+        }
+
+        public bool RunUntil(Func<bool> predicate, TimeSpan timeout)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            while (!predicate())
+            {
+                if (_callbacks.TryDequeue(out var work))
+                {
+                    work.Callback(work.State);
+                    continue;
+                }
+
+                var remaining = timeout - stopwatch.Elapsed;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    return false;
+                }
+
+                _callbackAvailable.WaitOne(remaining < TimeSpan.FromMilliseconds(50)
+                    ? remaining
+                    : TimeSpan.FromMilliseconds(50));
+            }
+
+            return true;
+        }
+
+        public void Drain()
+        {
+            while (_callbacks.TryDequeue(out var work))
+            {
+                work.Callback(work.State);
+            }
+        }
+
+        public void Dispose()
+        {
+            _callbackAvailable.Dispose();
         }
     }
 
