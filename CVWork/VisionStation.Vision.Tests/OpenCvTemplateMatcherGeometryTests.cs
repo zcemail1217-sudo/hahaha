@@ -7,13 +7,6 @@ namespace VisionStation.Vision.Tests;
 
 public sealed class OpenCvTemplateMatcherGeometryTests
 {
-    private static readonly Point2d[][] ProductPolygons =
-    [
-        [new(-16, -130), new(16, -130), new(16, 130), new(-16, 130)],
-        [new(-16, -115), new(38, -115), new(38, -82), new(-16, -82)],
-        [new(-42, 70), new(16, 70), new(16, 110), new(-42, 110)]
-    ];
-
     private static readonly (int Start, int End)[] BoundarySegments =
     [
         (8, 19),
@@ -33,8 +26,8 @@ public sealed class OpenCvTemplateMatcherGeometryTests
     public void WholeShapeRotationPreservesCanvasCenterAndPose(double clockwiseAngle)
     {
         var expectedCenter = new Point2d(430, 330);
-        var trainingFrame = CreateProductFrame(220, 380, new Point2d(110, 190), 0);
-        var searchFrame = CreateProductFrame(700, 700, expectedCenter, clockwiseAngle);
+        var trainingFrame = TemplateMatcherTestData.CreateTrainingFrame();
+        var searchFrame = TemplateMatcherTestData.CreateProductFrame(700, 700, expectedCenter, clockwiseAngle);
 
         var result = LearnAndMatch(trainingFrame, searchFrame, clockwiseAngle, forceDirectPass: true);
 
@@ -50,8 +43,8 @@ public sealed class OpenCvTemplateMatcherGeometryTests
     [Fact]
     public void ShapeCanMatchWhenOnlyRotatedCanvasFitsSearchRegion()
     {
-        var trainingFrame = CreateProductFrame(220, 380, new Point2d(110, 190), 0);
-        var searchFrame = CreateProductFrame(320, 120, new Point2d(160, 60), 90);
+        var trainingFrame = TemplateMatcherTestData.CreateTrainingFrame();
+        var searchFrame = TemplateMatcherTestData.CreateProductFrame(320, 120, new Point2d(160, 60), 90);
 
         var result = LearnAndMatch(trainingFrame, searchFrame, 90, forceDirectPass: true);
 
@@ -64,8 +57,8 @@ public sealed class OpenCvTemplateMatcherGeometryTests
     public void CoarseToRefinePreservesRotatedCenterAndCanvas()
     {
         var expectedCenter = new Point2d(780, 480);
-        var trainingFrame = CreateProductFrame(220, 380, new Point2d(110, 190), 0);
-        var searchFrame = CreateProductFrame(1200, 960, expectedCenter, 90);
+        var trainingFrame = TemplateMatcherTestData.CreateTrainingFrame();
+        var searchFrame = TemplateMatcherTestData.CreateProductFrame(1200, 960, expectedCenter, 90);
 
         var result = LearnAndMatch(trainingFrame, searchFrame, 90, forceDirectPass: false);
 
@@ -116,56 +109,13 @@ public sealed class OpenCvTemplateMatcherGeometryTests
 
     private static Dictionary<string, string> CreateParameters(double clockwiseAngle, bool direct)
     {
-        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["engine"] = "OpenCv",
-            ["matchMode"] = "Shape",
-            ["autoContrast"] = "false",
-            ["contrast"] = "30",
-            ["cannyHigh"] = "80",
-            ["minScore"] = "0",
-            ["angleStart"] = (-clockwiseAngle).ToString(CultureInfo.InvariantCulture),
-            ["angleExtent"] = "0.5",
-            ["angleStep"] = "1",
-            ["shapeCoarseScale"] = direct ? "1" : "0",
-            ["templateRoiX"] = "60",
-            ["templateRoiY"] = "40",
-            ["templateRoiWidth"] = "100",
-            ["templateRoiHeight"] = "300"
-        };
-    }
-
-    private static ImageFrame CreateProductFrame(
-        int width,
-        int height,
-        Point2d center,
-        double clockwiseAngle)
-    {
-        using var image = new Mat(height, width, MatType.CV_8UC1, Scalar.Black);
-        var radians = clockwiseAngle * Math.PI / 180.0;
-        var cos = Math.Cos(radians);
-        var sin = Math.Sin(radians);
-
-        foreach (var polygon in ProductPolygons)
-        {
-            var rotatedPoints = polygon
-                .Select(point => new Point(
-                    (int)Math.Round(center.X + point.X * cos - point.Y * sin),
-                    (int)Math.Round(center.Y + point.X * sin + point.Y * cos)))
-                .ToArray();
-            Cv2.FillPoly(image, [rotatedPoints], Scalar.White);
-        }
-
-        image.GetArray(out byte[] pixels);
-        return new ImageFrame(
-            "synthetic-product",
-            width,
-            height,
-            width,
-            PixelFormatKind.Gray8,
-            pixels,
-            DateTimeOffset.UnixEpoch,
-            "Synthetic");
+        var parameters = TemplateMatcherTestData.CreateLearningParameters();
+        parameters["minScore"] = "0";
+        parameters["angleStart"] = (-clockwiseAngle).ToString(CultureInfo.InvariantCulture);
+        parameters["angleExtent"] = "0.5";
+        parameters["angleStep"] = "1";
+        parameters["shapeCoarseScale"] = direct ? "1" : "0";
+        return parameters;
     }
 
     private static ImageFrame CreateBoundaryTrainingFrame()

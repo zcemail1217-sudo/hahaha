@@ -26,7 +26,7 @@ internal static class OpenCvTemplateMatcher
         using var templateMask = CreateTemplateMask(template.Size(), templateRegion, parameters);
         var edgeOverlay = CreateTemplateEdgeOverlay(template, parameters, templateMask);
 
-        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        var learned = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["engine"] = "OpenCv",
             ["matchMode"] = GetMatchMode(parameters),
@@ -43,6 +43,19 @@ internal static class OpenCvTemplateMatcher
             ["templateMaskPng"] = templateMask is null ? string.Empty : Convert.ToBase64String(templateMask.ToBytes(".png")),
             ["templateSourceRoiId"] = searchRoi?.Id ?? string.Empty
         };
+
+        if (GetMatchMode(parameters).Equals("Shape", StringComparison.OrdinalIgnoreCase))
+        {
+            using var templateEdges = CreateShapeBaseEdges(template, parameters, templateMask);
+            if (Cv2.CountNonZero(templateEdges) >= 8)
+            {
+                learned["shapeScoreVersion"] = "2";
+                learned["shapeCoverageDistance"] = GetNormalizedShapeCoverageDistance(parameters)
+                    .ToString("0.###", CultureInfo.InvariantCulture);
+            }
+        }
+
+        return learned;
     }
 
     public static TemplateMatchResult Match(
@@ -91,6 +104,19 @@ internal static class OpenCvTemplateMatcher
             var searchRegion = TemplateMatcher.GetSearchRegion(frame, searchRoi);
             using var searchView = new Mat(gray, ToCvRect(searchRegion));
             using var search = searchView.Clone();
+            var requestedMode = GetMatchMode(runtimeParameters);
+            if (requestedMode.Equals("Shape", StringComparison.OrdinalIgnoreCase) &&
+                !TryGetShapeScoreVersion(runtimeParameters, out _))
+            {
+                return CreateFailedResult(
+                    frame,
+                    "Unsupported OpenCV Shape score version.",
+                    usedAutoTemplate,
+                    searchRegion,
+                    template.Width,
+                    template.Height);
+            }
+
             var mode = ResolveEffectiveMode(search, template, runtimeParameters);
             if (!mode.Equals("Shape", StringComparison.OrdinalIgnoreCase) &&
                 (searchRegion.Width < template.Width || searchRegion.Height < template.Height))
@@ -150,7 +176,11 @@ internal static class OpenCvTemplateMatcher
                 searchRegion,
                 message,
                 usedAutoTemplate,
-                ShapeContours: overlayContours);
+                ShapeContours: overlayContours)
+            {
+                ShapeCoverage = candidate.ShapeCoverage,
+                ShapeReverseScore = candidate.ShapeReverseScore
+            };
         }
     }
 
@@ -465,12 +495,24 @@ internal static class OpenCvTemplateMatcher
         IReadOnlyDictionary<string, string> parameters,
         CancellationToken cancellationToken)
     {
+        if (!TryGetShapeScoreVersion(parameters, out var scoreVersion))
+        {
+            return MatchCandidate.None;
+        }
+
         var angleStep = GetAngleStep(parameters);
         var coarseAngleStep = Math.Clamp(GetDouble(parameters, "shapeCoarseAngleStep", Math.Max(4, angleStep * 2)), angleStep, 20);
         var coarseScale = GetShapeCoarseScale(search, template, parameters);
         if (coarseScale >= 0.999)
         {
-            return FindBestShapePass(search, template, EnumerateAngles(parameters, true), 1.0, parameters, cancellationToken);
+            return FindBestShapePass(
+                search,
+                template,
+                EnumerateAngles(parameters, true),
+                1.0,
+                scoreVersion,
+                parameters,
+                cancellationToken);
         }
 
         using var coarseSearch = ResizeForShapeSearch(search, coarseScale);
@@ -483,6 +525,7 @@ internal static class OpenCvTemplateMatcher
             coarseTemplate,
             EnumerateAngles(parameters, true, coarseAngleStep),
             coarsePassScale,
+            scoreVersion,
             parameters,
             cancellationToken);
         if (!coarse.HasMatch)
@@ -505,6 +548,7 @@ internal static class OpenCvTemplateMatcher
             template,
             refineAngles,
             1.0,
+            scoreVersion,
             parameters,
             cancellationToken);
 
@@ -518,10 +562,10 @@ internal static class OpenCvTemplateMatcher
         Mat template,
         IEnumerable<double> angles,
         double passScale,
+        int scoreVersion,
         IReadOnlyDictionary<string, string> parameters,
         CancellationToken cancellationToken)
     {
-        _ = passScale;
         using var searchEdges = PrepareForMatch(search, "Shape", parameters);
         if (Cv2.CountNonZero(searchEdges) < 8)
         {
@@ -534,12 +578,17 @@ internal static class OpenCvTemplateMatcher
         using var edgeDistance = new Mat();
         Cv2.DistanceTransform(distanceSeed, edgeDistance, DistanceTypes.L2, DistanceTransformMasks.Mask3);
 
-        using var templateEdges = CreateShapeBaseEdges(template, parameters);
+        using var templateMask = TryReadTemplateMask(parameters, template.Size());
+        using var templateEdges = CreateShapeBaseEdges(template, parameters, templateMask);
+        using var templateSupport = scoreVersion == 2
+            ? CreateShapeSupportMask(template.Size(), templateMask)
+            : null;
         var best = MatchCandidate.None;
         foreach (var angle in angles)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            using var rotatedEdges = RotateShapeEdges(templateEdges, angle);
+            using var rotation = CreateKeepBoundsRotation(templateEdges.Size(), angle);
+            using var rotatedEdges = WarpBinaryKeepBounds(templateEdges, rotation);
             if (rotatedEdges.Width > search.Width || rotatedEdges.Height > search.Height)
             {
                 continue;
@@ -559,6 +608,31 @@ internal static class OpenCvTemplateMatcher
             Cv2.MinMaxLoc(result, out var minDistance, out _, out var minLocation, out _);
 
             var score = CreateShapeScore(minDistance, rotatedEdges.Width, rotatedEdges.Height, parameters);
+            double? coverage = null;
+            double? reverseScore = null;
+            if (scoreVersion == 2)
+            {
+                using var rotatedSupport = WarpBinaryKeepBounds(templateSupport!, rotation);
+                var quality = EvaluateShapeV2(
+                    searchEdges,
+                    edgeDistance,
+                    template,
+                    rotatedEdges,
+                    rotatedSupport,
+                    minLocation,
+                    minDistance,
+                    parameters,
+                    passScale);
+                if (quality is null)
+                {
+                    continue;
+                }
+
+                score = quality.Value.Score;
+                coverage = quality.Value.Coverage;
+                reverseScore = quality.Value.ReverseScore;
+            }
+
             if (score > best.Score)
             {
                 best = new MatchCandidate(
@@ -568,7 +642,9 @@ internal static class OpenCvTemplateMatcher
                     rotatedEdges.Width,
                     rotatedEdges.Height,
                     angle,
-                    score);
+                    score,
+                    coverage,
+                    reverseScore);
             }
         }
 
@@ -634,17 +710,82 @@ internal static class OpenCvTemplateMatcher
         var templateEdges = PrepareForMatch(template, "Shape", parameters);
         if (maskOverride is not null)
         {
-            Cv2.BitwiseAnd(templateEdges, maskOverride, templateEdges);
-            return templateEdges;
+            return ApplyBinaryMask(templateEdges, maskOverride);
         }
 
         using var templateMask = TryReadTemplateMask(parameters, template.Size());
         if (templateMask is not null)
         {
-            Cv2.BitwiseAnd(templateEdges, templateMask, templateEdges);
+            return ApplyBinaryMask(templateEdges, templateMask);
         }
 
         return templateEdges;
+    }
+
+    private static Mat ApplyBinaryMask(Mat source, Mat mask)
+    {
+        var masked = new Mat();
+        Cv2.BitwiseAnd(source, mask, masked);
+        source.Dispose();
+        return masked;
+    }
+
+    private static Mat CreateShapeSupportMask(Size templateSize, Mat? templateMask)
+    {
+        return templateMask?.Clone() ?? new Mat(templateSize, MatType.CV_8UC1, Scalar.White);
+    }
+
+    private static ShapeQuality? EvaluateShapeV2(
+        Mat searchEdges,
+        Mat searchDistance,
+        Mat currentTemplate,
+        Mat rotatedEdges,
+        Mat rotatedSupport,
+        Point location,
+        double forwardMean,
+        IReadOnlyDictionary<string, string> parameters,
+        double passScale)
+    {
+        var templateEdgeCount = Cv2.CountNonZero(rotatedEdges);
+        if (templateEdgeCount < 8)
+        {
+            return null;
+        }
+
+        var rect = new Rect(location.X, location.Y, rotatedEdges.Width, rotatedEdges.Height);
+        using var distancePatch = new Mat(searchDistance, rect);
+        using var covered = new Mat();
+        var coverageTolerance = GetShapeCoverageTolerance(parameters, passScale);
+        Cv2.InRange(distancePatch, new Scalar(0), new Scalar(coverageTolerance), covered);
+
+        using var coveredTemplateEdges = new Mat();
+        Cv2.BitwiseAnd(covered, rotatedEdges, coveredTemplateEdges);
+        var coverage = Cv2.CountNonZero(coveredTemplateEdges) / (double)templateEdgeCount;
+
+        using var searchPatch = new Mat(searchEdges, rect);
+        using var supportedSearchEdges = new Mat();
+        Cv2.BitwiseAnd(searchPatch, rotatedSupport, supportedSearchEdges);
+        if (Cv2.CountNonZero(supportedSearchEdges) < 8)
+        {
+            return null;
+        }
+
+        using var inverseTemplateEdges = new Mat();
+        Cv2.BitwiseNot(rotatedEdges, inverseTemplateEdges);
+        using var templateDistance = new Mat();
+        Cv2.DistanceTransform(
+            inverseTemplateEdges,
+            templateDistance,
+            DistanceTypes.L2,
+            DistanceTransformMasks.Mask3);
+        var reverseMean = Cv2.Mean(templateDistance, supportedSearchEdges).Val0;
+
+        var scale = GetShapeV2ScoreScale(currentTemplate, parameters, passScale);
+        var forward = Math.Exp(-Math.Max(0, forwardMean) / scale);
+        var reverse = Math.Exp(-Math.Max(0, reverseMean) / scale);
+        var reverseScore = Math.Clamp(reverse, 0, 1);
+        var score = Math.Clamp(Math.Min(forward, reverse) * coverage, 0, 1);
+        return new ShapeQuality(score, coverage, reverseScore);
     }
 
     private static Mat RotateShapeEdges(Mat templateEdges, double angle)
@@ -655,6 +796,11 @@ internal static class OpenCvTemplateMatcher
     private static Mat WarpBinaryKeepBounds(Mat source, double angle)
     {
         using var rotation = CreateKeepBoundsRotation(source.Size(), angle);
+        return WarpBinaryKeepBounds(source, rotation);
+    }
+
+    private static Mat WarpBinaryKeepBounds(Mat source, KeepBoundsRotation rotation)
+    {
         var rotated = new Mat();
         Cv2.WarpAffine(
             source,
@@ -924,6 +1070,39 @@ internal static class OpenCvTemplateMatcher
         var defaultScale = Math.Clamp(Math.Min(templateWidth, templateHeight) * 0.18, 12, 30);
         var scale = Math.Max(1, GetDouble(parameters, "shapeScoreScale", defaultScale));
         return Math.Clamp(Math.Exp(-Math.Max(0, averageEdgeDistance) / scale), 0, 1);
+    }
+
+    private static double GetShapeCoverageTolerance(
+        IReadOnlyDictionary<string, string> parameters,
+        double passScale)
+    {
+        var safePassScale = double.IsFinite(passScale) ? passScale : 1;
+        return Math.Max(0.75, GetNormalizedShapeCoverageDistance(parameters) * safePassScale);
+    }
+
+    private static double GetNormalizedShapeCoverageDistance(IReadOnlyDictionary<string, string> parameters)
+    {
+        var configured = TryGetDouble(parameters, "shapeCoverageDistance", out var value) && double.IsFinite(value)
+            ? value
+            : 3;
+        return Math.Clamp(configured, 0.5, 20);
+    }
+
+    private static double GetShapeV2ScoreScale(
+        Mat currentTemplate,
+        IReadOnlyDictionary<string, string> parameters,
+        double passScale)
+    {
+        if (TryGetDouble(parameters, "shapeScoreScale", out var configured) && double.IsFinite(configured))
+        {
+            return Math.Max(0.25, configured * passScale);
+        }
+
+        var safeScale = double.IsFinite(passScale) ? Math.Max(0.01, passScale) : 1;
+        var fullShort = Math.Min(
+            currentTemplate.Width / safeScale,
+            currentTemplate.Height / safeScale);
+        return Math.Max(0.25, Math.Clamp(fullShort * 0.18, 12, 30) * safeScale);
     }
 
     private static Mat ResizeForShapeSearch(Mat source, double scale)
@@ -1323,6 +1502,20 @@ internal static class OpenCvTemplateMatcher
         };
     }
 
+    private static bool TryGetShapeScoreVersion(
+        IReadOnlyDictionary<string, string> parameters,
+        out int version)
+    {
+        version = 1;
+        if (!parameters.TryGetValue("shapeScoreVersion", out var raw) || string.IsNullOrWhiteSpace(raw))
+        {
+            return true;
+        }
+
+        return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out version) &&
+               version is 1 or 2;
+    }
+
     private static string GetMatchModeDisplayName(string mode)
     {
         return mode switch
@@ -1394,7 +1587,9 @@ internal static class OpenCvTemplateMatcher
         int Width,
         int Height,
         double Angle,
-        double Score)
+        double Score,
+        double? ShapeCoverage = null,
+        double? ShapeReverseScore = null)
     {
         public double CenterX => X + Width / 2.0;
 
@@ -1402,6 +1597,11 @@ internal static class OpenCvTemplateMatcher
 
         public static MatchCandidate None { get; } = new(false, 0, 0, 0, 0, 0, double.NegativeInfinity);
     }
+
+    private readonly record struct ShapeQuality(
+        double Score,
+        double Coverage,
+        double ReverseScore);
 
     private sealed class KeepBoundsRotation : IDisposable
     {

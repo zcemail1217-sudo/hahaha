@@ -24,7 +24,14 @@ public sealed record TemplateMatchResult(
     string Message,
     bool UsedAutoTemplate,
     IReadOnlyList<Point2D>? ShapePoints = null,
-    IReadOnlyList<IReadOnlyList<Point2D>>? ShapeContours = null);
+    IReadOnlyList<IReadOnlyList<Point2D>>? ShapeContours = null)
+{
+    public IReadOnlyList<IReadOnlyList<Point2D>>? MatchedTemplateRoiContours { get; init; }
+
+    public double? ShapeCoverage { get; init; }
+
+    public double? ShapeReverseScore { get; init; }
+}
 
 public static class TemplateMatcher
 {
