@@ -61,6 +61,22 @@ public sealed class OpenCvTemplateMatcherGeometryTests
     }
 
     [Fact]
+    public void CoarseToRefinePreservesRotatedCenterAndCanvas()
+    {
+        var expectedCenter = new Point2d(780, 480);
+        var trainingFrame = CreateProductFrame(220, 380, new Point2d(110, 190), 0);
+        var searchFrame = CreateProductFrame(1200, 960, expectedCenter, 90);
+
+        var result = LearnAndMatch(trainingFrame, searchFrame, 90, forceDirectPass: false);
+
+        Assert.True(result.HasMatch, result.Message);
+        Assert.Equal(300, result.TemplateWidth);
+        Assert.Equal(100, result.TemplateHeight);
+        Assert.InRange(Math.Abs(result.Pose.X - expectedCenter.X), 0, 2);
+        Assert.InRange(Math.Abs(result.Pose.Y - expectedCenter.Y), 0, 2);
+    }
+
+    [Fact]
     public void QuarterTurnKeepsBoundaryPixelsInsideEvenSizedCanvas()
     {
         var parameters = CreateParameters(clockwiseAngle: -90, direct: true);

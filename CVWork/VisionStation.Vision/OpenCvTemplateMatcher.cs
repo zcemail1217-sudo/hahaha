@@ -470,15 +470,19 @@ internal static class OpenCvTemplateMatcher
         var coarseScale = GetShapeCoarseScale(search, template, parameters);
         if (coarseScale >= 0.999)
         {
-            return FindBestShapePass(search, template, EnumerateAngles(parameters, true), parameters, cancellationToken);
+            return FindBestShapePass(search, template, EnumerateAngles(parameters, true), 1.0, parameters, cancellationToken);
         }
 
         using var coarseSearch = ResizeForShapeSearch(search, coarseScale);
         using var coarseTemplate = ResizeForShapeSearch(template, coarseScale);
+        var coarsePassScale = Math.Min(
+            coarseTemplate.Width / (double)template.Width,
+            coarseTemplate.Height / (double)template.Height);
         var coarse = FindBestShapePass(
             coarseSearch,
             coarseTemplate,
             EnumerateAngles(parameters, true, coarseAngleStep),
+            coarsePassScale,
             parameters,
             cancellationToken);
         if (!coarse.HasMatch)
@@ -486,37 +490,38 @@ internal static class OpenCvTemplateMatcher
             return MatchCandidate.None;
         }
 
-        var scaledCoarse = new MatchCandidate(
-            true,
-            Math.Clamp((int)Math.Round(coarse.X / coarseScale), 0, Math.Max(0, search.Width - template.Width)),
-            Math.Clamp((int)Math.Round(coarse.Y / coarseScale), 0, Math.Max(0, search.Height - template.Height)),
-            template.Width,
-            template.Height,
-            coarse.Angle,
-            coarse.Score);
+        var scaledCoarse = ScaleCoarseCandidate(coarse, coarseSearch.Size(), search.Size(), template.Size());
+        var refineAngles = EnumerateRefineAngles(coarse.Angle, coarseAngleStep, angleStep).ToArray();
+        var refineRegion = CreateRefineRegion(search.Size(), template.Size(), scaledCoarse, refineAngles, parameters);
+        if (refineRegion.Width <= 0 || refineRegion.Height <= 0)
+        {
+            return MatchCandidate.None;
+        }
 
-        var refineRegion = CreateRefineRegion(search, template, scaledCoarse, parameters);
         using var refineView = new Mat(search, refineRegion);
         using var refineSearch = refineView.Clone();
         var refined = FindBestShapePass(
             refineSearch,
             template,
-            EnumerateRefineAngles(coarse.Angle, coarseAngleStep, angleStep),
+            refineAngles,
+            1.0,
             parameters,
             cancellationToken);
 
         return refined.HasMatch
             ? refined with { X = refineRegion.X + refined.X, Y = refineRegion.Y + refined.Y }
-            : scaledCoarse;
+            : MatchCandidate.None;
     }
 
     private static MatchCandidate FindBestShapePass(
         Mat search,
         Mat template,
         IEnumerable<double> angles,
+        double passScale,
         IReadOnlyDictionary<string, string> parameters,
         CancellationToken cancellationToken)
     {
+        _ = passScale;
         using var searchEdges = PrepareForMatch(search, "Shape", parameters);
         if (Cv2.CountNonZero(searchEdges) < 8)
         {
@@ -945,20 +950,68 @@ internal static class OpenCvTemplateMatcher
         return Math.Clamp(scale, 0.25, 1);
     }
 
-    private static Rect CreateRefineRegion(
-        Mat search,
-        Mat template,
+    private static MatchCandidate ScaleCoarseCandidate(
         MatchCandidate coarse,
+        Size coarseSearch,
+        Size fullSearch,
+        Size fullTemplate)
+    {
+        var centerX = coarse.CenterX * fullSearch.Width / coarseSearch.Width;
+        var centerY = coarse.CenterY * fullSearch.Height / coarseSearch.Height;
+        var canvas = GetRotatedCanvasSize(fullTemplate, coarse.Angle);
+        var x = Math.Clamp(
+            (int)Math.Round(centerX - canvas.Width / 2.0),
+            0,
+            Math.Max(0, fullSearch.Width - canvas.Width));
+        var y = Math.Clamp(
+            (int)Math.Round(centerY - canvas.Height / 2.0),
+            0,
+            Math.Max(0, fullSearch.Height - canvas.Height));
+
+        return coarse with
+        {
+            X = x,
+            Y = y,
+            Width = canvas.Width,
+            Height = canvas.Height
+        };
+    }
+
+    private static Rect CreateRefineRegion(
+        Size search,
+        Size template,
+        MatchCandidate coarse,
+        IReadOnlyCollection<double> angles,
         IReadOnlyDictionary<string, string> parameters)
     {
+        if (angles.Count == 0)
+        {
+            return new Rect();
+        }
+
+        var requiredWidth = 0;
+        var requiredHeight = 0;
+        foreach (var angle in angles)
+        {
+            var canvas = GetRotatedCanvasSize(template, angle);
+            requiredWidth = Math.Max(requiredWidth, canvas.Width);
+            requiredHeight = Math.Max(requiredHeight, canvas.Height);
+        }
+
         var marginFactor = Math.Clamp(GetDouble(parameters, "shapeRefineMargin", 0.9), 0.25, 3);
-        var marginX = Math.Max(24, (int)Math.Ceiling(template.Width * marginFactor));
-        var marginY = Math.Max(24, (int)Math.Ceiling(template.Height * marginFactor));
-        var left = Math.Clamp(coarse.X - marginX, 0, Math.Max(0, search.Width - template.Width));
-        var top = Math.Clamp(coarse.Y - marginY, 0, Math.Max(0, search.Height - template.Height));
-        var right = Math.Clamp(coarse.X + template.Width + marginX, left + template.Width, search.Width);
-        var bottom = Math.Clamp(coarse.Y + template.Height + marginY, top + template.Height, search.Height);
-        return new Rect(left, top, right - left, bottom - top);
+        var marginX = Math.Max(24, (int)Math.Ceiling(requiredWidth * marginFactor));
+        var marginY = Math.Max(24, (int)Math.Ceiling(requiredHeight * marginFactor));
+        var width = Math.Min(search.Width, requiredWidth + 2 * marginX);
+        var height = Math.Min(search.Height, requiredHeight + 2 * marginY);
+        var left = Math.Clamp(
+            (int)Math.Round(coarse.CenterX - width / 2.0),
+            0,
+            Math.Max(0, search.Width - width));
+        var top = Math.Clamp(
+            (int)Math.Round(coarse.CenterY - height / 2.0),
+            0,
+            Math.Max(0, search.Height - height));
+        return new Rect(left, top, width, height);
     }
 
     private static Mat Rotate(Mat source, double angle)
@@ -1343,6 +1396,10 @@ internal static class OpenCvTemplateMatcher
         double Angle,
         double Score)
     {
+        public double CenterX => X + Width / 2.0;
+
+        public double CenterY => Y + Height / 2.0;
+
         public static MatchCandidate None { get; } = new(false, 0, 0, 0, 0, 0, double.NegativeInfinity);
     }
 
