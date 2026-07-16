@@ -1,6 +1,6 @@
 # HALCON 两阶段整产品模板匹配设计
 
-**状态：** 待用户书面审阅
+**状态：** 已确认，待实施
 
 **日期：** 2026-07-16
 
@@ -78,7 +78,7 @@ public interface ITemplateMatchingService : IAsyncDisposable
 }
 ```
 
-`TemplateLearningRequest` 至少包含 `RecipeId`、`FlowId`、`ToolId`、图像、搜索/模板 ROI 和参数快照。`TemplateMatchingRequest` 另外包含单/多目标模式和期望数量。`TemplateMatchBatchResult` 始终返回一个候选集合；单目标投影为最多一个结果，多目标投影为有序集合。
+`TemplateLearningRequest` 至少包含 `RecipeId`、`FlowId`、`ToolId`、图像、搜索/模板 ROI 和参数快照。`TemplateMatchingRequest` 另外包含单/多目标模式和期望数量。`TemplateMatchBatchResult` 始终返回一个候选集合；单目标投影为最多一个结果，多目标投影为有序集合。公共 `TemplateMatchingEngine.Unknown` 只表示“严格路由在进入任何 backend 前失败”；它不能注册为 backend。此类结果明确写 `engine=Unknown`，不得伪装成 OpenCv；成功路由后的结果写实际规范化 backend。
 
 `TemplateMatcher.Learn/Match` 与 `MultiTargetMatcher.Match` 保留为 OpenCV/Managed 旧代码兼容入口，现有行为和测试不被删除。静态 `Match` 遇到 `engine=Halcon` 时返回带 `CONFIG_SERVICE_REQUIRED` 的 NG result；静态 `Learn` 因现有返回类型只是 Dictionary，抛出带同一稳定 Code 的专用配置异常。未知引擎以相同方式使用 `CONFIG_UNKNOWN_ENGINE`。这些入口绝不能自行寻找全局 service 或进入 OpenCV。生产工具和新的二次开发代码统一改用注入的 `ITemplateMatchingService`，避免通过 service locator 或可变静态状态注入 HALCON 运行时、模型根目录和 fake backend。
 
@@ -117,8 +117,9 @@ HALCON 后端内部再拆分 `IHalconCandidateSource` 与纯中立数据的 `Tem
 3. 切换后端不删除另一后端的参数与模型引用，但活动后端只读取自己的命名空间。
 4. 从 OpenCV 切到 HALCON 后必须重新学习；`.bin`、`templatePixels` 和 `.shm` 不互相冒充。
 5. HALCON 只支持 `matchMode=Shape`。若配方把 HALCON 与 `CircularBlob`、ORB 或 NCC 组合，返回 `CONFIG_UNSUPPORTED_MODE`，不得猜测替代算法。
-6. 旧 OpenCV 的绝对 `modelPath` 继续兼容；新的 HALCON 模型路径必须是受控根目录下的相对路径。
+6. 旧 OpenCV 的绝对 `modelPath` 继续兼容；新的 HALCON 引用使用 `halcon.modelPath`、`halcon.modelMetadataPath` 等独立命名空间，路径必须是受控根目录下的相对路径。HALCON 不读取或覆盖 OpenCV 的通用旧键。
 7. 当前 UI 对旧角度字段的自动迁移只在规范化后端为 OpenCV 时执行，不能把 OpenCV 角度参数改写成 `halcon.*` 参数。
+8. service 先规范化 engine，再只调用活动 backend 的 parser。OpenCV 不校验 inactive `halcon.*`，HALCON 也不校验 inactive OpenCV 字段；保留的另一后端状态即使损坏，也不能阻塞当前后端。
 
 ## 6. HALCON 学习流程
 
@@ -140,14 +141,16 @@ HALCON 后端内部再拆分 `IHalconCandidateSource` 与纯中立数据的 `Tem
 
 单目标和多目标都调用同一批匹配核心：
 
-1. 严格解析参数并解析受控相对模型路径；结果中的 `engine` 写服务实际使用的规范化后端键，不照抄原始参数文本。
-2. 获取以“绝对模型路径 + `.shm` SHA-256 + 元数据 SHA-256”为键的模型 lease。
-3. 将搜索 ROI 的轴对齐外接框裁成原点为 `(0,0)` 的局部 HALCON 图像；若原 ROI 为圆、旋转矩形或多边形，再在局部图上应用对应 domain mask。HALCON 返回局部 `Row/Column`，适配器只在出口处加一次 `(searchX, searchY)`；禁止对原图 `reduce_domain` 后再次加偏移。
-4. 调用 `find_scaled_shape_model` 产生按 HALCON 原始 Score 降序排列的候选。候选阶段使用较低但明确的 `candidateMinScore`，为后续硬门保留召回率。
-5. 将 HALCON `Row/Column/Angle/Scale` 转换为当前系统坐标，并对每个候选执行第 8 节硬门。
-6. 只把通过所有硬门的候选加入接受集合；拒绝原因记录在诊断中，不作为有效定位输出。
-7. 按旋转后完整模板支持区域执行最终去重。候选生成使用独立且更宽松的 `candidateMaxOverlap`；它只是粗过滤，不能复用最终 `maxOverlap` 或代替最终唯一性验证。
-8. 单目标取第一个已接受候选；多目标继续验证，直到候选耗尽、达到安全上限，或已经确认“多于期望数量”。
+1. 先规范化 engine/mode 并严格解析 HALCON 当前参数，再由 codec 读取 namespaced reference；配置错误不能触发 runtime probe。
+2. 通过模型 store 解析受控相对路径，校验 checksum、owner、metadata、精确版本和模型生成参数指纹；这些检查均不构造 native handle。
+3. 只有前两步成功后才惰性执行一次 runtime/version/license probe；runtime 失败不进入 cache loader 或候选源。
+4. 获取以“绝对模型路径 + `.shm` SHA-256 + 元数据 SHA-256”为键的模型 lease。
+5. 将搜索 ROI 的轴对齐外接框裁成原点为 `(0,0)` 的局部 HALCON 图像；若原 ROI 为圆、旋转矩形或多边形，再在局部图上应用对应 domain mask。HALCON 返回局部 `Row/Column`，适配器只在出口处加一次 `(searchX, searchY)`；禁止对原图 `reduce_domain` 后再次加偏移。
+6. 调用 `find_scaled_shape_model` 产生按 HALCON 原始 Score 降序排列的候选。候选阶段使用较低但明确的 `candidateMinScore`，为后续硬门保留召回率。
+7. 将 HALCON `Row/Column/Angle/Scale` 转换为当前系统坐标，并对每个候选执行第 8 节硬门。
+8. 只把通过所有硬门的候选加入接受集合；拒绝原因记录在诊断中，不作为有效定位输出。
+9. 按旋转后完整模板支持区域执行最终去重。候选生成使用独立且更宽松的 `candidateMaxOverlap`；它只是粗过滤，不能复用最终 `maxOverlap` 或代替最终唯一性验证。
+10. 单目标取第一个已接受候选；多目标继续验证，直到候选耗尽、达到安全上限，或已经确认“多于期望数量”。
 
 候选 Score 保持 HALCON 原始含义，最终是否接受由硬门决定。系统不生成一个加权“综合分”覆盖失败项，也不通过自动降低阈值来凑足数量。
 
@@ -221,6 +224,7 @@ HALCON 后端内部再拆分 `IHalconCandidateSource` 与纯中立数据的 `Tem
 - 接受数量恰好等于 `expectedCount`：Outcome=OK。
 - 少于或多于 `expectedCount`：Outcome=NG。
 - 为判断“多一个”，候选容量至少允许得到 `expectedCount + 1` 个已接受结果；内部候选扫描上限由期望数量派生并设置安全上限。
+- `find_scaled_shape_model` 返回的 raw candidate 数量若恰好等于 `candidateLimit`，表示结果可能被截断。ExactCount 在尚未明确证明“多于期望”时必须以 `MATCH_CANDIDATE_LIMIT_REACHED` fail closed，不能把截断集合误报为精确数量。
 - NG 时仍在 `ToolResult.Data` 和红色调试叠加中报告所有已接受候选，便于排查；但位置、最佳位置和全部位置流程端口只在整体 OK 时发布，避免下游设备使用不完整或超量集合。
 - `CountOutput` 与诊断始终可用。
 
@@ -235,9 +239,9 @@ HALCON 后端内部再拆分 `IHalconCandidateSource` 与纯中立数据的 `Tem
 - 原点是学习时显式设置的模板 ROI 中心，不依赖 HALCON 默认重心。
 - `Angle` 使用现有 `Pose2D` 契约：屏幕图像坐标中顺时针为正，单位度，规范到 `[-180, 180]`。HALCON 弧度及方向转换只存在于适配器，并由 `35°/-135°` 回归测试锁定。
 - `Scale=1` 表示学习尺寸；仅允许等比缩放。
-- `MatchX/MatchY` 为完整变换模板 ROI 的轴对齐外接框左上角；`TemplateWidth/Height` 保留学习尺寸。
+- `MatchX/MatchY` 保持现有 `int` positional 契约，取完整变换模板 ROI 轴对齐外接框 `minX/minY` 的 `Math.Floor`，确保整数边界包含完整 ROI；`TemplateWidth/Height` 保留学习尺寸。精确浮点几何以完整 ROI contours 为准。
 
-`Pose2D` 在 record body 中增加 init-only `Scale=1`，保持现有三参数构造函数和 `Deconstruct` 不变。新增唯一的纯数据 `PoseSimilarityTransform`：使用 `scaleFactor = currentPose.Scale / referencePose.Scale`，将相对原点向量先等比缩放再旋转平移，矩形宽高、旋转矩形宽高、圆半径和多边形各点同步缩放。生产 `GeometryToolSupport`、TemplatePoint、CoordinateTransform 以及 TemplateLocate/FindLine/FindCircle/Blob 等调试与示教预览都复用该 helper；任何消费 PositionInput 或重建 Pose2D 的路径必须显式保留 Scale，禁止各 ViewModel 继续维护独立的旋转/平移公式。新学习参数写 `standardScale=1`，重新示教 ROI 时写 `roiReferencePoseScale`；旧参考位姿缺少 Scale 时按 1 解释。
+`Pose2D` 在 record body 中增加 init-only `Scale=1`，保持现有三参数构造函数和 `Deconstruct` 不变。新增唯一的纯数据 `PoseSimilarityTransform`：使用 `scaleFactor = currentPose.Scale / referencePose.Scale`，将相对原点向量先等比缩放再旋转平移，矩形宽高、旋转矩形宽高、圆半径和多边形各点同步缩放。生产 `GeometryToolSupport`、TemplatePoint、CoordinateTransform 以及 TemplateLocate/FindLine/FindCircle/Blob 等调试与示教预览都复用该 helper；任何消费 PositionInput 或重建 Pose2D 的路径必须显式保留 Scale，禁止各 ViewModel 继续维护独立的旋转/平移公式。HALCON 学习参数写 `halcon.standardScale=1`；重新示教下游 ROI 时写后端中立的 `roiReferencePoseScale`，旧参考位姿缺少 Scale 时按 1 解释。
 
 ### 10.2 中立候选
 
@@ -282,7 +286,9 @@ Resources/Templates/<recipe-slug>-<id-hash>/<flow-slug>-<id-hash>/<tool-slug>-<i
   model-<generation>.json
 ```
 
-配方保存相对 `RuntimePaths.TemplateResourceDirectory` 的 `modelPath` 和 `modelMetadataPath`，不得保存本机 HALCON 安装路径或新的绝对模型路径。
+配方保存相对 `RuntimePaths.TemplateResourceDirectory` 的 `halcon.modelPath` 和 `halcon.modelMetadataPath`，不得保存本机 HALCON 安装路径或新的绝对模型路径。
+
+HALCON 的全部持久化学习状态均使用独立命名空间：`halcon.standardX/Y/Angle/Scale`、`halcon.templateWidth/Height`、`halcon.model*` 与 `halcon.generationParameterFingerprint`。验证审计数据只进入受 checksum 保护的 metadata JSON，学习预览只存在于当次 `TemplateLearningResult`，两者都不持久化为配方参数。现有 OpenCV 的通用 `standard*`、`template*`、`modelPath/modelVersion` 不被 HALCON 学习、重置或切换覆盖；ToolResult 的运行数据字段仍保持后端中立且不加前缀。
 
 每个目录段使用“可读 slug + 原始 ID 的 SHA-256 前 12 个十六进制字符”，不能只调用会产生碰撞的字符替换函数。元数据保存完整原始 `RecipeId/FlowId/ToolId` 三元组；加载、复制和删除前都验证目录后缀及元数据所有权。
 
@@ -295,11 +301,11 @@ JSON 元数据至少包含：
 - `.shm` 文件名、SHA-256、元数据 generation
 - 模板尺寸、模型原点、角度/尺度范围、暗前景极性
 - 外轮廓采样点、内部关键轮廓组及最低有效组数
-- 影响模型生成的不可变参数，以及仅供审计的 `validationDefaultsAtLearn`
+- 影响模型生成的不可变参数、其 canonical SHA-256 `generationParameterFingerprint`，以及仅供审计的 `validationDefaultsAtLearn`
 
-配方参数同时保存 `modelVersion`、`modelRuntimeVersion`、`modelChecksum` 和 `metadataChecksum`，便于在加载 HALCON handle 前快速给出明确诊断。
+配方参数同时保存 `halcon.modelVersion`、`halcon.modelRuntimeVersion`、`halcon.modelChecksum` 和 `halcon.metadataChecksum`，便于在加载 HALCON handle 前快速给出明确诊断。metadata JSON 内部仍使用不带前缀的 schema 字段名；前缀只用于隔离配方参数中的后端状态。
 
-元数据中的模型几何、特征组和生成参数不可变；`validationDefaultsAtLearn` 只记录学习当时建议门限，不与当前配方做一致性校验。每次匹配都从当前请求读取 outer/inner coverage、edge distance、polarity、最终 overlap 和 timeout 等运行门限。模型缓存不得固化这些可热改门限；若未来缓存编译后的 validator 配置，缓存键必须加入完整验证参数哈希。
+元数据中的模型几何、特征组和生成参数不可变。匹配在 runtime probe/native load 前先把配方中的 namespaced standard pose/template dimensions 与 metadata 精确交叉校验，再对当前 `angleStart/angleExtent/scaleMin/scaleMax/numLevels` 计算同一 canonical fingerprint；与学习 generation 不同则返回 `MODEL_RELEARN_REQUIRED`，不能拿旧模型运行新生成参数。`validationDefaultsAtLearn` 只记录学习当时建议门限，不与当前配方做一致性校验。每次匹配都从当前请求读取 candidate score、outer/inner coverage、edge distance、polarity、overlap、greediness、subPixel、candidateLimit 和 timeout 等热参数。模型缓存不得固化这些可热改门限；若未来缓存编译后的 validator 配置，缓存键必须加入完整验证参数哈希。
 
 “已学习”判断必须同时验证活动 `engine`、model format、两条相对路径和 checksum，不能因为目录里存在旧 `template.bin` 就把 HALCON 显示为已学习。
 
@@ -315,9 +321,9 @@ JSON 元数据至少包含：
 
 ### 11.4 配方资源生命周期
 
-- **重置模型**：一次性移除 `modelPath`、`modelMetadataPath`、版本、generation、两个 checksum、HALCON 验证元数据和预览字段，并让对应缓存项 retire。现有 OpenCV 重置也必须清理遗留的 `modelPath/modelVersion`，不能重置后仍被判断为已学习。
-- **复制配方**：把每个活动 generation 复制到新 `RecipeId/FlowId/ToolId` 目录，重新计算 checksum 并重写新配方相对路径；任一资源复制失败则不保存半成品配方。新旧配方不共享可变模型文件。
-- **删除配方**：先确认配方 JSON 删除成功并 retire 其缓存，再验证目录哈希和元数据中的完整原始 RecipeId，只删除确属该配方的独占模型目录；清理失败只记录 orphan 日志，不回滚已经完成的配方删除。
+- **重置模型**：HALCON 重置一次性移除全部且仅移除已定义的 namespaced 学习状态（reference、版本、generation、checksum、fingerprint、`halcon.standard*`、`halcon.template*`），并让对应缓存项 retire；不得使用 `halcon.*` 通配删除未来扩展，也不得删除非活动 OpenCV 状态。OpenCV 重置单独清理其遗留的通用 `modelPath/modelVersion` 与 OpenCV 模板字段，不能重置后仍被判断为已学习。
+- **复制配方**：不论当前选择哪个 engine，都复制每个完整 `halcon.model*` generation 到新 `RecipeId/FlowId/ToolId` 目录，重新计算 checksum 并重写新配方的 namespaced owner/path；任一资源复制失败则不保存半成品配方。新旧配方不共享可变模型文件。
+- **删除配方**：不论 HALCON 是否为当前 engine，都先确认配方 JSON 删除成功并 retire 其全部 HALCON reference，再验证目录哈希和元数据中的完整原始 RecipeId，只删除确属该配方的独占模型目录；清理失败只记录 orphan 日志，不回滚已经完成的配方删除。
 - **切换引擎**：保留非活动后端数据用于用户切回，但当前模型状态只由所选引擎的完整元数据决定。
 
 ### 11.5 路径防护
@@ -439,10 +445,12 @@ UI 保存和运行时加载都通过同一参数目录校验 `operatorTimeoutMs`
 - `MODEL_CHECKSUM_MISMATCH`
 - `MODEL_METADATA_INVALID`
 - `MODEL_VERSION_MISMATCH`
+- `MODEL_RELEARN_REQUIRED`
 - `MODEL_LOAD_FAILED`
 - `MODEL_INTERNAL_FEATURES_WEAK`
 - 第 8 节各候选拒绝码
 - `MATCH_TIMEOUT`
+- `MATCH_CANDIDATE_LIMIT_REACHED`
 - `MATCH_OPERATOR_FAILED`
 
 诊断包含 `failureCode`、阶段、用户可读中文消息和日志用技术详情。生产页面不弹框；参数学习页面可在原页面显示失败原因。未知异常可以记录完整堆栈，但对操作员只显示稳定消息，且不得把无候选伪造成 `(0,0)` 定位。用户主动取消遵循第 13.2 节的 pipeline cancellation 契约，不转换成此处普通 NG 错误码。
