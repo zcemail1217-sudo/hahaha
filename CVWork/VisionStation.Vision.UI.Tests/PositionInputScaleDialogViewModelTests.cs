@@ -347,6 +347,95 @@ public sealed class PositionInputScaleDialogViewModelTests
         Assert.Equal("0.9", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
     }
 
+    [Theory]
+    [InlineData(VisionToolKind.FindLine)]
+    [InlineData(VisionToolKind.FindCircle)]
+    public async Task FindGeometryApplyWithoutPositionInputRemovesCompleteReference(VisionToolKind toolKind)
+    {
+        var scenario = await ApplyFindGeometryDialogAsync(
+            toolKind,
+            sourceToolId: string.Empty,
+            referenceToolId: "old-source",
+            referenceScale: "1.1",
+            currentPose: new Pose2D(20, 16, 30) { Scale = 1.25 });
+
+        Assert.True(scenario.Applied);
+        Assert.Equal(0, scenario.Pipeline.ExecutionCount);
+        Assert.DoesNotContain(
+            scenario.Tool.ToDefinition().Parameters.Keys,
+            key => key.StartsWith("roiReferencePose", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData(VisionToolKind.FindLine)]
+    [InlineData(VisionToolKind.FindCircle)]
+    public async Task FindGeometryApplyRecapturesReferenceAfterPositionInputSourceChanges(VisionToolKind toolKind)
+    {
+        var scenario = await ApplyFindGeometryDialogAsync(
+            toolKind,
+            sourceToolId: "new-source",
+            referenceToolId: "old-source",
+            referenceScale: "0.5",
+            currentPose: new Pose2D(20, 16, 30) { Scale = 1.25 });
+
+        Assert.True(scenario.Applied);
+        Assert.Equal(1, scenario.Pipeline.ExecutionCount);
+        var saved = scenario.Tool.ToDefinition().Parameters;
+        Assert.Equal("20", saved["roiReferencePoseX"]);
+        Assert.Equal("16", saved["roiReferencePoseY"]);
+        Assert.Equal("30", saved["roiReferencePoseAngle"]);
+        Assert.Equal("1.25", saved["roiReferencePoseScale"]);
+        Assert.Equal("new-source", saved["roiReferencePoseToolId"]);
+    }
+
+    [Theory]
+    [InlineData(VisionToolKind.FindLine, "not-a-number")]
+    [InlineData(VisionToolKind.FindLine, "NaN")]
+    [InlineData(VisionToolKind.FindCircle, "not-a-number")]
+    [InlineData(VisionToolKind.FindCircle, "NaN")]
+    public async Task FindGeometryApplyIgnoresStaleInvalidReferenceScaleFromPreviousSource(
+        VisionToolKind toolKind,
+        string staleScale)
+    {
+        var scenario = await ApplyFindGeometryDialogAsync(
+            toolKind,
+            sourceToolId: "new-source",
+            referenceToolId: "old-source",
+            referenceScale: staleScale,
+            currentPose: new Pose2D(20, 16, 30) { Scale = 1.2 });
+
+        Assert.True(scenario.Applied);
+        Assert.Equal(1, scenario.Pipeline.ExecutionCount);
+        var saved = scenario.Tool.ToDefinition().Parameters;
+        Assert.Equal("20", saved["roiReferencePoseX"]);
+        Assert.Equal("16", saved["roiReferencePoseY"]);
+        Assert.Equal("30", saved["roiReferencePoseAngle"]);
+        Assert.Equal("1.2", saved["roiReferencePoseScale"]);
+        Assert.Equal("new-source", saved["roiReferencePoseToolId"]);
+    }
+
+    [Theory]
+    [InlineData(VisionToolKind.FindLine)]
+    [InlineData(VisionToolKind.FindCircle)]
+    public async Task FindGeometryLegacyReferenceWithoutToolIdRemainsCompatible(VisionToolKind toolKind)
+    {
+        var scenario = await ApplyFindGeometryDialogAsync(
+            toolKind,
+            sourceToolId: "position-source",
+            referenceToolId: null,
+            referenceScale: "1.1",
+            currentPose: new Pose2D(20, 16, 30) { Scale = 1.25 });
+
+        Assert.True(scenario.Applied);
+        Assert.Equal(0, scenario.Pipeline.ExecutionCount);
+        var saved = scenario.Tool.ToDefinition().Parameters;
+        Assert.Equal("10", saved["roiReferencePoseX"]);
+        Assert.Equal("8", saved["roiReferencePoseY"]);
+        Assert.Equal("5", saved["roiReferencePoseAngle"]);
+        Assert.Equal("1.1", saved["roiReferencePoseScale"]);
+        Assert.False(saved.ContainsKey("roiReferencePoseToolId"));
+    }
+
     [Fact]
     public async Task BlobAnalysisApplyWithoutPositionInputRemovesReferenceScale()
     {
@@ -1003,6 +1092,88 @@ public sealed class PositionInputScaleDialogViewModelTests
         Assert.Equal("1", scenario.Tool.ToDefinition().Parameters["roiReferencePoseScale"]);
     }
 
+    private static async Task<FindGeometryApplyScenario> ApplyFindGeometryDialogAsync(
+        VisionToolKind toolKind,
+        string sourceToolId,
+        string? referenceToolId,
+        string referenceScale,
+        Pose2D currentPose)
+    {
+        if (toolKind != VisionToolKind.FindLine && toolKind != VisionToolKind.FindCircle)
+        {
+            throw new ArgumentOutOfRangeException(nameof(toolKind));
+        }
+
+        var frame = CreateFrame();
+        var source = new VisionToolDefinition
+        {
+            Id = string.IsNullOrWhiteSpace(sourceToolId) ? "unused" : sourceToolId,
+            Kind = VisionToolKind.TemplateLocate
+        };
+        var roi = toolKind == VisionToolKind.FindLine
+            ? new RoiDefinition
+            {
+                Id = "roi",
+                Shape = RoiShapeKind.RotatedRectangle,
+                X = 16,
+                Y = 16,
+                Width = 20,
+                Height = 10
+            }
+            : new RoiDefinition
+            {
+                Id = "roi",
+                Shape = RoiShapeKind.Circle,
+                X = 16,
+                Y = 16,
+                Radius = 8
+            };
+        var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["roiReferencePoseX"] = "10",
+            ["roiReferencePoseY"] = "8",
+            ["roiReferencePoseAngle"] = "5",
+            ["roiReferencePoseScale"] = referenceScale
+        };
+        if (!string.IsNullOrWhiteSpace(sourceToolId))
+        {
+            parameters["input:PositionInput:toolId"] = sourceToolId;
+            parameters["input:PositionInput:portKey"] = "PositionOutput";
+        }
+
+        if (referenceToolId is not null)
+        {
+            parameters["roiReferencePoseToolId"] = referenceToolId;
+        }
+
+        var tool = new VisionToolItem
+        {
+            Id = toolKind == VisionToolKind.FindLine ? "find-line" : "find-circle",
+            Kind = toolKind,
+            RoiId = roi.Id,
+            ParametersText = string.Join("; ", parameters.Select(item => $"{item.Key}={item.Value}"))
+        };
+        var recipe = string.IsNullOrWhiteSpace(sourceToolId)
+            ? new Recipe()
+            : new Recipe { Tools = [source] };
+        var pipeline = new PoseResultPipeline(frame, source.Id, currentPose);
+        bool applied;
+        if (toolKind == VisionToolKind.FindLine)
+        {
+            var viewModel = new FindLineToolDialogViewModel(
+                tool, [roi], "Flow", frame, recipe, pipeline, new NullAppLogService());
+            applied = await viewModel.ApplyToAsync(tool);
+        }
+        else
+        {
+            var viewModel = new FindCircleToolDialogViewModel(
+                tool, [roi], "Flow", frame, recipe, pipeline, new NullAppLogService());
+            applied = await viewModel.ApplyToAsync(tool);
+        }
+
+        return new FindGeometryApplyScenario(applied, tool, pipeline);
+    }
+
     private static MultiTargetRunScenario CreateMultiTargetRunScenario(
         string? roiReferenceScale,
         string? sourceStandardScale,
@@ -1148,6 +1319,11 @@ public sealed class PositionInputScaleDialogViewModelTests
         TemplateLocateToolDialogViewModel ViewModel,
         PoseResultPipeline Pipeline,
         VisionToolItem Tool);
+
+    private sealed record FindGeometryApplyScenario(
+        bool Applied,
+        VisionToolItem Tool,
+        PoseResultPipeline Pipeline);
 
     private sealed class UnexpectedPipeline : IVisionPipeline
     {

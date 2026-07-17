@@ -727,6 +727,19 @@ public sealed class FindCircleToolDialogViewModel : BindableBase
 
     private static bool HasRoiReferencePose(IReadOnlyDictionary<string, string> parameters)
     {
+        var sourceToolId = parameters.GetValueOrDefault("input:PositionInput:toolId") ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(sourceToolId))
+        {
+            return false;
+        }
+
+        var referenceToolId = parameters.GetValueOrDefault("roiReferencePoseToolId") ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(referenceToolId) &&
+            !string.Equals(referenceToolId, sourceToolId, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
         return TryGetRoiReferencePose(parameters, out _);
     }
 
