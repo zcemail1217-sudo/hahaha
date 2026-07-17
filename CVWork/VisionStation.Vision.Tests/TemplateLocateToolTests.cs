@@ -61,9 +61,18 @@ public sealed class TemplateLocateToolTests
             Kind = VisionToolKind.TemplateLocate,
             Parameters = fixture.Parameters
         };
+        var outputConsumer = new VisionToolDefinition
+        {
+            Id = "output-consumer",
+            Parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["input:PositionInput:toolId"] = locateTool.Id,
+                ["input:PositionInput:portKey"] = "PositionOutput"
+            }
+        };
         var recipe = new Recipe
         {
-            Tools = [sourceTool, locateTool]
+            Tools = [sourceTool, locateTool, outputConsumer]
         };
         using var context = new VisionToolContext(recipe, fixture.SearchFrame);
         context.SetImageOutput(sourceTool, fixture.SearchFrame);
@@ -74,6 +83,8 @@ public sealed class TemplateLocateToolTests
         Assert.Equal("2", schemaVersion);
         Assert.Equal("2", result.Data["overlaySchemaVersion"]);
         Assert.Equal("True", result.Data["hasMatch"]);
+        Assert.True(context.TryGetPortInput<Pose2D>(outputConsumer, "PositionInput", out var outputPose));
+        Assert.Equal(outputPose.Scale.ToString(CultureInfo.InvariantCulture), result.Data["scale"]);
         var shapeContours = result.Data["shapeContours"];
         var matchedTemplateRoiContours = result.Data["matchedTemplateRoiContours"];
         Assert.False(string.IsNullOrWhiteSpace(shapeContours));

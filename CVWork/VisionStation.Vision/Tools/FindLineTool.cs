@@ -10,6 +10,8 @@ public sealed class FindLineTool : IVisionTool
 
     public Task<ToolResult> ExecuteAsync(VisionToolDefinition definition, VisionToolContext context, CancellationToken cancellationToken = default)
     {
+        context.RemovePortOutput(definition, "LineOutput");
+        context.RemovePortOutput(definition, "MidPointOutput");
         var stopwatch = Stopwatch.StartNew();
         if (!context.TryGetInputImage(definition, out var frame))
         {
@@ -20,11 +22,37 @@ public sealed class FindLineTool : IVisionTool
         var sourceRoi = GeometryToolSupport.FindBoundRoi(context.Recipe, definition);
         if (sourceRoi is null)
         {
+            if (!GeometryToolSupport.TryValidatePositionInputMapping(context, definition, out var missingRoiMappingFailure))
+            {
+                stopwatch.Stop();
+                return Task.FromResult(GeometryToolSupport.CreatePositionInputMappingFailureResult(
+                    definition,
+                    Kind,
+                    stopwatch.Elapsed,
+                    frame,
+                    missingRoiMappingFailure!));
+            }
+
             stopwatch.Stop();
             return Task.FromResult(CreateResult(definition, stopwatch.Elapsed, InspectionOutcome.Ng, "找线失败：未绑定矩形二 ROI", frame));
         }
 
-        var roi = GeometryToolSupport.MapRoiForPositionInput(context, definition, sourceRoi);
+        if (!GeometryToolSupport.TryMapRoiForPositionInput(
+                context,
+                definition,
+                sourceRoi,
+                out var roi,
+                out var mappingFailure))
+        {
+            stopwatch.Stop();
+            return Task.FromResult(GeometryToolSupport.CreatePositionInputMappingFailureResult(
+                definition,
+                Kind,
+                stopwatch.Elapsed,
+                frame,
+                mappingFailure!));
+        }
+
         if (roi.Shape != RoiShapeKind.RotatedRectangle)
         {
             stopwatch.Stop();

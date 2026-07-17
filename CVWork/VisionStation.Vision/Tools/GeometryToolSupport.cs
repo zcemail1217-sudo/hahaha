@@ -26,6 +26,29 @@ internal static class GeometryToolSupport
         };
     }
 
+    public static ToolResult CreatePositionInputMappingFailureResult(
+        VisionToolDefinition definition,
+        VisionToolKind kind,
+        TimeSpan duration,
+        ImageFrame frame,
+        PositionInputMappingFailure failure)
+    {
+        return new ToolResult
+        {
+            ToolId = definition.Id,
+            ToolName = definition.Name,
+            Kind = kind,
+            Outcome = InspectionOutcome.Ng,
+            Duration = duration,
+            Message = failure.Message,
+            Data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["code"] = failure.Code,
+                ["inputFrameId"] = frame.Id
+            }
+        };
+    }
+
     public static RoiDefinition? FindBoundRoi(Recipe recipe, VisionToolDefinition definition)
     {
         if (!definition.Parameters.TryGetValue("roiId", out var roiId) || string.IsNullOrWhiteSpace(roiId))
@@ -36,20 +59,82 @@ internal static class GeometryToolSupport
         return recipe.Rois.FirstOrDefault(roi => string.Equals(roi.Id, roiId, StringComparison.OrdinalIgnoreCase));
     }
 
-    public static RoiDefinition MapRoiForPositionInput(VisionToolContext context, VisionToolDefinition definition, RoiDefinition roi)
+    public static bool TryMapRoiForPositionInput(
+        VisionToolContext context,
+        VisionToolDefinition definition,
+        RoiDefinition sourceRoi,
+        out RoiDefinition mappedRoi,
+        out PositionInputMappingFailure? failure)
     {
-        if (!context.TryGetPortInput<Pose2D>(definition, "PositionInput", out var currentPose))
+        mappedRoi = sourceRoi;
+        if (!TryResolvePositionInputMapping(
+                context,
+                definition,
+                out var currentPose,
+                out var referencePose,
+                out failure))
         {
-            return roi;
+            return false;
         }
 
-        if (!TryGetTaughtReferencePose(definition, out var referencePose) &&
-            !TryGetTemplateReferencePose(context.Recipe, definition, out referencePose))
+        if (currentPose is null || referencePose is null)
         {
-            return roi;
+            return true;
         }
 
-        return TransformRoi(roi, referencePose, currentPose);
+        mappedRoi = PoseSimilarityTransform.MapRoi(sourceRoi, referencePose, currentPose);
+        return true;
+    }
+
+    public static bool TryValidatePositionInputMapping(
+        VisionToolContext context,
+        VisionToolDefinition definition,
+        out PositionInputMappingFailure? failure)
+    {
+        return TryResolvePositionInputMapping(
+            context,
+            definition,
+            out _,
+            out _,
+            out failure);
+    }
+
+    private static bool TryResolvePositionInputMapping(
+        VisionToolContext context,
+        VisionToolDefinition definition,
+        out Pose2D? currentPose,
+        out Pose2D? referencePose,
+        out PositionInputMappingFailure? failure)
+    {
+        currentPose = null;
+        referencePose = null;
+        failure = null;
+        if (!context.TryGetPortInput<Pose2D>(definition, "PositionInput", out var positionInput))
+        {
+            return true;
+        }
+
+        if (!PoseSimilarityTransform.IsValidScale(positionInput.Scale))
+        {
+            failure = CreateInvalidScaleFailure("PositionInput.Scale", positionInput.Scale);
+            return false;
+        }
+
+        if (!TryGetTaughtReferencePose(definition, out var resolvedReferencePose, out failure) &&
+            failure is null &&
+            !TryGetTemplateReferencePose(context.Recipe, definition, out resolvedReferencePose, out failure))
+        {
+            return failure is null;
+        }
+
+        if (failure is not null)
+        {
+            return false;
+        }
+
+        currentPose = positionInput;
+        referencePose = resolvedReferencePose;
+        return true;
     }
 
     public static Mat ToGrayMat(ImageFrame frame)
@@ -119,63 +204,14 @@ internal static class GeometryToolSupport
         return mask;
     }
 
-    private static RoiDefinition TransformRoi(RoiDefinition roi, Pose2D referencePose, Pose2D currentPose)
-    {
-        var angle = currentPose.Angle - referencePose.Angle;
-        return roi.Shape switch
-        {
-            RoiShapeKind.Circle => roi with
-            {
-                X = MapPoint(new Point2D(roi.X, roi.Y), referencePose, currentPose).X,
-                Y = MapPoint(new Point2D(roi.X, roi.Y), referencePose, currentPose).Y
-            },
-            RoiShapeKind.RotatedRectangle => TransformRotatedRectangle(roi, referencePose, currentPose, angle),
-            RoiShapeKind.Polygon => roi with
-            {
-                Points = roi.Points.Select(point => MapPoint(point, referencePose, currentPose)).ToArray()
-            },
-            _ => TransformRectangle(roi, referencePose, currentPose, angle)
-        };
-    }
-
-    private static RoiDefinition TransformRectangle(RoiDefinition roi, Pose2D referencePose, Pose2D currentPose, double angle)
-    {
-        var center = MapPoint(new Point2D(roi.X + roi.Width / 2.0, roi.Y + roi.Height / 2.0), referencePose, currentPose);
-        return roi with
-        {
-            Shape = RoiShapeKind.RotatedRectangle,
-            X = center.X,
-            Y = center.Y,
-            Angle = angle
-        };
-    }
-
-    private static RoiDefinition TransformRotatedRectangle(RoiDefinition roi, Pose2D referencePose, Pose2D currentPose, double angle)
-    {
-        var center = MapPoint(new Point2D(roi.X, roi.Y), referencePose, currentPose);
-        return roi with
-        {
-            X = center.X,
-            Y = center.Y,
-            Angle = roi.Angle + angle
-        };
-    }
-
-    private static Point2D MapPoint(Point2D point, Pose2D referencePose, Pose2D currentPose)
-    {
-        var radians = (currentPose.Angle - referencePose.Angle) * Math.PI / 180.0;
-        var cos = Math.Cos(radians);
-        var sin = Math.Sin(radians);
-        var x = point.X - referencePose.X;
-        var y = point.Y - referencePose.Y;
-        return new Point2D(
-            currentPose.X + x * cos - y * sin,
-            currentPose.Y + x * sin + y * cos);
-    }
-
-    private static bool TryGetTemplateReferencePose(Recipe recipe, VisionToolDefinition definition, out Pose2D pose)
+    private static bool TryGetTemplateReferencePose(
+        Recipe recipe,
+        VisionToolDefinition definition,
+        out Pose2D pose,
+        out PositionInputMappingFailure? failure)
     {
         pose = new Pose2D(0, 0, 0);
+        failure = null;
         var sourceToolId = definition.Parameters.GetValueOrDefault("input:PositionInput:toolId") ?? string.Empty;
         var source = recipe.Tools.FirstOrDefault(tool => string.Equals(tool.Id, sourceToolId, StringComparison.OrdinalIgnoreCase));
         if (source is null)
@@ -183,17 +219,26 @@ internal static class GeometryToolSupport
             return false;
         }
 
-        if (TryGetStandardPose(source.Parameters, out pose))
+        if (TryGetStandardPose(source.Parameters, out pose, out failure))
         {
             return true;
+        }
+
+        if (failure is not null)
+        {
+            return false;
         }
 
         return TryGetLearnedTemplatePose(source.Parameters, out pose);
     }
 
-    private static bool TryGetTaughtReferencePose(VisionToolDefinition definition, out Pose2D pose)
+    private static bool TryGetTaughtReferencePose(
+        VisionToolDefinition definition,
+        out Pose2D pose,
+        out PositionInputMappingFailure? failure)
     {
         pose = new Pose2D(0, 0, 0);
+        failure = null;
         if (!TryGetDouble(definition.Parameters, "roiReferencePoseX", out var x) ||
             !TryGetDouble(definition.Parameters, "roiReferencePoseY", out var y))
         {
@@ -209,13 +254,22 @@ internal static class GeometryToolSupport
         }
 
         TryGetDouble(definition.Parameters, "roiReferencePoseAngle", out var angle);
-        pose = new Pose2D(x, y, angle);
+        if (!TryGetScale(definition.Parameters, "roiReferencePoseScale", out var scale, out failure))
+        {
+            return false;
+        }
+
+        pose = new Pose2D(x, y, angle) { Scale = scale };
         return true;
     }
 
-    private static bool TryGetStandardPose(IReadOnlyDictionary<string, string> parameters, out Pose2D pose)
+    private static bool TryGetStandardPose(
+        IReadOnlyDictionary<string, string> parameters,
+        out Pose2D pose,
+        out PositionInputMappingFailure? failure)
     {
         pose = new Pose2D(0, 0, 0);
+        failure = null;
         if (!TryGetDouble(parameters, "standardX", out var x) ||
             !TryGetDouble(parameters, "standardY", out var y))
         {
@@ -223,7 +277,12 @@ internal static class GeometryToolSupport
         }
 
         TryGetDouble(parameters, "standardAngle", out var angle);
-        pose = new Pose2D(x, y, angle);
+        if (!TryGetScale(parameters, "standardScale", out var scale, out failure))
+        {
+            return false;
+        }
+
+        pose = new Pose2D(x, y, angle) { Scale = scale };
         return true;
     }
 
@@ -330,5 +389,36 @@ internal static class GeometryToolSupport
                double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
     }
 
+    private static bool TryGetScale(
+        IReadOnlyDictionary<string, string> parameters,
+        string key,
+        out double scale,
+        out PositionInputMappingFailure? failure)
+    {
+        failure = null;
+        if (!parameters.ContainsKey(key))
+        {
+            scale = 1;
+            return true;
+        }
+
+        if (!TryGetDouble(parameters, key, out scale) || !PoseSimilarityTransform.IsValidScale(scale))
+        {
+            failure = CreateInvalidScaleFailure(key, scale);
+            return false;
+        }
+
+        return true;
+    }
+
+    private static PositionInputMappingFailure CreateInvalidScaleFailure(string parameter, double value)
+    {
+        return new PositionInputMappingFailure(
+            "CONFIG_INVALID_PARAMETER",
+            $"Position input mapping failed: {parameter} must be finite and greater than zero; actual value is {value.ToString(CultureInfo.InvariantCulture)}.");
+    }
+
     private sealed record Bounds(double X, double Y, double Width, double Height);
 }
+
+internal sealed record PositionInputMappingFailure(string Code, string Message);

@@ -57,6 +57,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     private double _matchX;
     private double _matchY;
     private double _matchAngle;
+    private double _matchScale = 1;
     private TemplateMatchResult? _lastTemplateMatch;
     private IReadOnlyList<MultiTargetMatchCandidate> _multiMatches = Array.Empty<MultiTargetMatchCandidate>();
     private MultiTargetMatchPointItem? _selectedMultiTargetResultPoint;
@@ -90,6 +91,8 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         _toolId = tool.Id;
         _toolKind = tool.Kind == VisionToolKind.MultiTargetMatch ? VisionToolKind.MultiTargetMatch : VisionToolKind.TemplateLocate;
         var parameters = _parameters;
+        _roiReferenceDirty = _toolKind == VisionToolKind.MultiTargetMatch &&
+                             !TryGetRoiReferencePose(parameters, out _);
 
         _name = tool.Name;
         _roiId = tool.RoiId;
@@ -964,6 +967,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             _parameters["standardX"] = _matchX.ToString("0.###", CultureInfo.InvariantCulture);
             _parameters["standardY"] = _matchY.ToString("0.###", CultureInfo.InvariantCulture);
             _parameters["standardAngle"] = _matchAngle.ToString("0.###", CultureInfo.InvariantCulture);
+            _parameters["standardScale"] = _matchScale.ToString("0.###", CultureInfo.InvariantCulture);
         }
 
         StatusText = ScoreText == "-"
@@ -1036,6 +1040,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                 _matchX = best?.X ?? 0;
                 _matchY = best?.Y ?? 0;
                 _matchAngle = best?.Angle ?? 0;
+                _matchScale = 1;
                 _matchState = multiMatch.Outcome == InspectionOutcome.Ok ? VisionOverlayState.Ok : VisionOverlayState.Ng;
                 _hasMatchResult = _multiMatches.Count > 0;
                 RefreshPreviewOverlays();
@@ -1057,6 +1062,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             _matchX = match.Pose.X;
             _matchY = match.Pose.Y;
             _matchAngle = match.Pose.Angle;
+            _matchScale = match.Pose.Scale;
             _matchState = match.Outcome == InspectionOutcome.Ok ? VisionOverlayState.Ok : VisionOverlayState.Ng;
             _hasMatchResult = match.HasMatch;
             var standardCreated = TrySetInitialStandard(match);
@@ -1084,6 +1090,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         _parameters["standardX"] = match.Pose.X.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["standardY"] = match.Pose.Y.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["standardAngle"] = match.Pose.Angle.ToString("0.###", CultureInfo.InvariantCulture);
+        _parameters["standardScale"] = match.Pose.Scale.ToString("0.###", CultureInfo.InvariantCulture);
         return true;
     }
 
@@ -1161,7 +1168,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             return roi;
         }
 
-        return TransformRoi(roi, referencePose, currentPose);
+        return PoseSimilarityTransform.MapRoi(roi, referencePose, currentPose);
     }
 
     private async Task<Pose2D?> TryGetCurrentPositionInputPoseAsync()
@@ -1189,7 +1196,15 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         }
 
         TryGetDouble(sourceResult.Data, "angle", out var angle);
-        return new Pose2D(x, y, angle);
+        var scale = 1d;
+        if (sourceResult.Data.ContainsKey("scale") &&
+            (!TryGetDouble(sourceResult.Data, "scale", out scale) ||
+             !PoseSimilarityTransform.IsValidScale(scale)))
+        {
+            return null;
+        }
+
+        return new Pose2D(x, y, angle) { Scale = scale };
     }
 
     private Recipe? BuildPositionSourcePreviewRecipe(string sourceToolId)
@@ -1225,6 +1240,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         _parameters["roiReferencePoseX"] = pose.X.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["roiReferencePoseY"] = pose.Y.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["roiReferencePoseAngle"] = pose.Angle.ToString("0.###", CultureInfo.InvariantCulture);
+        _parameters["roiReferencePoseScale"] = pose.Scale.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["roiReferencePoseToolId"] = GetPositionInputSourceToolId();
     }
 
@@ -1233,6 +1249,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         _parameters.Remove("roiReferencePoseX");
         _parameters.Remove("roiReferencePoseY");
         _parameters.Remove("roiReferencePoseAngle");
+        _parameters.Remove("roiReferencePoseScale");
         _parameters.Remove("roiReferencePoseToolId");
     }
 
@@ -1246,8 +1263,12 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             return false;
         }
 
-        return TryGetStandardPose(source.Parameters, out pose) ||
-               TryGetLearnedTemplatePose(source.Parameters, out pose);
+        if (TryGetStandardPose(source.Parameters, out pose, out var invalidScale))
+        {
+            return true;
+        }
+
+        return !invalidScale && TryGetLearnedTemplatePose(source.Parameters, out pose);
     }
 
     private static bool TryGetRoiReferencePose(IReadOnlyDictionary<string, string> parameters, out Pose2D pose)
@@ -1260,13 +1281,25 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         }
 
         TryGetDouble(parameters, "roiReferencePoseAngle", out var angle);
-        pose = new Pose2D(x, y, angle);
+        var scale = 1d;
+        if (parameters.ContainsKey("roiReferencePoseScale") &&
+            (!TryGetDouble(parameters, "roiReferencePoseScale", out scale) ||
+             !PoseSimilarityTransform.IsValidScale(scale)))
+        {
+            return false;
+        }
+
+        pose = new Pose2D(x, y, angle) { Scale = scale };
         return true;
     }
 
-    private static bool TryGetStandardPose(IReadOnlyDictionary<string, string> parameters, out Pose2D pose)
+    private static bool TryGetStandardPose(
+        IReadOnlyDictionary<string, string> parameters,
+        out Pose2D pose,
+        out bool invalidScale)
     {
         pose = new Pose2D(0, 0, 0);
+        invalidScale = false;
         if (!TryGetDouble(parameters, "standardX", out var x) ||
             !TryGetDouble(parameters, "standardY", out var y))
         {
@@ -1274,7 +1307,16 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         }
 
         TryGetDouble(parameters, "standardAngle", out var angle);
-        pose = new Pose2D(x, y, angle);
+        var scale = 1d;
+        if (parameters.ContainsKey("standardScale") &&
+            (!TryGetDouble(parameters, "standardScale", out scale) ||
+             !PoseSimilarityTransform.IsValidScale(scale)))
+        {
+            invalidScale = true;
+            return false;
+        }
+
+        pose = new Pose2D(x, y, angle) { Scale = scale };
         return true;
     }
 
@@ -1293,54 +1335,6 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
         pose = new Pose2D(x + width / 2.0, y + height / 2.0, 0);
         return true;
-    }
-
-    private static RoiDefinition TransformRoi(RoiDefinition roi, Pose2D referencePose, Pose2D currentPose)
-    {
-        var angle = currentPose.Angle - referencePose.Angle;
-        return roi.Shape switch
-        {
-            RoiShapeKind.Circle => roi with
-            {
-                X = MapPoint(new Point2D(roi.X, roi.Y), referencePose, currentPose).X,
-                Y = MapPoint(new Point2D(roi.X, roi.Y), referencePose, currentPose).Y
-            },
-            RoiShapeKind.RotatedRectangle => roi with
-            {
-                X = MapPoint(new Point2D(roi.X, roi.Y), referencePose, currentPose).X,
-                Y = MapPoint(new Point2D(roi.X, roi.Y), referencePose, currentPose).Y,
-                Angle = roi.Angle + angle
-            },
-            RoiShapeKind.Polygon => roi with
-            {
-                Points = roi.Points.Select(point => MapPoint(point, referencePose, currentPose)).ToArray()
-            },
-            _ => TransformRectangleRoi(roi, referencePose, currentPose, angle)
-        };
-    }
-
-    private static RoiDefinition TransformRectangleRoi(RoiDefinition roi, Pose2D referencePose, Pose2D currentPose, double angle)
-    {
-        var center = MapPoint(new Point2D(roi.X + roi.Width / 2.0, roi.Y + roi.Height / 2.0), referencePose, currentPose);
-        return roi with
-        {
-            Shape = RoiShapeKind.RotatedRectangle,
-            X = center.X,
-            Y = center.Y,
-            Angle = angle
-        };
-    }
-
-    private static Point2D MapPoint(Point2D point, Pose2D referencePose, Pose2D currentPose)
-    {
-        var radians = (currentPose.Angle - referencePose.Angle) * Math.PI / 180.0;
-        var cos = Math.Cos(radians);
-        var sin = Math.Sin(radians);
-        var x = point.X - referencePose.X;
-        var y = point.Y - referencePose.Y;
-        return new Point2D(
-            currentPose.X + x * cos - y * sin,
-            currentPose.Y + x * sin + y * cos);
     }
 
     private void SetMultiTargetResults(IReadOnlyList<MultiTargetMatchCandidate> matches)
@@ -1380,6 +1374,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         _matchX = match.X;
         _matchY = match.Y;
         _matchAngle = match.Angle;
+        _matchScale = 1;
         ScoreText = match.Score.ToString("0.000", CultureInfo.InvariantCulture);
         PoseText = $"Count:{_multiMatches.Count} Selected #{selected.Index} X:{match.X:0.0} Y:{match.Y:0.0} A:{match.Angle:0.00}";
     }

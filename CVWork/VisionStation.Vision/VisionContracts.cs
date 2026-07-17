@@ -111,6 +111,11 @@ public sealed class VisionToolContext : IDisposable
         PortOutputs[GetPortOutputKey(definition.Id, portKey)] = value;
     }
 
+    public bool RemovePortOutput(VisionToolDefinition definition, string portKey)
+    {
+        return PortOutputs.Remove(GetPortOutputKey(definition.Id, portKey));
+    }
+
     public bool TryResolveTextValue(string key, out string value)
     {
         value = string.Empty;

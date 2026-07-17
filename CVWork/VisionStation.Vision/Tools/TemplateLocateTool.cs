@@ -50,6 +50,7 @@ public sealed class TemplateLocateTool : IVisionTool
             ["x"] = match.Pose.X.ToInvariant(),
             ["y"] = match.Pose.Y.ToInvariant(),
             ["angle"] = match.Pose.Angle.ToInvariant(),
+            ["scale"] = match.Pose.Scale.ToInvariant(),
             ["inputFrameId"] = frame.Id,
             ["templateWidth"] = match.TemplateWidth.ToString(),
             ["templateHeight"] = match.TemplateHeight.ToString(),

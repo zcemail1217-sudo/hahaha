@@ -106,6 +106,7 @@ public sealed class TemplateLocateToolDialogViewModelTests
 
         var parameters = tool.ToDefinition().Parameters;
         Assert.True(parameters.ContainsKey("templateImagePng"));
+        Assert.Equal("1", parameters["standardScale"]);
         Assert.False(parameters.ContainsKey("shapeScoreVersion"));
         Assert.False(parameters.ContainsKey("shapeCoverageDistance"));
     }
@@ -170,6 +171,76 @@ public sealed class TemplateLocateToolDialogViewModelTests
             item.Kind == VisionOverlayKind.Polyline && item.State == VisionOverlayState.Warning);
         Assert.Contains(viewModel.PreviewOverlays, item =>
             item.Kind == VisionOverlayKind.Polyline && item.State == VisionOverlayState.Info);
+    }
+
+    [Fact]
+    public void FirstSuccessfulMatchCreatesStandardScale()
+    {
+        using var tempDirectory = new TempDirectory();
+        var frame = CreateShapeFrame();
+        var parameters = CreateLearnedPolygonTemplateParameters(frame);
+        parameters.Remove("standardScale");
+        var tool = new VisionToolItem
+        {
+            Id = "template-tool",
+            Name = "Template",
+            Kind = VisionToolKind.TemplateLocate,
+            Enabled = true,
+            ParametersText = string.Join("; ", parameters.Select(item => $"{item.Key}={item.Value}"))
+        };
+        var viewModel = new TemplateLocateToolDialogViewModel(
+            tool,
+            Array.Empty<RoiChoiceItem>(),
+            Array.Empty<RoiDefinition>(),
+            "Flow",
+            frame,
+            new RuntimePaths(tempDirectory.Path),
+            new NullAppLogService());
+
+        viewModel.RunToolCommand.Execute();
+
+        Assert.True(
+            SpinWait.SpinUntil(() => !viewModel.IsBusy, TimeSpan.FromSeconds(10)),
+            $"Template matching did not finish: {viewModel.StatusText}");
+        viewModel.ApplyTo(tool);
+        Assert.Equal("1", tool.ToDefinition().Parameters["standardScale"]);
+    }
+
+    [Fact]
+    public void SetStandardCommandReplacesStoredStandardScaleWithMatchScale()
+    {
+        using var tempDirectory = new TempDirectory();
+        var frame = CreateShapeFrame();
+        var parameters = CreateLearnedPolygonTemplateParameters(frame);
+        parameters["standardX"] = "0";
+        parameters["standardY"] = "0";
+        parameters["standardAngle"] = "0";
+        parameters["standardScale"] = "2";
+        var tool = new VisionToolItem
+        {
+            Id = "template-tool",
+            Name = "Template",
+            Kind = VisionToolKind.TemplateLocate,
+            Enabled = true,
+            ParametersText = string.Join("; ", parameters.Select(item => $"{item.Key}={item.Value}"))
+        };
+        var viewModel = new TemplateLocateToolDialogViewModel(
+            tool,
+            Array.Empty<RoiChoiceItem>(),
+            Array.Empty<RoiDefinition>(),
+            "Flow",
+            frame,
+            new RuntimePaths(tempDirectory.Path),
+            new NullAppLogService());
+
+        viewModel.RunToolCommand.Execute();
+        Assert.True(
+            SpinWait.SpinUntil(() => !viewModel.IsBusy, TimeSpan.FromSeconds(10)),
+            $"Template matching did not finish: {viewModel.StatusText}");
+        viewModel.SetStandardCommand.Execute();
+        viewModel.ApplyTo(tool);
+
+        Assert.Equal("1", tool.ToDefinition().Parameters["standardScale"]);
     }
 
     [Fact]

@@ -208,7 +208,10 @@ public sealed class CoordinateTransformTool : IVisionTool
         var imageDirection = new Point2D(imagePose.X + Math.Cos(radians), imagePose.Y + Math.Sin(radians));
         var worldDirection = PlaneCalibrationMapper.MapImageToWorld(calibration, imageDirection);
         var worldAngle = Math.Atan2(worldDirection.Y - worldCenter.Y, worldDirection.X - worldCenter.X) * 180.0 / Math.PI;
-        return new Pose2D(worldCenter.X, worldCenter.Y, NormalizeAngle(worldAngle));
+        return new Pose2D(worldCenter.X, worldCenter.Y, NormalizeAngle(worldAngle))
+        {
+            Scale = imagePose.Scale
+        };
     }
 
     private static double NormalizeAngle(double angle)

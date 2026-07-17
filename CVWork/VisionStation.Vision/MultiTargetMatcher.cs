@@ -13,7 +13,12 @@ public sealed record MultiTargetMatchCandidate(
     int Width,
     int Height,
     string Shape = "Rectangle",
-    double Radius = 0);
+    double Radius = 0)
+{
+    public double Scale { get; init; } = 1.0;
+
+    public Pose2D Pose => new(X, Y, Angle) { Scale = Scale };
+}
 
 public sealed record MultiTargetMatchResult(
     InspectionOutcome Outcome,

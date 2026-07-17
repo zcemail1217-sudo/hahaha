@@ -11,6 +11,7 @@ public sealed class DefectDetectTool : IVisionTool
 
     public Task<ToolResult> ExecuteAsync(VisionToolDefinition definition, VisionToolContext context, CancellationToken cancellationToken = default)
     {
+        RemoveOutputs(context, definition);
         var stopwatch = Stopwatch.StartNew();
         if (!context.TryGetInputImage(definition, out var frame))
         {
@@ -19,9 +20,36 @@ public sealed class DefectDetectTool : IVisionTool
         }
 
         var sourceRoi = GeometryToolSupport.FindBoundRoi(context.Recipe, definition);
-        var mappedRoi = sourceRoi is null
-            ? null
-            : GeometryToolSupport.MapRoiForPositionInput(context, definition, sourceRoi);
+        RoiDefinition? mappedRoi = sourceRoi;
+        if (sourceRoi is null &&
+            !GeometryToolSupport.TryValidatePositionInputMapping(context, definition, out var missingRoiMappingFailure))
+        {
+            stopwatch.Stop();
+            return Task.FromResult(GeometryToolSupport.CreatePositionInputMappingFailureResult(
+                definition,
+                Kind,
+                stopwatch.Elapsed,
+                frame,
+                missingRoiMappingFailure!));
+        }
+
+        if (sourceRoi is not null &&
+            !GeometryToolSupport.TryMapRoiForPositionInput(
+                context,
+                definition,
+                sourceRoi,
+                out mappedRoi,
+                out var mappingFailure))
+        {
+            stopwatch.Stop();
+            return Task.FromResult(GeometryToolSupport.CreatePositionInputMappingFailureResult(
+                definition,
+                Kind,
+                stopwatch.Elapsed,
+                frame,
+                mappingFailure!));
+        }
+
         var gray = context.GetGrayMat(frame);
         var cropBounds = mappedRoi is null
             ? new Rect(0, 0, frame.Width, frame.Height)
@@ -81,6 +109,22 @@ public sealed class DefectDetectTool : IVisionTool
                 : $"斑点分析 NG：找到 {selected.Count} 个，要求 {minCount}-{maxCount} 个",
             Data = data
         });
+    }
+
+    private static void RemoveOutputs(VisionToolContext context, VisionToolDefinition definition)
+    {
+        context.RemovePortOutput(definition, "CountOutput");
+        context.RemovePortOutput(definition, "AllCentersOutput");
+        context.RemovePortOutput(definition, "BestCenterOutput");
+        context.RemovePortOutput(definition, "BestAreaOutput");
+        context.RemovePortOutput(definition, "BestCircularityOutput");
+        context.RemovePortOutput(definition, "BestWidthOutput");
+        context.RemovePortOutput(definition, "BestHeightOutput");
+        context.RemovePortOutput(definition, "BestAspectRatioOutput");
+        context.RemovePortOutput(definition, "BestPerimeterOutput");
+        context.RemovePortOutput(definition, "BestCircleOutput");
+        context.RemovePortOutput(definition, "BestContourOutput");
+        context.RemovePortOutput(definition, "BestRectOutput");
     }
 
     private static Mat CreateBinary(Mat crop, Mat mask, IReadOnlyDictionary<string, string> parameters)

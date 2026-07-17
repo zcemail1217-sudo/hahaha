@@ -317,30 +317,19 @@ internal static class GeometryComputeSupport
             var referencePose = new Pose2D(
                 GetDouble(parameters, "referenceX", currentPose.X),
                 GetDouble(parameters, "referenceY", currentPose.Y),
-                GetDouble(parameters, "referenceAngle", currentPose.Angle));
-            return MapPoint(new Point2D(taughtX, taughtY), referencePose, currentPose);
+                GetDouble(parameters, "referenceAngle", currentPose.Angle))
+            {
+                Scale = GetDouble(parameters, "referenceScale", 1)
+            };
+            return PoseSimilarityTransform.MapPoint(new Point2D(taughtX, taughtY), referencePose, currentPose);
         }
 
         var offsetX = GetDouble(parameters, "offsetX", 0);
         var offsetY = GetDouble(parameters, "offsetY", 0);
-        var radians = currentPose.Angle * Math.PI / 180.0;
-        var cos = Math.Cos(radians);
-        var sin = Math.Sin(radians);
-        return new Point2D(
-            currentPose.X + offsetX * cos - offsetY * sin,
-            currentPose.Y + offsetX * sin + offsetY * cos);
-    }
-
-    private static Point2D MapPoint(Point2D point, Pose2D referencePose, Pose2D currentPose)
-    {
-        var radians = (currentPose.Angle - referencePose.Angle) * Math.PI / 180.0;
-        var cos = Math.Cos(radians);
-        var sin = Math.Sin(radians);
-        var x = point.X - referencePose.X;
-        var y = point.Y - referencePose.Y;
-        return new Point2D(
-            currentPose.X + x * cos - y * sin,
-            currentPose.Y + x * sin + y * cos);
+        return PoseSimilarityTransform.MapPoint(
+            new Point2D(offsetX, offsetY),
+            new Pose2D(0, 0, 0),
+            currentPose);
     }
 
     private static double NormalizeAngle(double angle)

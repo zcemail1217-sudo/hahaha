@@ -37,6 +37,7 @@ internal static class OpenCvTemplateMatcher
             ["templateHeight"] = templateRegion.Height.ToString(CultureInfo.InvariantCulture),
             ["templateFrameWidth"] = frame.Width.ToString(CultureInfo.InvariantCulture),
             ["templateFrameHeight"] = frame.Height.ToString(CultureInfo.InvariantCulture),
+            ["standardScale"] = 1d.ToString(CultureInfo.InvariantCulture),
             ["templatePixels"] = Convert.ToBase64String(rawPixels),
             ["templateImagePng"] = Convert.ToBase64String(encoded),
             ["templateEdgeOverlayPng"] = Convert.ToBase64String(edgeOverlay),

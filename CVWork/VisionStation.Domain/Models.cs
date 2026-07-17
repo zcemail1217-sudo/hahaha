@@ -98,7 +98,10 @@ public enum ProcessStepType
 
 public sealed record Point2D(double X, double Y);
 
-public sealed record Pose2D(double X, double Y, double Angle);
+public sealed record Pose2D(double X, double Y, double Angle)
+{
+    public double Scale { get; init; } = 1.0;
+}
 
 public sealed record Line2D(Point2D Start, Point2D End);
 

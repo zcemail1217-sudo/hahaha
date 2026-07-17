@@ -204,7 +204,19 @@ git push
 - Modify: `VisionStation.Vision/Tools/FindCircleTool.cs`
 - Modify: `VisionStation.Vision/Tools/DefectDetectTool.cs`
 - Modify: `VisionStation.Vision/Tools/MultiTargetMatchTool.cs`
+- Modify: `VisionStation.Vision/Tools/TemplateLocateTool.cs`
+- Modify: `VisionStation.Vision/MultiTargetMatcher.cs`
+- Modify: `VisionStation.Vision/VisionContracts.cs`
+- Modify: `VisionStation.Vision/TemplateMatcher.cs`
+- Modify: `VisionStation.Vision/OpenCvTemplateMatcher.cs`
+- Modify: `VisionStation.Vision.UI/ViewModels/FindLineToolDialogViewModel.cs`
+- Modify: `VisionStation.Vision.UI/ViewModels/FindCircleToolDialogViewModel.cs`
+- Modify: `VisionStation.Vision.UI/ViewModels/BlobAnalysisToolDialogViewModel.cs`
+- Modify: `VisionStation.Vision.UI/ViewModels/TemplateLocateToolDialogViewModel.cs`
+- Modify: `VisionStation.Vision.UI.Tests/TemplateLocateToolDialogViewModelTests.cs`
+- Modify: `VisionStation.Vision.Tests/TemplateLocateToolTests.cs`
 - Create: `VisionStation.Vision.Tests/PositionInputScaleToolTests.cs`
+- Create: `VisionStation.Vision.UI.Tests/PositionInputScaleDialogViewModelTests.cs`
 
 - [ ] **Step 1：写 Scale 兼容和几何 RED 测试**
 
@@ -295,7 +307,7 @@ Expected: 全部通过；三参数构造/解构调用点无需批量改写。
 
 ```powershell
 git status --short
-git add VisionStation.Domain/Models.cs VisionStation.Vision/Geometry/PoseSimilarityTransform.cs VisionStation.Vision/Tools/GeometryToolSupport.cs VisionStation.Vision/Tools/GeometryComputeTools.cs VisionStation.Vision/Tools/CoordinateTransformTool.cs VisionStation.Vision/Tools/FindLineTool.cs VisionStation.Vision/Tools/FindCircleTool.cs VisionStation.Vision/Tools/DefectDetectTool.cs VisionStation.Vision/Tools/MultiTargetMatchTool.cs VisionStation.Vision.Tests/Pose2DCompatibilityTests.cs VisionStation.Vision.Tests/PoseSimilarityTransformTests.cs VisionStation.Vision.Tests/PositionInputScaleToolTests.cs
+git add VisionStation.Domain/Models.cs VisionStation.Vision/Geometry/PoseSimilarityTransform.cs VisionStation.Vision/VisionContracts.cs VisionStation.Vision/TemplateMatcher.cs VisionStation.Vision/OpenCvTemplateMatcher.cs VisionStation.Vision/MultiTargetMatcher.cs VisionStation.Vision/Tools/GeometryToolSupport.cs VisionStation.Vision/Tools/GeometryComputeTools.cs VisionStation.Vision/Tools/CoordinateTransformTool.cs VisionStation.Vision/Tools/FindLineTool.cs VisionStation.Vision/Tools/FindCircleTool.cs VisionStation.Vision/Tools/DefectDetectTool.cs VisionStation.Vision/Tools/MultiTargetMatchTool.cs VisionStation.Vision/Tools/TemplateLocateTool.cs VisionStation.Vision.UI/ViewModels/FindLineToolDialogViewModel.cs VisionStation.Vision.UI/ViewModels/FindCircleToolDialogViewModel.cs VisionStation.Vision.UI/ViewModels/BlobAnalysisToolDialogViewModel.cs VisionStation.Vision.UI/ViewModels/TemplateLocateToolDialogViewModel.cs VisionStation.Vision.Tests/Pose2DCompatibilityTests.cs VisionStation.Vision.Tests/PoseSimilarityTransformTests.cs VisionStation.Vision.Tests/PositionInputScaleToolTests.cs VisionStation.Vision.Tests/TemplateLocateToolTests.cs VisionStation.Vision.UI.Tests/PositionInputScaleDialogViewModelTests.cs VisionStation.Vision.UI.Tests/TemplateLocateToolDialogViewModelTests.cs docs/superpowers/plans/2026-07-16-halcon-shape-matching.md
 git commit -m "feat: 增加尺度感知位姿变换"
 git push
 ```

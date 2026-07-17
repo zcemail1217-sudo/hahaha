@@ -10,6 +10,9 @@ public sealed class FindCircleTool : IVisionTool
 
     public Task<ToolResult> ExecuteAsync(VisionToolDefinition definition, VisionToolContext context, CancellationToken cancellationToken = default)
     {
+        context.RemovePortOutput(definition, "CircleOutput");
+        context.RemovePortOutput(definition, "CenterOutput");
+        context.RemovePortOutput(definition, "RadiusOutput");
         var stopwatch = Stopwatch.StartNew();
         if (!context.TryGetInputImage(definition, out var frame))
         {
@@ -20,11 +23,37 @@ public sealed class FindCircleTool : IVisionTool
         var sourceRoi = GeometryToolSupport.FindBoundRoi(context.Recipe, definition);
         if (sourceRoi is null)
         {
+            if (!GeometryToolSupport.TryValidatePositionInputMapping(context, definition, out var missingRoiMappingFailure))
+            {
+                stopwatch.Stop();
+                return Task.FromResult(GeometryToolSupport.CreatePositionInputMappingFailureResult(
+                    definition,
+                    Kind,
+                    stopwatch.Elapsed,
+                    frame,
+                    missingRoiMappingFailure!));
+            }
+
             stopwatch.Stop();
             return Task.FromResult(CreateResult(definition, stopwatch.Elapsed, InspectionOutcome.Ng, "找圆失败：未绑定圆 ROI", frame));
         }
 
-        var roi = GeometryToolSupport.MapRoiForPositionInput(context, definition, sourceRoi);
+        if (!GeometryToolSupport.TryMapRoiForPositionInput(
+                context,
+                definition,
+                sourceRoi,
+                out var roi,
+                out var mappingFailure))
+        {
+            stopwatch.Stop();
+            return Task.FromResult(GeometryToolSupport.CreatePositionInputMappingFailureResult(
+                definition,
+                Kind,
+                stopwatch.Elapsed,
+                frame,
+                mappingFailure!));
+        }
+
         if (roi.Shape != RoiShapeKind.Circle)
         {
             stopwatch.Stop();

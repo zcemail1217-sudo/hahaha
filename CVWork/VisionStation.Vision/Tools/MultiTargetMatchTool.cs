@@ -9,6 +9,7 @@ public sealed class MultiTargetMatchTool : IVisionTool
 
     public Task<ToolResult> ExecuteAsync(VisionToolDefinition definition, VisionToolContext context, CancellationToken cancellationToken = default)
     {
+        RemoveOutputs(context, definition);
         var stopwatch = Stopwatch.StartNew();
         if (!context.TryGetInputImage(definition, out var frame))
         {
@@ -17,9 +18,36 @@ public sealed class MultiTargetMatchTool : IVisionTool
         }
 
         var sourceRoi = GeometryToolSupport.FindBoundRoi(context.Recipe, definition);
-        var roi = sourceRoi is null
-            ? null
-            : GeometryToolSupport.MapRoiForPositionInput(context, definition, sourceRoi);
+        RoiDefinition? roi = sourceRoi;
+        if (sourceRoi is null &&
+            !GeometryToolSupport.TryValidatePositionInputMapping(context, definition, out var missingRoiMappingFailure))
+        {
+            stopwatch.Stop();
+            return Task.FromResult(GeometryToolSupport.CreatePositionInputMappingFailureResult(
+                definition,
+                Kind,
+                stopwatch.Elapsed,
+                frame,
+                missingRoiMappingFailure!));
+        }
+
+        if (sourceRoi is not null &&
+            !GeometryToolSupport.TryMapRoiForPositionInput(
+                context,
+                definition,
+                sourceRoi,
+                out roi,
+                out var mappingFailure))
+        {
+            stopwatch.Stop();
+            return Task.FromResult(GeometryToolSupport.CreatePositionInputMappingFailureResult(
+                definition,
+                Kind,
+                stopwatch.Elapsed,
+                frame,
+                mappingFailure!));
+        }
+
         var result = MultiTargetMatcher.Match(frame, roi, definition.Parameters, context.GetGrayMat(frame), cancellationToken);
         stopwatch.Stop();
 
@@ -27,7 +55,7 @@ public sealed class MultiTargetMatchTool : IVisionTool
         var best = matches.FirstOrDefault();
         if (best is not null)
         {
-            var bestPose = new Pose2D(best.X, best.Y, best.Angle);
+            var bestPose = best.Pose;
             context.Properties["pose"] = bestPose;
             context.SetPortOutput(definition, "PositionOutput", bestPose);
             context.SetPortOutput(definition, "OriginOutput", bestPose);
@@ -39,7 +67,10 @@ public sealed class MultiTargetMatchTool : IVisionTool
         }
 
         context.SetPortOutput(definition, "CountOutput", matches.Count);
-        context.SetPortOutput(definition, "AllPositionsOutput", matches.Select(match => new Pose2D(match.X, match.Y, match.Angle)).ToArray());
+        context.SetPortOutput(
+            definition,
+            "AllPositionsOutput",
+            matches.Select(match => match.Pose).ToArray());
         context.SetPortOutput(definition, "ScoresOutput", matches.Select(match => match.Score).ToArray());
 
         var data = new Dictionary<string, string>
@@ -50,6 +81,7 @@ public sealed class MultiTargetMatchTool : IVisionTool
             ["x"] = best?.X.ToInvariant() ?? "0",
             ["y"] = best?.Y.ToInvariant() ?? "0",
             ["angle"] = best?.Angle.ToInvariant() ?? "0",
+            ["scale"] = best?.Scale.ToInvariant() ?? "1",
             ["inputFrameId"] = frame.Id,
             ["templateWidth"] = best?.Width.ToString() ?? definition.Parameters.GetValueOrDefault("templateWidth") ?? "0",
             ["templateHeight"] = best?.Height.ToString() ?? definition.Parameters.GetValueOrDefault("templateHeight") ?? "0",
@@ -78,6 +110,21 @@ public sealed class MultiTargetMatchTool : IVisionTool
             Message = result.Message,
             Data = data
         });
+    }
+
+    private static void RemoveOutputs(VisionToolContext context, VisionToolDefinition definition)
+    {
+        context.Properties.Remove("pose");
+        context.RemovePortOutput(definition, "PositionOutput");
+        context.RemovePortOutput(definition, "OriginOutput");
+        context.RemovePortOutput(definition, "BestPositionOutput");
+        context.RemovePortOutput(definition, "ScoreOutput");
+        context.RemovePortOutput(definition, "XOutput");
+        context.RemovePortOutput(definition, "YOutput");
+        context.RemovePortOutput(definition, "AngleOutput");
+        context.RemovePortOutput(definition, "CountOutput");
+        context.RemovePortOutput(definition, "AllPositionsOutput");
+        context.RemovePortOutput(definition, "ScoresOutput");
     }
 
     private static string FormatMatches(IReadOnlyList<MultiTargetMatchCandidate> matches)

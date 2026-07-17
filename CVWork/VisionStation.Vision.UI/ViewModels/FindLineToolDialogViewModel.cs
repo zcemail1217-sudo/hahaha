@@ -645,7 +645,15 @@ public sealed class FindLineToolDialogViewModel : BindableBase
         }
 
         TryGetDouble(sourceResult.Data, "angle", out var angle);
-        return new Pose2D(x, y, angle);
+        var scale = 1d;
+        if (sourceResult.Data.ContainsKey("scale") &&
+            (!TryGetDouble(sourceResult.Data, "scale", out scale) ||
+             !PoseSimilarityTransform.IsValidScale(scale)))
+        {
+            return null;
+        }
+
+        return new Pose2D(x, y, angle) { Scale = scale };
     }
 
     private Recipe? BuildPositionSourcePreviewRecipe(string sourceToolId)
@@ -681,6 +689,7 @@ public sealed class FindLineToolDialogViewModel : BindableBase
         _parameters["roiReferencePoseX"] = pose.X.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["roiReferencePoseY"] = pose.Y.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["roiReferencePoseAngle"] = pose.Angle.ToString("0.###", CultureInfo.InvariantCulture);
+        _parameters["roiReferencePoseScale"] = pose.Scale.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["roiReferencePoseToolId"] = GetPositionInputSourceToolId();
     }
 
@@ -689,6 +698,7 @@ public sealed class FindLineToolDialogViewModel : BindableBase
         _parameters.Remove("roiReferencePoseX");
         _parameters.Remove("roiReferencePoseY");
         _parameters.Remove("roiReferencePoseAngle");
+        _parameters.Remove("roiReferencePoseScale");
         _parameters.Remove("roiReferencePoseToolId");
     }
 
@@ -707,7 +717,15 @@ public sealed class FindLineToolDialogViewModel : BindableBase
         }
 
         TryGetDouble(parameters, "roiReferencePoseAngle", out var angle);
-        pose = new Pose2D(x, y, angle);
+        var scale = 1d;
+        if (parameters.ContainsKey("roiReferencePoseScale") &&
+            (!TryGetDouble(parameters, "roiReferencePoseScale", out scale) ||
+             !PoseSimilarityTransform.IsValidScale(scale)))
+        {
+            return false;
+        }
+
+        pose = new Pose2D(x, y, angle) { Scale = scale };
         return true;
     }
 
