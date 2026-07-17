@@ -31,6 +31,14 @@ public sealed record TemplateMatchResult(
     public double? ShapeCoverage { get; init; }
 
     public double? ShapeReverseScore { get; init; }
+
+    public TemplateMatchingEngine Engine { get; init; } = TemplateMatchingEngine.OpenCv;
+
+    public string? FailureCode { get; init; }
+
+    public string? FailureStage { get; init; }
+
+    public string? TechnicalDetails { get; init; }
 }
 
 public static class TemplateMatcher
@@ -44,9 +52,22 @@ public static class TemplateMatcher
         RoiDefinition? searchRoi,
         IReadOnlyDictionary<string, string> parameters)
     {
-        return ShouldUseOpenCv(parameters)
-            ? OpenCvTemplateMatcher.Learn(frame, searchRoi, parameters)
-            : LearnManaged(frame, searchRoi, parameters);
+        var engine = TemplateMatchingEngineResolver.Resolve(parameters);
+        if (engine == TemplateMatchingEngine.Halcon)
+        {
+            TemplateMatchingEngineResolver.EnsureHalconShapeMode(parameters, false);
+            throw new TemplateMatchingConfigurationException(
+                TemplateMatchingDiagnostics.Create(
+                    TemplateMatchingDiagnosticCodes.ConfigServiceRequired,
+                    "The static TemplateMatcher facade cannot execute the Halcon backend."));
+        }
+
+        return engine switch
+        {
+            TemplateMatchingEngine.OpenCv => OpenCvTemplateMatcher.Learn(frame, searchRoi, parameters),
+            TemplateMatchingEngine.ManagedNcc => LearnManaged(frame, searchRoi, parameters),
+            _ => throw new InvalidOperationException("Unknown cannot be an active template matching engine.")
+        };
     }
 
     public static TemplateMatchResult Match(
@@ -55,9 +76,38 @@ public static class TemplateMatcher
         IReadOnlyDictionary<string, string> parameters,
         CancellationToken cancellationToken = default)
     {
-        return ShouldUseOpenCv(parameters)
-            ? OpenCvTemplateMatcher.Match(frame, searchRoi, parameters, cancellationToken)
-            : MatchManaged(frame, searchRoi, parameters, cancellationToken);
+        var engine = TemplateMatchingEngine.Unknown;
+        try
+        {
+            engine = TemplateMatchingEngineResolver.Resolve(parameters);
+            if (engine == TemplateMatchingEngine.Halcon)
+            {
+                TemplateMatchingEngineResolver.EnsureHalconShapeMode(parameters, false);
+                return CreateConfigurationFailure(
+                    frame,
+                    searchRoi,
+                    engine,
+                    TemplateMatchingDiagnostics.Create(
+                        TemplateMatchingDiagnosticCodes.ConfigServiceRequired,
+                        "The static TemplateMatcher facade cannot execute the Halcon backend."));
+            }
+
+            return engine switch
+            {
+                TemplateMatchingEngine.OpenCv => OpenCvTemplateMatcher
+                    .Match(frame, searchRoi, parameters, cancellationToken) with { Engine = engine },
+                TemplateMatchingEngine.ManagedNcc => MatchManaged(
+                    frame,
+                    searchRoi,
+                    parameters,
+                    cancellationToken) with { Engine = engine },
+                _ => throw new InvalidOperationException("Unknown cannot be an active template matching engine.")
+            };
+        }
+        catch (TemplateMatchingConfigurationException exception)
+        {
+            return CreateConfigurationFailure(frame, searchRoi, engine, exception);
+        }
     }
 
     internal static TemplateMatchResult Match(
@@ -67,9 +117,38 @@ public static class TemplateMatcher
         Mat gray,
         CancellationToken cancellationToken = default)
     {
-        return ShouldUseOpenCv(parameters)
-            ? OpenCvTemplateMatcher.Match(frame, searchRoi, parameters, gray, cancellationToken)
-            : MatchManaged(frame, searchRoi, parameters, cancellationToken);
+        var engine = TemplateMatchingEngine.Unknown;
+        try
+        {
+            engine = TemplateMatchingEngineResolver.Resolve(parameters);
+            if (engine == TemplateMatchingEngine.Halcon)
+            {
+                TemplateMatchingEngineResolver.EnsureHalconShapeMode(parameters, false);
+                return CreateConfigurationFailure(
+                    frame,
+                    searchRoi,
+                    engine,
+                    TemplateMatchingDiagnostics.Create(
+                        TemplateMatchingDiagnosticCodes.ConfigServiceRequired,
+                        "The static TemplateMatcher facade cannot execute the Halcon backend."));
+            }
+
+            return engine switch
+            {
+                TemplateMatchingEngine.OpenCv => OpenCvTemplateMatcher
+                    .Match(frame, searchRoi, parameters, gray, cancellationToken) with { Engine = engine },
+                TemplateMatchingEngine.ManagedNcc => MatchManaged(
+                    frame,
+                    searchRoi,
+                    parameters,
+                    cancellationToken) with { Engine = engine },
+                _ => throw new InvalidOperationException("Unknown cannot be an active template matching engine.")
+            };
+        }
+        catch (TemplateMatchingConfigurationException exception)
+        {
+            return CreateConfigurationFailure(frame, searchRoi, engine, exception);
+        }
     }
 
     internal static Dictionary<string, string> LearnManaged(
@@ -120,7 +199,7 @@ public static class TemplateMatcher
                 return CreateFailedResult(frame, "Template has not been learned.", false);
             }
 
-            var learned = Learn(frame, searchRoi, parameters);
+            var learned = LearnManaged(frame, searchRoi, parameters);
             var merged = new Dictionary<string, string>(parameters, StringComparer.OrdinalIgnoreCase);
             foreach (var parameter in learned)
             {
@@ -536,6 +615,58 @@ public static class TemplateMatcher
             usedAutoTemplate);
     }
 
+    private static TemplateMatchResult CreateConfigurationFailure(
+        ImageFrame frame,
+        RoiDefinition? searchRoi,
+        TemplateMatchingEngine engine,
+        TemplateMatchingDiagnostic diagnostic)
+    {
+        return new TemplateMatchResult(
+            false,
+            InspectionOutcome.Ng,
+            0,
+            new Pose2D(frame.Width / 2d, frame.Height / 2d, 0),
+            0,
+            0,
+            0,
+            0,
+            GetSearchRegion(frame, searchRoi),
+            diagnostic.UserMessage,
+            false)
+        {
+            Engine = engine,
+            FailureCode = diagnostic.Code,
+            FailureStage = diagnostic.FailureStage,
+            TechnicalDetails = diagnostic.TechnicalDetails
+        };
+    }
+
+    private static TemplateMatchResult CreateConfigurationFailure(
+        ImageFrame frame,
+        RoiDefinition? searchRoi,
+        TemplateMatchingEngine engine,
+        TemplateMatchingConfigurationException exception)
+    {
+        return new TemplateMatchResult(
+            false,
+            InspectionOutcome.Ng,
+            0,
+            new Pose2D(frame.Width / 2d, frame.Height / 2d, 0),
+            0,
+            0,
+            0,
+            0,
+            GetSearchRegion(frame, searchRoi),
+            exception.Message,
+            false)
+        {
+            Engine = engine,
+            FailureCode = exception.Code,
+            FailureStage = exception.FailureStage,
+            TechnicalDetails = exception.TechnicalDetails
+        };
+    }
+
     private static int GetSampleStep(int width, int height, IReadOnlyDictionary<string, string> parameters)
     {
         if (TryGetInt(parameters, "templateSampleStep", out var configuredStep))
@@ -593,12 +724,6 @@ public static class TemplateMatcher
         return parameters.TryGetValue(key, out var raw) && bool.TryParse(raw, out var value)
             ? value
             : fallback;
-    }
-
-    private static bool ShouldUseOpenCv(IReadOnlyDictionary<string, string> parameters)
-    {
-        var engine = parameters.TryGetValue("engine", out var value) ? value : "OpenCv";
-        return !engine.Equals("ManagedNcc", StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed record TemplateSample(int X, int Y, byte Value);

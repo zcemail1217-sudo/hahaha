@@ -25,7 +25,16 @@ public sealed record MultiTargetMatchResult(
     string Message,
     IReadOnlyList<MultiTargetMatchCandidate> Matches,
     TemplateSearchRegion SearchRegion,
-    bool UsedAutoTemplate);
+    bool UsedAutoTemplate)
+{
+    public TemplateMatchingEngine Engine { get; init; } = TemplateMatchingEngine.OpenCv;
+
+    public string? FailureCode { get; init; }
+
+    public string? FailureStage { get; init; }
+
+    public string? TechnicalDetails { get; init; }
+}
 
 public static class MultiTargetMatcher
 {
@@ -37,12 +46,95 @@ public static class MultiTargetMatcher
         IReadOnlyDictionary<string, string> parameters,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        using var gray = GeometryToolSupport.ToGrayMat(frame);
-        return Match(frame, searchRoi, parameters, gray, cancellationToken);
+        var engine = TemplateMatchingEngine.Unknown;
+        try
+        {
+            engine = TemplateMatchingEngineResolver.Resolve(parameters);
+            if (engine == TemplateMatchingEngine.Halcon)
+            {
+                TemplateMatchingEngineResolver.EnsureHalconShapeMode(parameters, true);
+                return CreateConfigurationFailure(
+                    frame,
+                    searchRoi,
+                    engine,
+                    TemplateMatchingDiagnostics.Create(
+                        TemplateMatchingDiagnosticCodes.ConfigServiceRequired,
+                        "The static MultiTargetMatcher facade cannot execute the Halcon backend."));
+            }
+
+            if (engine == TemplateMatchingEngine.ManagedNcc)
+            {
+                return CreateConfigurationFailure(
+                    frame,
+                    searchRoi,
+                    engine,
+                    TemplateMatchingDiagnostics.Create(
+                        TemplateMatchingDiagnosticCodes.ConfigUnsupportedMode,
+                        "ManagedNcc does not support multi-target matching."));
+            }
+
+            return MatchOpenCv(frame, searchRoi, parameters, cancellationToken) with { Engine = engine };
+        }
+        catch (TemplateMatchingConfigurationException exception)
+        {
+            return CreateConfigurationFailure(frame, searchRoi, engine, exception);
+        }
     }
 
     internal static MultiTargetMatchResult Match(
+        ImageFrame frame,
+        RoiDefinition? searchRoi,
+        IReadOnlyDictionary<string, string> parameters,
+        Mat gray,
+        CancellationToken cancellationToken = default)
+    {
+        var engine = TemplateMatchingEngine.Unknown;
+        try
+        {
+            engine = TemplateMatchingEngineResolver.Resolve(parameters);
+            if (engine == TemplateMatchingEngine.Halcon)
+            {
+                TemplateMatchingEngineResolver.EnsureHalconShapeMode(parameters, true);
+                return CreateConfigurationFailure(
+                    frame,
+                    searchRoi,
+                    engine,
+                    TemplateMatchingDiagnostics.Create(
+                        TemplateMatchingDiagnosticCodes.ConfigServiceRequired,
+                        "The static MultiTargetMatcher facade cannot execute the Halcon backend."));
+            }
+
+            if (engine == TemplateMatchingEngine.ManagedNcc)
+            {
+                return CreateConfigurationFailure(
+                    frame,
+                    searchRoi,
+                    engine,
+                    TemplateMatchingDiagnostics.Create(
+                        TemplateMatchingDiagnosticCodes.ConfigUnsupportedMode,
+                        "ManagedNcc does not support multi-target matching."));
+            }
+
+            return MatchOpenCv(frame, searchRoi, parameters, gray, cancellationToken) with { Engine = engine };
+        }
+        catch (TemplateMatchingConfigurationException exception)
+        {
+            return CreateConfigurationFailure(frame, searchRoi, engine, exception);
+        }
+    }
+
+    internal static MultiTargetMatchResult MatchOpenCv(
+        ImageFrame frame,
+        RoiDefinition? searchRoi,
+        IReadOnlyDictionary<string, string> parameters,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var gray = GeometryToolSupport.ToGrayMat(frame);
+        return MatchOpenCv(frame, searchRoi, parameters, gray, cancellationToken);
+    }
+
+    internal static MultiTargetMatchResult MatchOpenCv(
         ImageFrame frame,
         RoiDefinition? searchRoi,
         IReadOnlyDictionary<string, string> parameters,
@@ -718,6 +810,46 @@ public static class MultiTargetMatcher
             Array.Empty<MultiTargetMatchCandidate>(),
             searchRegion ?? new TemplateSearchRegion(0, 0, frame.Width, frame.Height),
             usedAutoTemplate);
+    }
+
+    private static MultiTargetMatchResult CreateConfigurationFailure(
+        ImageFrame frame,
+        RoiDefinition? searchRoi,
+        TemplateMatchingEngine engine,
+        TemplateMatchingDiagnostic diagnostic)
+    {
+        return new MultiTargetMatchResult(
+            InspectionOutcome.Ng,
+            diagnostic.UserMessage,
+            Array.Empty<MultiTargetMatchCandidate>(),
+            TemplateMatcher.GetSearchRegion(frame, searchRoi),
+            false)
+        {
+            Engine = engine,
+            FailureCode = diagnostic.Code,
+            FailureStage = diagnostic.FailureStage,
+            TechnicalDetails = diagnostic.TechnicalDetails
+        };
+    }
+
+    private static MultiTargetMatchResult CreateConfigurationFailure(
+        ImageFrame frame,
+        RoiDefinition? searchRoi,
+        TemplateMatchingEngine engine,
+        TemplateMatchingConfigurationException exception)
+    {
+        return new MultiTargetMatchResult(
+            InspectionOutcome.Ng,
+            exception.Message,
+            Array.Empty<MultiTargetMatchCandidate>(),
+            TemplateMatcher.GetSearchRegion(frame, searchRoi),
+            false)
+        {
+            Engine = engine,
+            FailureCode = exception.Code,
+            FailureStage = exception.FailureStage,
+            TechnicalDetails = exception.TechnicalDetails
+        };
     }
 
     private static Rect ToCvRect(TemplateSearchRegion region)

@@ -771,6 +771,108 @@ public sealed class PositionInputScaleToolTests
         Assert.All(allPoses, pose => Assert.Equal(1, pose.Scale));
     }
 
+    [Theory]
+    [InlineData(VisionToolKind.FindLine, 18d, 18d, 10d, 5d, 0d)]
+    [InlineData(VisionToolKind.FindCircle, 18d, 18d, 0d, 0d, 4d)]
+    [InlineData(VisionToolKind.DefectDetect, 18d, 18d, 12d, 12d, 0d)]
+    [InlineData(VisionToolKind.MultiTargetMatch, 18d, 18d, 12d, 12d, 0d)]
+    public async Task PositionInputToolsUseOnlyHalconReferenceNamespace(
+        VisionToolKind kind,
+        double expectedX,
+        double expectedY,
+        double expectedWidth,
+        double expectedHeight,
+        double expectedRadius)
+    {
+        var imageSource = new VisionToolDefinition { Id = "image-source" };
+        var positionSource = CreateHalconPositionSource("1");
+        var definition = CreatePositionInputDefinition(kind, imageSource, positionSource, "1");
+        RemoveTaughtReferencePose(definition);
+        AddRealTemplateParametersIfRequired(definition);
+        var roi = CreateBoundRoi(kind);
+        using var context = CreatePositionInputContext(
+            imageSource,
+            positionSource,
+            definition,
+            new VisionToolDefinition { Id = "output-consumer" },
+            roi);
+        context.SetPortOutput(
+            positionSource,
+            "PositionOutput",
+            new Pose2D(18, 18, 0) { Scale = 0.5 });
+
+        var result = await CreateTool(kind).ExecuteAsync(definition, context);
+
+        Assert.NotEqual("CONFIG_INVALID_PARAMETER", result.Data.GetValueOrDefault("code"));
+        Assert.Equal(expectedX, double.Parse(result.Data["searchRoiX"]), 6);
+        Assert.Equal(expectedY, double.Parse(result.Data["searchRoiY"]), 6);
+        if (kind == VisionToolKind.FindCircle)
+        {
+            Assert.Equal(expectedRadius, double.Parse(result.Data["searchRoiRadius"]), 6);
+        }
+        else
+        {
+            Assert.Equal(expectedWidth, double.Parse(result.Data["searchRoiWidth"]), 6);
+            Assert.Equal(expectedHeight, double.Parse(result.Data["searchRoiHeight"]), 6);
+        }
+    }
+
+    [Theory]
+    [InlineData(VisionToolKind.FindLine)]
+    [InlineData(VisionToolKind.FindCircle)]
+    [InlineData(VisionToolKind.DefectDetect)]
+    [InlineData(VisionToolKind.MultiTargetMatch)]
+    public async Task PositionInputToolsTreatMissingHalconScaleAsIncompleteWithoutLegacyFallback(
+        VisionToolKind kind)
+    {
+        var imageSource = new VisionToolDefinition { Id = "image-source" };
+        var positionSource = CreateHalconPositionSource(null);
+        var definition = CreatePositionInputDefinition(kind, imageSource, positionSource, "1");
+        RemoveTaughtReferencePose(definition);
+        var roi = CreateBoundRoi(kind);
+        using var context = CreatePositionInputContext(
+            imageSource,
+            positionSource,
+            definition,
+            new VisionToolDefinition { Id = "output-consumer" },
+            roi);
+        context.SetPortOutput(
+            positionSource,
+            "PositionOutput",
+            new Pose2D(18, 18, 0) { Scale = 0.5 });
+
+        var result = await CreateTool(kind).ExecuteAsync(definition, context);
+
+        Assert.NotEqual("CONFIG_INVALID_PARAMETER", result.Data.GetValueOrDefault("code"));
+        Assert.Equal(roi.X, double.Parse(result.Data["searchRoiX"]), 6);
+        Assert.Equal(roi.Y, double.Parse(result.Data["searchRoiY"]), 6);
+    }
+
+    [Theory]
+    [InlineData(VisionToolKind.FindLine)]
+    [InlineData(VisionToolKind.FindCircle)]
+    [InlineData(VisionToolKind.DefectDetect)]
+    [InlineData(VisionToolKind.MultiTargetMatch)]
+    public async Task PositionInputToolsRejectInvalidHalconReferenceScaleBeforeAlgorithm(
+        VisionToolKind kind)
+    {
+        var imageSource = new VisionToolDefinition { Id = "image-source" };
+        var positionSource = CreateHalconPositionSource("NaN");
+        var definition = CreatePositionInputDefinition(kind, imageSource, positionSource, "1");
+        RemoveTaughtReferencePose(definition);
+        using var context = CreatePositionInputContext(
+            imageSource,
+            positionSource,
+            definition,
+            new VisionToolDefinition { Id = "output-consumer" },
+            CreateBoundRoi(kind));
+
+        var result = await CreateTool(kind).ExecuteAsync(definition, context);
+
+        Assert.Equal(InspectionOutcome.Ng, result.Outcome);
+        Assert.Equal("CONFIG_INVALID_PARAMETER", result.Data["code"]);
+    }
+
     private static VisionToolDefinition CreatePositionInputDefinition(
         VisionToolKind kind,
         VisionToolDefinition imageSource,
@@ -795,6 +897,36 @@ public sealed class PositionInputScaleToolTests
                 ["roiReferencePoseToolId"] = positionSource.Id
             }
         };
+    }
+
+    private static VisionToolDefinition CreateHalconPositionSource(string? scale)
+    {
+        var source = new VisionToolDefinition
+        {
+            Id = "position-source",
+            Kind = VisionToolKind.TemplateLocate,
+            Parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["engine"] = "Halcon",
+                ["halcon.standardX"] = "16",
+                ["halcon.standardY"] = "16",
+                ["halcon.standardAngle"] = "0",
+                ["halcon.templateWidth"] = "12",
+                ["halcon.templateHeight"] = "12",
+                ["standardX"] = "999",
+                ["standardY"] = "999",
+                ["standardAngle"] = "90",
+                ["standardScale"] = "4",
+                ["templateWidth"] = "100",
+                ["templateHeight"] = "100"
+            }
+        };
+        if (scale is not null)
+        {
+            source.Parameters["halcon.standardScale"] = scale;
+        }
+
+        return source;
     }
 
     private static VisionToolContext CreatePositionInputContext(

@@ -221,17 +221,22 @@ internal static class GeometryToolSupport
             return false;
         }
 
-        if (!TryGetScale(source.Parameters, "standardScale", out var scale, out failure))
+        try
         {
-            return false;
-        }
+            var geometry = TemplateReferencePoseCodec.ReadActive(source.Parameters);
+            if (geometry is null)
+            {
+                return false;
+            }
 
-        if (TryGetStandardPose(source.Parameters, scale, out pose))
-        {
+            pose = geometry.StandardPose;
             return true;
         }
-
-        return TryGetLearnedTemplatePose(source.Parameters, scale, out pose);
+        catch (TemplateMatchingConfigurationException exception)
+        {
+            failure = new PositionInputMappingFailure(exception.Code, exception.Message);
+            return false;
+        }
     }
 
     private static bool TryGetTaughtReferencePose(
@@ -262,43 +267,6 @@ internal static class GeometryToolSupport
         }
 
         pose = new Pose2D(x, y, angle) { Scale = scale };
-        return true;
-    }
-
-    private static bool TryGetStandardPose(
-        IReadOnlyDictionary<string, string> parameters,
-        double scale,
-        out Pose2D pose)
-    {
-        pose = new Pose2D(0, 0, 0);
-        if (!TryGetDouble(parameters, "standardX", out var x) ||
-            !TryGetDouble(parameters, "standardY", out var y))
-        {
-            return false;
-        }
-
-        TryGetDouble(parameters, "standardAngle", out var angle);
-        pose = new Pose2D(x, y, angle) { Scale = scale };
-        return true;
-    }
-
-    private static bool TryGetLearnedTemplatePose(
-        IReadOnlyDictionary<string, string> parameters,
-        double scale,
-        out Pose2D pose)
-    {
-        pose = new Pose2D(0, 0, 0);
-        if (!TryGetDouble(parameters, "templateX", out var x) ||
-            !TryGetDouble(parameters, "templateY", out var y) ||
-            !TryGetDouble(parameters, "templateWidth", out var width) ||
-            !TryGetDouble(parameters, "templateHeight", out var height) ||
-            width <= 0 ||
-            height <= 0)
-        {
-            return false;
-        }
-
-        pose = new Pose2D(x + width / 2.0, y + height / 2.0, 0) { Scale = scale };
         return true;
     }
 
