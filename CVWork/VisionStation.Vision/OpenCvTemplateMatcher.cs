@@ -5,6 +5,10 @@ using VisionStation.Domain;
 
 namespace VisionStation.Vision;
 
+internal sealed record OpenCvTemplateMatchExecution(
+    TemplateMatchResult Result,
+    IReadOnlyDictionary<string, string> EffectiveParameters);
+
 internal static class OpenCvTemplateMatcher
 {
     private const string TemplateVersion = "opencv-1";
@@ -62,7 +66,7 @@ internal static class OpenCvTemplateMatcher
         CancellationToken cancellationToken = default)
     {
         using var gray = ImageFrameMatFactory.ToGrayMat(frame);
-        return Match(frame, searchRoi, parameters, gray, cancellationToken);
+        return MatchCore(frame, searchRoi, parameters, gray, cancellationToken, out _);
     }
 
     internal static TemplateMatchResult Match(
@@ -72,8 +76,47 @@ internal static class OpenCvTemplateMatcher
         Mat gray,
         CancellationToken cancellationToken = default)
     {
+        return MatchCore(frame, searchRoi, parameters, gray, cancellationToken, out _);
+    }
+
+    internal static OpenCvTemplateMatchExecution MatchWithEffectiveParameters(
+        ImageFrame frame,
+        RoiDefinition? searchRoi,
+        IReadOnlyDictionary<string, string> parameters,
+        CancellationToken cancellationToken = default)
+    {
+        using var gray = ImageFrameMatFactory.ToGrayMat(frame);
+        return MatchWithEffectiveParameters(frame, searchRoi, parameters, gray, cancellationToken);
+    }
+
+    internal static OpenCvTemplateMatchExecution MatchWithEffectiveParameters(
+        ImageFrame frame,
+        RoiDefinition? searchRoi,
+        IReadOnlyDictionary<string, string> parameters,
+        Mat gray,
+        CancellationToken cancellationToken = default)
+    {
+        var result = MatchCore(
+            frame,
+            searchRoi,
+            parameters,
+            gray,
+            cancellationToken,
+            out var effectiveParameters);
+        return new OpenCvTemplateMatchExecution(result, effectiveParameters);
+    }
+
+    private static TemplateMatchResult MatchCore(
+        ImageFrame frame,
+        RoiDefinition? searchRoi,
+        IReadOnlyDictionary<string, string> parameters,
+        Mat gray,
+        CancellationToken cancellationToken,
+        out IReadOnlyDictionary<string, string> effectiveParameters)
+    {
         var usedAutoTemplate = false;
         var runtimeParameters = parameters;
+        effectiveParameters = runtimeParameters;
         if (!TryReadTemplate(parameters, out var template))
         {
             if (!GetBool(parameters, "autoLearnTemplate", false))
@@ -89,6 +132,7 @@ internal static class OpenCvTemplateMatcher
             }
 
             runtimeParameters = merged;
+            effectiveParameters = runtimeParameters;
             usedAutoTemplate = true;
             if (!TryReadTemplate(runtimeParameters, out template))
             {

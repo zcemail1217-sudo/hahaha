@@ -129,9 +129,27 @@ public static class MultiTargetMatcher
         IReadOnlyDictionary<string, string> parameters,
         CancellationToken cancellationToken = default)
     {
+        return MatchOpenCv(frame, searchRoi, parameters, 1, cancellationToken);
+    }
+
+    internal static MultiTargetMatchResult MatchOpenCv(
+        ImageFrame frame,
+        RoiDefinition? searchRoi,
+        IReadOnlyDictionary<string, string> parameters,
+        int minimumCandidateCapacity,
+        CancellationToken cancellationToken = default)
+    {
+        if (minimumCandidateCapacity is < 1 or > 256)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(minimumCandidateCapacity),
+                minimumCandidateCapacity,
+                "Candidate capacity must be between 1 and 256.");
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
         using var gray = GeometryToolSupport.ToGrayMat(frame);
-        return MatchOpenCv(frame, searchRoi, parameters, gray, cancellationToken);
+        return MatchOpenCv(frame, searchRoi, parameters, gray, minimumCandidateCapacity, cancellationToken);
     }
 
     internal static MultiTargetMatchResult MatchOpenCv(
@@ -140,6 +158,17 @@ public static class MultiTargetMatcher
         IReadOnlyDictionary<string, string> parameters,
         Mat gray,
         CancellationToken cancellationToken = default)
+    {
+        return MatchOpenCv(frame, searchRoi, parameters, gray, 1, cancellationToken);
+    }
+
+    private static MultiTargetMatchResult MatchOpenCv(
+        ImageFrame frame,
+        RoiDefinition? searchRoi,
+        IReadOnlyDictionary<string, string> parameters,
+        Mat gray,
+        int minimumCandidateCapacity,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!TryReadTemplate(parameters, out var template))
@@ -165,13 +194,24 @@ public static class MultiTargetMatcher
                 cancellationToken);
             if (matchMode == "CircularBlob")
             {
-                return MatchCircularBlobs(frame, searchRegion, search, template, parameters, cancellationToken);
+                return MatchCircularBlobs(
+                    frame,
+                    searchRegion,
+                    search,
+                    template,
+                    parameters,
+                    minimumCandidateCapacity,
+                    cancellationToken);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
             using var searchSource = CreateMatchSource(search, matchMode, parameters);
             var minScore = GetDouble(parameters, "minScore", 0.75);
-            var maxMatches = Math.Clamp(GetInt(parameters, "matchCount", GetInt(parameters, "maxMatches", 32)), 1, 256);
+            var configuredMaxMatches = Math.Clamp(
+                GetInt(parameters, "matchCount", GetInt(parameters, "maxMatches", 32)),
+                1,
+                256);
+            var maxMatches = Math.Max(configuredMaxMatches, minimumCandidateCapacity);
             var minCount = Math.Clamp(GetInt(parameters, "minCount", 1), 1, 256);
             var overlapThreshold = Math.Clamp(GetDouble(parameters, "nmsOverlap", 0.35), 0.05, 0.95);
             var minDistance = Math.Max(0, GetDouble(parameters, "minDistance", Math.Min(template.Width, template.Height) * 0.35));
@@ -305,12 +345,17 @@ public static class MultiTargetMatcher
         Mat search,
         Mat template,
         IReadOnlyDictionary<string, string> parameters,
+        int minimumCandidateCapacity,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var model = EstimateCircularTemplate(template, cancellationToken);
         var minScore = GetCircularMinScore(parameters);
-        var maxMatches = Math.Clamp(GetInt(parameters, "matchCount", GetInt(parameters, "maxMatches", 64)), 1, 512);
+        var configuredMaxMatches = Math.Clamp(
+            GetInt(parameters, "matchCount", GetInt(parameters, "maxMatches", 64)),
+            1,
+            512);
+        var maxMatches = Math.Max(configuredMaxMatches, minimumCandidateCapacity);
         var minCount = Math.Clamp(GetInt(parameters, "minCount", 1), 1, 512);
         var radiusTolerance = Math.Clamp(GetDouble(parameters, "circleRadiusTolerance", 0.45), 0.05, 2.0);
         var minCircularity = Math.Clamp(GetDouble(parameters, "minCircularity", 0.5), 0.1, 1.0);
