@@ -26,11 +26,21 @@ public sealed record TemplateMatchResult(
     IReadOnlyList<Point2D>? ShapePoints = null,
     IReadOnlyList<IReadOnlyList<Point2D>>? ShapeContours = null)
 {
+    public double Scale => Pose.Scale;
+
     public IReadOnlyList<IReadOnlyList<Point2D>>? MatchedTemplateRoiContours { get; init; }
 
     public double? ShapeCoverage { get; init; }
 
     public double? ShapeReverseScore { get; init; }
+
+    public double OuterCoverage { get; init; }
+
+    public double InnerCoverage { get; init; }
+
+    public double EdgeDistanceP95Px { get; init; }
+
+    public double PolarityAgreement { get; init; }
 
     public TemplateMatchingEngine Engine { get; init; } = TemplateMatchingEngine.OpenCv;
 
@@ -39,6 +49,8 @@ public sealed record TemplateMatchResult(
     public string? FailureStage { get; init; }
 
     public string? TechnicalDetails { get; init; }
+
+    public TemplateMatchingDiagnostic? Diagnostic { get; init; }
 }
 
 public static class TemplateMatcher

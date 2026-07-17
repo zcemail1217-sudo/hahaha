@@ -5,30 +5,54 @@ namespace VisionStation.Vision.Tools;
 
 public sealed class MultiTargetMatchTool : IVisionTool
 {
+    private readonly ITemplateMatchingService _matchingService;
+
+    public MultiTargetMatchTool(ITemplateMatchingService matchingService)
+    {
+        _matchingService = matchingService ?? throw new ArgumentNullException(nameof(matchingService));
+    }
+
     public VisionToolKind Kind => VisionToolKind.MultiTargetMatch;
 
-    public Task<ToolResult> ExecuteAsync(VisionToolDefinition definition, VisionToolContext context, CancellationToken cancellationToken = default)
+    public async Task<ToolResult> ExecuteAsync(
+        VisionToolDefinition definition,
+        VisionToolContext context,
+        CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(definition);
+        ArgumentNullException.ThrowIfNull(context);
         RemoveOutputs(context, definition);
         var stopwatch = Stopwatch.StartNew();
         if (!context.TryGetInputImage(definition, out var frame))
         {
             stopwatch.Stop();
-            return Task.FromResult(GeometryToolSupport.CreateMissingImageInputResult(definition, Kind, stopwatch.Elapsed));
+            return PublishEmptyCount(
+                context,
+                definition,
+                GeometryToolSupport.CreateMissingImageInputResult(
+                    definition,
+                    Kind,
+                    stopwatch.Elapsed));
         }
 
         var sourceRoi = GeometryToolSupport.FindBoundRoi(context.Recipe, definition);
         RoiDefinition? roi = sourceRoi;
         if (sourceRoi is null &&
-            !GeometryToolSupport.TryValidatePositionInputMapping(context, definition, out var missingRoiMappingFailure))
+            !GeometryToolSupport.TryValidatePositionInputMapping(
+                context,
+                definition,
+                out var missingRoiMappingFailure))
         {
             stopwatch.Stop();
-            return Task.FromResult(GeometryToolSupport.CreatePositionInputMappingFailureResult(
+            return PublishEmptyCount(
+                context,
                 definition,
-                Kind,
-                stopwatch.Elapsed,
-                frame,
-                missingRoiMappingFailure!));
+                GeometryToolSupport.CreatePositionInputMappingFailureResult(
+                    definition,
+                    Kind,
+                    stopwatch.Elapsed,
+                    frame,
+                    missingRoiMappingFailure!));
         }
 
         if (sourceRoi is not null &&
@@ -40,24 +64,72 @@ public sealed class MultiTargetMatchTool : IVisionTool
                 out var mappingFailure))
         {
             stopwatch.Stop();
-            return Task.FromResult(GeometryToolSupport.CreatePositionInputMappingFailureResult(
+            return PublishEmptyCount(
+                context,
                 definition,
-                Kind,
-                stopwatch.Elapsed,
-                frame,
-                mappingFailure!));
+                GeometryToolSupport.CreatePositionInputMappingFailureResult(
+                    definition,
+                    Kind,
+                    stopwatch.Elapsed,
+                    frame,
+                    mappingFailure!));
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var result = MultiTargetMatcher.Match(frame, roi, definition.Parameters, context.GetGrayMat(frame), cancellationToken);
-        stopwatch.Stop();
+        var expectedCountResolution = TemplateMatchingExpectedCountResolver.Resolve(definition.Parameters);
+        if (!expectedCountResolution.IsValid)
+        {
+            stopwatch.Stop();
+            return PublishEmptyCount(
+                context,
+                definition,
+                CreateConfigurationFailure(
+                    definition,
+                    frame,
+                    stopwatch.Elapsed,
+                    expectedCountResolution.Diagnostic!));
+        }
+
+        var expectedCount = expectedCountResolution.ExpectedCount;
+        var activeFlow = context.Recipe.GetActiveFlow();
+        var request = new TemplateMatchingRequest(
+            new TemplateModelOwner(context.Recipe.Id, activeFlow.Id, definition.Id),
+            frame,
+            roi,
+            definition.Parameters,
+            TemplateMatchCardinality.ExactCount,
+            expectedCount);
+        var batch = await _matchingService.MatchAsync(request, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
+        var result = TemplateMatchResultProjector.ToMulti(batch);
+        if (result.Outcome == InspectionOutcome.Ok && result.Matches.Count != expectedCount)
+        {
+            var diagnostic = TemplateMatchingDiagnostics.Create(
+                TemplateMatchingDiagnosticCodes.MatchOperatorFailed,
+                $"Backend returned {result.Matches.Count} candidates for ExactCount={expectedCount} with Outcome=Ok.");
+            result = result with
+            {
+                Outcome = InspectionOutcome.Ng,
+                Message = $"Template exact-count NG, found {result.Matches.Count}, required {expectedCount}.",
+                FailureCode = diagnostic.Code,
+                FailureStage = diagnostic.FailureStage,
+                TechnicalDetails = diagnostic.TechnicalDetails,
+                Diagnostic = diagnostic
+            };
+        }
 
         var matches = result.Matches;
         var best = matches.FirstOrDefault();
-        if (best is not null)
+        var operational = batch.HasMatch &&
+                          result.Outcome == InspectionOutcome.Ok &&
+                          matches.Count == expectedCount;
+
+        context.SetPortOutput(definition, "CountOutput", matches.Count);
+        if (operational && best is not null)
         {
             var bestPose = best.Pose;
+            var poses = matches.Select(match => match.Pose).ToArray();
+            var scores = matches.Select(match => match.Score).ToArray();
             context.Properties["pose"] = bestPose;
             context.SetPortOutput(definition, "PositionOutput", bestPose);
             context.SetPortOutput(definition, "OriginOutput", bestPose);
@@ -66,16 +138,33 @@ public sealed class MultiTargetMatchTool : IVisionTool
             context.SetPortOutput(definition, "XOutput", best.X);
             context.SetPortOutput(definition, "YOutput", best.Y);
             context.SetPortOutput(definition, "AngleOutput", best.Angle);
+            context.SetPortOutput(definition, "AllPositionsOutput", poses);
+            context.SetPortOutput(definition, "ScoresOutput", scores);
         }
 
-        context.SetPortOutput(definition, "CountOutput", matches.Count);
-        context.SetPortOutput(
-            definition,
-            "AllPositionsOutput",
-            matches.Select(match => match.Pose).ToArray());
-        context.SetPortOutput(definition, "ScoresOutput", matches.Select(match => match.Score).ToArray());
+        stopwatch.Stop();
+        var data = CreateData(definition, frame, roi, result);
+        return new ToolResult
+        {
+            ToolId = definition.Id,
+            ToolName = definition.Name,
+            Kind = Kind,
+            Outcome = result.Outcome,
+            Duration = stopwatch.Elapsed,
+            Message = result.Message,
+            Data = data
+        };
+    }
 
-        var data = new Dictionary<string, string>
+    private static Dictionary<string, string> CreateData(
+        VisionToolDefinition definition,
+        ImageFrame frame,
+        RoiDefinition? roi,
+        MultiTargetMatchResult result)
+    {
+        var matches = result.Matches;
+        var best = matches.FirstOrDefault();
+        var data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["count"] = matches.Count.ToString(),
             ["score"] = best?.Score.ToInvariant() ?? "0",
@@ -85,15 +174,21 @@ public sealed class MultiTargetMatchTool : IVisionTool
             ["angle"] = best?.Angle.ToInvariant() ?? "0",
             ["scale"] = best?.Scale.ToRoundTripScaleInvariant() ?? "1",
             ["inputFrameId"] = frame.Id,
-            ["templateWidth"] = best?.Width.ToString() ?? definition.Parameters.GetValueOrDefault("templateWidth") ?? "0",
-            ["templateHeight"] = best?.Height.ToString() ?? definition.Parameters.GetValueOrDefault("templateHeight") ?? "0",
+            ["templateWidth"] = best?.Width.ToString() ??
+                                definition.Parameters.GetValueOrDefault("templateWidth") ??
+                                "0",
+            ["templateHeight"] = best?.Height.ToString() ??
+                                 definition.Parameters.GetValueOrDefault("templateHeight") ??
+                                 "0",
             ["searchX"] = result.SearchRegion.X.ToString(),
             ["searchY"] = result.SearchRegion.Y.ToString(),
             ["searchWidth"] = result.SearchRegion.Width.ToString(),
             ["searchHeight"] = result.SearchRegion.Height.ToString(),
             ["autoTemplate"] = result.UsedAutoTemplate.ToString(),
-            ["engine"] = definition.Parameters.GetValueOrDefault("engine") ?? "OpenCv",
-            ["matchMode"] = definition.Parameters.GetValueOrDefault("matchMode") ?? definition.Parameters.GetValueOrDefault("multiMatchMode") ?? "Shape",
+            ["engine"] = result.Engine.ToString(),
+            ["matchMode"] = definition.Parameters.GetValueOrDefault("matchMode") ??
+                            definition.Parameters.GetValueOrDefault("multiMatchMode") ??
+                            "Shape",
             ["matches"] = FormatMatches(matches)
         };
 
@@ -102,31 +197,81 @@ public sealed class MultiTargetMatchTool : IVisionTool
             GeometryToolSupport.AddSearchRoiData(data, roi);
         }
 
-        return Task.FromResult(new ToolResult
+        AddFailureDiagnostics(data, result.Diagnostic);
+        return data;
+    }
+
+    private static ToolResult PublishEmptyCount(
+        VisionToolContext context,
+        VisionToolDefinition definition,
+        ToolResult result)
+    {
+        context.SetPortOutput(definition, "CountOutput", 0);
+        return result with
+        {
+            Data = new Dictionary<string, string>(result.Data, StringComparer.OrdinalIgnoreCase)
+            {
+                ["count"] = "0"
+            }
+        };
+    }
+
+    private static void AddFailureDiagnostics(
+        IDictionary<string, string> data,
+        TemplateMatchingDiagnostic? diagnostic)
+    {
+        if (diagnostic is null)
+        {
+            return;
+        }
+
+        data["failureCode"] = diagnostic.Code;
+        data["failureStage"] = diagnostic.FailureStage;
+    }
+
+    private static ToolResult CreateConfigurationFailure(
+        VisionToolDefinition definition,
+        ImageFrame frame,
+        TimeSpan duration,
+        TemplateMatchingDiagnostic diagnostic)
+    {
+        return new ToolResult
         {
             ToolId = definition.Id,
             ToolName = definition.Name,
-            Kind = Kind,
-            Outcome = result.Outcome,
-            Duration = stopwatch.Elapsed,
-            Message = result.Message,
-            Data = data
-        });
+            Kind = VisionToolKind.MultiTargetMatch,
+            Outcome = InspectionOutcome.Ng,
+            Duration = duration,
+            Message = diagnostic.UserMessage,
+            Data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["inputFrameId"] = frame.Id,
+                ["failureCode"] = diagnostic.Code,
+                ["failureStage"] = diagnostic.FailureStage
+            }
+        };
     }
 
     private static void RemoveOutputs(VisionToolContext context, VisionToolDefinition definition)
     {
         context.Properties.Remove("pose");
-        context.RemovePortOutput(definition, "PositionOutput");
-        context.RemovePortOutput(definition, "OriginOutput");
-        context.RemovePortOutput(definition, "BestPositionOutput");
-        context.RemovePortOutput(definition, "ScoreOutput");
-        context.RemovePortOutput(definition, "XOutput");
-        context.RemovePortOutput(definition, "YOutput");
-        context.RemovePortOutput(definition, "AngleOutput");
-        context.RemovePortOutput(definition, "CountOutput");
-        context.RemovePortOutput(definition, "AllPositionsOutput");
-        context.RemovePortOutput(definition, "ScoresOutput");
+        foreach (var port in new[]
+                 {
+                     "PositionOutput",
+                     "OriginOutput",
+                     "BestPositionOutput",
+                     "ScoreOutput",
+                     "XOutput",
+                     "YOutput",
+                     "AngleOutput",
+                     "CountOutput",
+                     "AllPositionsOutput",
+                     "ScoresOutput",
+                     "ScalesOutput"
+                 })
+        {
+            context.RemovePortOutput(definition, port);
+        }
     }
 
     private static string FormatMatches(IReadOnlyList<MultiTargetMatchCandidate> matches)
@@ -134,6 +279,8 @@ public sealed class MultiTargetMatchTool : IVisionTool
         return string.Join(
             ";",
             matches.Select(match =>
-                $"{match.X.ToInvariant()},{match.Y.ToInvariant()},{match.Angle.ToInvariant()},{match.Score.ToInvariant()},{match.Width},{match.Height},{match.Shape},{match.Radius.ToInvariant()}"));
+                $"{match.X.ToInvariant()},{match.Y.ToInvariant()},{match.Angle.ToInvariant()}," +
+                $"{match.Score.ToInvariant()},{match.Width},{match.Height},{match.Shape}," +
+                match.Radius.ToInvariant()));
     }
 }

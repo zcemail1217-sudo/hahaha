@@ -4,8 +4,10 @@ using Xunit;
 
 namespace VisionStation.Vision.Tests;
 
-public sealed class MultiTargetCancellationTests
+public sealed class MultiTargetCancellationTests : IDisposable
 {
+    private readonly TemplateMatchingService _matchingService = TemplateMatchingService.CreateLegacyOnly();
+
     private static readonly string[] OutputPortKeys =
     [
         "PositionOutput",
@@ -58,7 +60,8 @@ public sealed class MultiTargetCancellationTests
         cancellation.Cancel();
 
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            new MultiTargetMatchTool().ExecuteAsync(definition, context, cancellation.Token));
+            new MultiTargetMatchTool(_matchingService)
+                .ExecuteAsync(definition, context, cancellation.Token));
 
         Assert.False(context.Properties.ContainsKey("pose"));
         foreach (var portKey in OutputPortKeys)
@@ -163,5 +166,10 @@ public sealed class MultiTargetCancellationTests
                 }
             }
         }
+    }
+
+    public void Dispose()
+    {
+        _matchingService.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 }

@@ -17,6 +17,14 @@ public sealed record MultiTargetMatchCandidate(
 {
     public double Scale { get; init; } = 1.0;
 
+    public double OuterCoverage { get; init; }
+
+    public double InnerCoverage { get; init; }
+
+    public double EdgeDistanceP95Px { get; init; }
+
+    public double PolarityAgreement { get; init; }
+
     public Pose2D Pose => new(X, Y, Angle) { Scale = Scale };
 }
 
@@ -34,6 +42,8 @@ public sealed record MultiTargetMatchResult(
     public string? FailureStage { get; init; }
 
     public string? TechnicalDetails { get; init; }
+
+    public TemplateMatchingDiagnostic? Diagnostic { get; init; }
 }
 
 public static class MultiTargetMatcher

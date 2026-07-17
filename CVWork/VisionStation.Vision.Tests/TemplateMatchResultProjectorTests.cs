@@ -55,6 +55,10 @@ public sealed class TemplateMatchResultProjectorTests
         {
             ShapeCoverage = 0.81,
             ShapeReverseScore = 0.77,
+            OuterCoverage = 0.93,
+            InnerCoverage = 0.86,
+            EdgeDistanceP95Px = 2.2,
+            PolarityAgreement = 0.94,
             Shape = "Circle",
             Radius = 9.5
         };
@@ -68,10 +72,16 @@ public sealed class TemplateMatchResultProjectorTests
         var multi = TemplateMatchResultProjector.ToMulti(batch);
 
         Assert.Equal(candidate.Pose, single.Pose);
+        Assert.Equal(candidate.Pose.Scale, single.Scale, 12);
         Assert.Equal(candidate.ShapeContours, single.ShapeContours);
         Assert.Equal(candidate.TemplateRoiContours, single.MatchedTemplateRoiContours);
         Assert.Equal(candidate.ShapeCoverage, single.ShapeCoverage);
         Assert.Equal(candidate.ShapeReverseScore, single.ShapeReverseScore);
+        Assert.Equal(candidate.OuterCoverage, single.OuterCoverage);
+        Assert.Equal(candidate.InnerCoverage, single.InnerCoverage);
+        Assert.Equal(candidate.EdgeDistanceP95Px, single.EdgeDistanceP95Px);
+        Assert.Equal(candidate.PolarityAgreement, single.PolarityAgreement);
+        Assert.Same(diagnostic, single.Diagnostic);
         Assert.Equal(diagnostic.Code, single.FailureCode);
         Assert.Equal(diagnostic.FailureStage, single.FailureStage);
         Assert.Equal(diagnostic.TechnicalDetails, single.TechnicalDetails);
@@ -80,7 +90,12 @@ public sealed class TemplateMatchResultProjectorTests
         Assert.Equal(candidate.Pose, multiCandidate.Pose);
         Assert.Equal(candidate.Shape, multiCandidate.Shape);
         Assert.Equal(candidate.Radius, multiCandidate.Radius);
+        Assert.Equal(candidate.OuterCoverage, multiCandidate.OuterCoverage);
+        Assert.Equal(candidate.InnerCoverage, multiCandidate.InnerCoverage);
+        Assert.Equal(candidate.EdgeDistanceP95Px, multiCandidate.EdgeDistanceP95Px);
+        Assert.Equal(candidate.PolarityAgreement, multiCandidate.PolarityAgreement);
         Assert.Equal(diagnostic.Code, multi.FailureCode);
+        Assert.Same(diagnostic, multi.Diagnostic);
     }
 
     [Theory]
@@ -208,6 +223,32 @@ public sealed class TemplateMatchResultProjectorTests
         Assert.Single(multi.Matches);
     }
 
+    [Theory]
+    [MemberData(nameof(InvalidValidationMetrics))]
+    public void InvalidValidationMetricsFailClosedForSingleAndMulti(
+        string metric,
+        double value)
+    {
+        var candidate = Candidate(
+            new Pose2D(10, 10, 0),
+            [[new Point2D(8, 8), new Point2D(12, 8), new Point2D(12, 12), new Point2D(8, 12)]]) with
+        {
+            OuterCoverage = metric == "OuterCoverage" ? value : 0.9,
+            InnerCoverage = metric == "InnerCoverage" ? value : 0.8,
+            EdgeDistanceP95Px = metric == "EdgeDistanceP95Px" ? value : 2,
+            PolarityAgreement = metric == "PolarityAgreement" ? value : 0.95
+        };
+        var batch = TemplateMatchingTestResults.Match(TemplateMatchingEngine.Halcon, candidate);
+
+        var single = Assert.Throws<InvalidOperationException>(() =>
+            TemplateMatchResultProjector.ToSingle(batch));
+        var multi = Assert.Throws<InvalidOperationException>(() =>
+            TemplateMatchResultProjector.ToMulti(batch));
+
+        Assert.Contains("validation metrics", single.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("validation metrics", multi.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     public static IEnumerable<object[]> InvalidContours()
     {
         yield return [Array.Empty<IReadOnlyList<Point2D>>()];
@@ -224,6 +265,22 @@ public sealed class TemplateMatchResultProjectorTests
                 }
             }
         ];
+    }
+
+    public static IEnumerable<object[]> InvalidValidationMetrics()
+    {
+        yield return ["OuterCoverage", double.NaN];
+        yield return ["OuterCoverage", -0.01];
+        yield return ["OuterCoverage", 1.01];
+        yield return ["InnerCoverage", double.PositiveInfinity];
+        yield return ["InnerCoverage", -0.01];
+        yield return ["InnerCoverage", 1.01];
+        yield return ["EdgeDistanceP95Px", double.NaN];
+        yield return ["EdgeDistanceP95Px", double.PositiveInfinity];
+        yield return ["EdgeDistanceP95Px", -0.01];
+        yield return ["PolarityAgreement", double.NegativeInfinity];
+        yield return ["PolarityAgreement", -0.01];
+        yield return ["PolarityAgreement", 1.01];
     }
 
     private static TemplateMatchBatchCandidate Candidate(

@@ -67,20 +67,42 @@ public partial class ShellWindow : Window
             return;
         }
 
-        if (_closePromptActive || DataContext is not ShellWindowViewModel viewModel)
+        e.Cancel = true;
+        if (_closePromptActive)
         {
-            e.Cancel = _closePromptActive;
+            return;
+        }
+
+        _closePromptActive = true;
+        if (DataContext is not ShellWindowViewModel viewModel)
+        {
+            try
+            {
+                await ShutdownAndCloseAsync();
+            }
+            finally
+            {
+                _closePromptActive = false;
+            }
+
             return;
         }
 
         var unsavedChanges = viewModel.GetUnsavedChanges();
         if (unsavedChanges.Count == 0)
         {
+            try
+            {
+                await ShutdownAndCloseAsync();
+            }
+            finally
+            {
+                _closePromptActive = false;
+            }
+
             return;
         }
 
-        e.Cancel = true;
-        _closePromptActive = true;
         var shouldClose = false;
 
         try
@@ -123,6 +145,24 @@ public partial class ShellWindow : Window
         if (!shouldClose)
         {
             return;
+        }
+
+        _closePromptActive = true;
+        try
+        {
+            await ShutdownAndCloseAsync();
+        }
+        finally
+        {
+            _closePromptActive = false;
+        }
+    }
+
+    private async Task ShutdownAndCloseAsync()
+    {
+        if (System.Windows.Application.Current is App app)
+        {
+            await app.ShutdownRuntimeAsync();
         }
 
         _closeConfirmed = true;

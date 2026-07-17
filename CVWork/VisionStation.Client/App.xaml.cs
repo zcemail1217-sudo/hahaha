@@ -25,8 +25,15 @@ namespace VisionStation.Client;
 
 public partial class App : PrismApplication
 {
-    private CrashGuardService? _crashGuard;
+    private readonly object _shutdownSyncRoot = new();
     private readonly CancellationTokenSource _startupCancellation = new();
+    private CrashGuardService? _crashGuard;
+    private IAppLogService? _appLogService;
+    private ICommunicationChannelRuntime? _communicationRuntime;
+    private ProductionCoordinator? _productionCoordinator;
+    private ITemplateMatchingService? _templateMatchingService;
+    private ApplicationShutdownService? _shutdownService;
+    private Task? _shutdownTask;
     private bool _mainWindowShown;
 
     public App()
@@ -55,6 +62,8 @@ public partial class App : PrismApplication
         containerRegistry.RegisterSingleton<ISystemLoadingService, SystemLoadingService>();
         var appLogService = new FileAppLogService(runtimePaths, deviceConfiguration.SystemSettings.Logging);
         var communicationChannels = new CommunicationChannelRuntime(deviceConfigurationRepository, appLogService);
+        _appLogService = appLogService;
+        _communicationRuntime = communicationChannels;
         containerRegistry.RegisterInstance<IAppLogService>(appLogService);
         containerRegistry.RegisterInstance<ICommunicationChannelRuntime>(communicationChannels);
         containerRegistry.RegisterSingleton<IAlarmEventRepository, SqliteAlarmEventRepository>();
@@ -73,6 +82,10 @@ public partial class App : PrismApplication
         containerRegistry.RegisterSingleton<CrashGuardService>();
         containerRegistry.RegisterSingleton<VisionDebugViewModel>();
         containerRegistry.RegisterSingleton<OpenCvCalibrationService>();
+
+        var templateMatchingService = TemplateMatchingService.CreateLegacyOnly();
+        _templateMatchingService = templateMatchingService;
+        containerRegistry.RegisterInstance<ITemplateMatchingService>(templateMatchingService);
 
         var camera = new HikvisionMvsCameraDevice();
         containerRegistry.RegisterInstance<ICameraDevice>(camera);
@@ -97,7 +110,10 @@ public partial class App : PrismApplication
             motionControllers.DigitalIo));
 
         containerRegistry.RegisterInstance<IVisionPipeline>(
-            VisionPipelineFactory.CreateDefault(deviceConfigurationRepository, communicationChannels));
+            VisionPipelineFactory.CreateDefault(
+                deviceConfigurationRepository,
+                templateMatchingService,
+                communicationChannels));
 
         containerRegistry.RegisterSingleton<IInspectionRunner, InspectionRunner>();
         containerRegistry.RegisterSingleton<ProductionCoordinator>();
@@ -125,16 +141,108 @@ public partial class App : PrismApplication
     protected override void OnExit(ExitEventArgs e)
     {
         _startupCancellation.Cancel();
-        try
+        if (!_mainWindowShown)
         {
-            Container.Resolve<ICommunicationChannelRuntime>().Dispose();
+            // No production coordinator or production UI callbacks exist before the main shell.
+            // The shutdown service does not capture the WPF synchronization context, so this
+            // fallback may safely finish owned resources before Prism tears down the container.
+            ShutdownRuntimeAsync().GetAwaiter().GetResult();
         }
-        catch
+        else if (_shutdownTask is { IsCompleted: true } completedShutdown)
         {
+            ObserveCompletedShutdown(completedShutdown);
+        }
+        else if (_shutdownTask is null)
+        {
+            TryLogShutdownFailure(
+                new InvalidOperationException(
+                    "The main window exited before the asynchronous runtime shutdown sequence completed."));
+        }
+        else
+        {
+            TryLogShutdownFailure(
+                new InvalidOperationException(
+                    "The main window exited while the asynchronous runtime shutdown sequence was still running."));
         }
 
         base.OnExit(e);
         _startupCancellation.Dispose();
+    }
+
+    internal Task ShutdownRuntimeAsync()
+    {
+        lock (_shutdownSyncRoot)
+        {
+            _startupCancellation.Cancel();
+            if (_shutdownTask is not null)
+            {
+                return _shutdownTask;
+            }
+
+            var templateMatchingService = _templateMatchingService;
+            var communicationRuntime = _communicationRuntime;
+            if (templateMatchingService is null || communicationRuntime is null)
+            {
+                _shutdownTask = Task.CompletedTask;
+                return _shutdownTask;
+            }
+
+            _shutdownService = _productionCoordinator is null
+                ? ApplicationShutdownService.WithoutProduction(
+                    templateMatchingService,
+                    communicationRuntime)
+                : new ApplicationShutdownService(
+                    _productionCoordinator,
+                    templateMatchingService,
+                    communicationRuntime);
+            _shutdownTask = ShutdownRuntimeCoreAsync(_shutdownService);
+            return _shutdownTask;
+        }
+    }
+
+    private async Task ShutdownRuntimeCoreAsync(ApplicationShutdownService shutdownService)
+    {
+        try
+        {
+            await shutdownService.ShutdownAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            TryLogShutdownFailure(exception);
+        }
+        finally
+        {
+            _templateMatchingService = null;
+            _communicationRuntime = null;
+        }
+    }
+
+    private static void ObserveCompletedShutdown(Task shutdownTask)
+    {
+        if (!shutdownTask.IsCompleted)
+        {
+            return;
+        }
+
+        shutdownTask.GetAwaiter().GetResult();
+    }
+
+    private void TryLogShutdownFailure(Exception exception)
+    {
+        try
+        {
+            if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
+            {
+                _appLogService?.Error(nameof(App), exception.ToString());
+                return;
+            }
+
+            FallbackWriteCrash("shutdown", exception);
+        }
+        catch
+        {
+            FallbackWriteCrash("shutdown", exception);
+        }
     }
 
     private async Task RunBootSequenceAsync()
@@ -385,10 +493,11 @@ public partial class App : PrismApplication
             return;
         }
 
-        _mainWindowShown = true;
         var startupWindow = Current.MainWindow;
+        _productionCoordinator = Container.Resolve<ProductionCoordinator>();
         var shell = Container.Resolve<ShellWindow>();
         var regionManager = Container.Resolve<IRegionManager>();
+        _mainWindowShown = true;
 
         Current.MainWindow = shell;
         RegionManager.SetRegionManager(shell, regionManager);

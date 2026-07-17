@@ -56,7 +56,8 @@ internal static class GeometryToolSupport
             return null;
         }
 
-        return recipe.Rois.FirstOrDefault(roi => string.Equals(roi.Id, roiId, StringComparison.OrdinalIgnoreCase));
+        return recipe.GetActiveFlow().Rois.FirstOrDefault(roi =>
+            string.Equals(roi.Id, roiId, StringComparison.OrdinalIgnoreCase));
     }
 
     public static bool TryMapRoiForPositionInput(

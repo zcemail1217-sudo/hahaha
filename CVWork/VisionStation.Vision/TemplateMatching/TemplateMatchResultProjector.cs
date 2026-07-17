@@ -46,10 +46,15 @@ public static class TemplateMatchResultProjector
             MatchedTemplateRoiContours = candidate?.TemplateRoiContours,
             ShapeCoverage = candidate?.ShapeCoverage,
             ShapeReverseScore = candidate?.ShapeReverseScore,
+            OuterCoverage = candidate?.OuterCoverage ?? 0,
+            InnerCoverage = candidate?.InnerCoverage ?? 0,
+            EdgeDistanceP95Px = candidate?.EdgeDistanceP95Px ?? 0,
+            PolarityAgreement = candidate?.PolarityAgreement ?? 0,
             Engine = batch.Engine,
             FailureCode = batch.Diagnostic?.Code,
             FailureStage = batch.Diagnostic?.FailureStage,
-            TechnicalDetails = batch.Diagnostic?.TechnicalDetails
+            TechnicalDetails = batch.Diagnostic?.TechnicalDetails,
+            Diagnostic = batch.Diagnostic
         };
     }
 
@@ -68,7 +73,11 @@ public static class TemplateMatchResultProjector
                 source.Shape,
                 source.Radius)
             {
-                Scale = source.Pose.Scale
+                Scale = source.Pose.Scale,
+                OuterCoverage = source.OuterCoverage,
+                InnerCoverage = source.InnerCoverage,
+                EdgeDistanceP95Px = source.EdgeDistanceP95Px,
+                PolarityAgreement = source.PolarityAgreement
             })
             .ToArray();
         return new MultiTargetMatchResult(
@@ -81,7 +90,8 @@ public static class TemplateMatchResultProjector
             Engine = batch.Engine,
             FailureCode = batch.Diagnostic?.Code,
             FailureStage = batch.Diagnostic?.FailureStage,
-            TechnicalDetails = batch.Diagnostic?.TechnicalDetails
+            TechnicalDetails = batch.Diagnostic?.TechnicalDetails,
+            Diagnostic = batch.Diagnostic
         };
     }
 
@@ -108,6 +118,21 @@ public static class TemplateMatchResultProjector
             throw new InvalidOperationException(
                 "Template matching backend returned incomplete or non-finite TemplateRoiContours.");
         }
+
+        if (!IsUnitInterval(candidate.OuterCoverage) ||
+            !IsUnitInterval(candidate.InnerCoverage) ||
+            !double.IsFinite(candidate.EdgeDistanceP95Px) ||
+            candidate.EdgeDistanceP95Px < 0 ||
+            !IsUnitInterval(candidate.PolarityAgreement))
+        {
+            throw new InvalidOperationException(
+                "Template matching backend returned invalid validation metrics.");
+        }
+    }
+
+    private static bool IsUnitInterval(double value)
+    {
+        return double.IsFinite(value) && value is >= 0 and <= 1;
     }
 
     private static void ValidateBatch(TemplateMatchBatchResult batch)

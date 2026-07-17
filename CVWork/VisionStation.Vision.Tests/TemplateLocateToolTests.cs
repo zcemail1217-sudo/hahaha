@@ -6,8 +6,10 @@ using Xunit;
 
 namespace VisionStation.Vision.Tests;
 
-public sealed class TemplateLocateToolTests
+public sealed class TemplateLocateToolTests : IDisposable
 {
+    private readonly TemplateMatchingService _matchingService = TemplateMatchingService.CreateLegacyOnly();
+
     [Fact]
     public void MatchSeparatesScoringContoursFromMatchedTemplateRoiContours()
     {
@@ -77,7 +79,8 @@ public sealed class TemplateLocateToolTests
         using var context = new VisionToolContext(recipe, fixture.SearchFrame);
         context.SetImageOutput(sourceTool, fixture.SearchFrame);
 
-        var result = await new TemplateLocateTool().ExecuteAsync(locateTool, context);
+        var result = await new TemplateLocateTool(_matchingService)
+            .ExecuteAsync(locateTool, context);
 
         Assert.True(result.Data.TryGetValue("OVERLAYSCHEMAVERSION", out var schemaVersion));
         Assert.Equal("2", schemaVersion);
@@ -138,7 +141,8 @@ public sealed class TemplateLocateToolTests
         };
         using var context = new VisionToolContext(recipe, fixture.SearchFrame);
 
-        var result = await new TemplateLocateTool().ExecuteAsync(locateTool, context);
+        var result = await new TemplateLocateTool(_matchingService)
+            .ExecuteAsync(locateTool, context);
 
         Assert.Equal("locate", result.ToolId);
         Assert.Equal(VisionToolKind.TemplateLocate, result.Kind);
@@ -146,5 +150,10 @@ public sealed class TemplateLocateToolTests
         Assert.Equal("ImageInput", result.Data["missingInput"]);
         Assert.Equal("2", result.Data["overlaySchemaVersion"]);
         Assert.Equal("False", result.Data["hasMatch"]);
+    }
+
+    public void Dispose()
+    {
+        _matchingService.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 }

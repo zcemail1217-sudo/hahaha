@@ -6,30 +6,55 @@ namespace VisionStation.Vision.Tools;
 public sealed class TemplateLocateTool : IVisionTool
 {
     private const string OverlaySchemaVersion = "2";
+    private readonly ITemplateMatchingService _matchingService;
+
+    public TemplateLocateTool(ITemplateMatchingService matchingService)
+    {
+        _matchingService = matchingService ?? throw new ArgumentNullException(nameof(matchingService));
+    }
 
     public VisionToolKind Kind => VisionToolKind.TemplateLocate;
 
-    public Task<ToolResult> ExecuteAsync(VisionToolDefinition definition, VisionToolContext context, CancellationToken cancellationToken = default)
+    public async Task<ToolResult> ExecuteAsync(
+        VisionToolDefinition definition,
+        VisionToolContext context,
+        CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(definition);
+        ArgumentNullException.ThrowIfNull(context);
+        RemoveOutputs(context, definition);
         var stopwatch = Stopwatch.StartNew();
         if (!context.TryGetInputImage(definition, out var frame))
         {
             stopwatch.Stop();
-            var missingInputResult = GeometryToolSupport.CreateMissingImageInputResult(definition, Kind, stopwatch.Elapsed);
-            return Task.FromResult(missingInputResult with
+            var missingInputResult = GeometryToolSupport.CreateMissingImageInputResult(
+                definition,
+                Kind,
+                stopwatch.Elapsed);
+            return missingInputResult with
             {
                 Data = new Dictionary<string, string>(missingInputResult.Data, StringComparer.OrdinalIgnoreCase)
                 {
                     ["overlaySchemaVersion"] = OverlaySchemaVersion,
                     ["hasMatch"] = false.ToString()
                 }
-            });
+            };
         }
 
-        var roi = FindBoundRoi(context.Recipe, definition);
-        var match = TemplateMatcher.Match(frame, roi, definition.Parameters, context.GetGrayMat(frame), cancellationToken);
-
-        if (match.HasMatch)
+        var activeFlow = context.Recipe.GetActiveFlow();
+        var roi = GeometryToolSupport.FindBoundRoi(context.Recipe, definition);
+        var request = new TemplateMatchingRequest(
+            new TemplateModelOwner(context.Recipe.Id, activeFlow.Id, definition.Id),
+            frame,
+            roi,
+            definition.Parameters,
+            TemplateMatchCardinality.Single,
+            1);
+        var batch = await _matchingService.MatchAsync(request, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        var match = TemplateMatchResultProjector.ToSingle(batch);
+        var operational = match.HasMatch && match.Outcome == InspectionOutcome.Ok;
+        if (operational)
         {
             context.Properties["pose"] = match.Pose;
             context.SetPortOutput(definition, "PositionOutput", match.Pose);
@@ -41,16 +66,30 @@ public sealed class TemplateLocateTool : IVisionTool
         }
 
         stopwatch.Stop();
+        var data = CreateData(definition, frame, match, batch.Matches.Count > 0, operational);
+        return new ToolResult
+        {
+            ToolId = definition.Id,
+            ToolName = definition.Name,
+            Kind = Kind,
+            Outcome = match.Outcome,
+            Duration = stopwatch.Elapsed,
+            Message = match.Message,
+            Data = data
+        };
+    }
 
+    private static Dictionary<string, string> CreateData(
+        VisionToolDefinition definition,
+        ImageFrame frame,
+        TemplateMatchResult match,
+        bool hasCandidate,
+        bool operational)
+    {
         var data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["overlaySchemaVersion"] = OverlaySchemaVersion,
             ["hasMatch"] = match.HasMatch.ToString(),
-            ["score"] = match.Score.ToInvariant(),
-            ["x"] = match.Pose.X.ToInvariant(),
-            ["y"] = match.Pose.Y.ToInvariant(),
-            ["angle"] = match.Pose.Angle.ToInvariant(),
-            ["scale"] = match.Pose.Scale.ToRoundTripScaleInvariant(),
             ["inputFrameId"] = frame.Id,
             ["templateWidth"] = match.TemplateWidth.ToString(),
             ["templateHeight"] = match.TemplateHeight.ToString(),
@@ -59,10 +98,33 @@ public sealed class TemplateLocateTool : IVisionTool
             ["searchWidth"] = match.SearchRegion.Width.ToString(),
             ["searchHeight"] = match.SearchRegion.Height.ToString(),
             ["autoTemplate"] = match.UsedAutoTemplate.ToString(),
-            ["engine"] = definition.Parameters.GetValueOrDefault("engine") ?? "OpenCv",
+            ["engine"] = match.Engine.ToString(),
             ["matchMode"] = definition.Parameters.GetValueOrDefault("matchMode") ?? "Shape"
         };
 
+        if (hasCandidate)
+        {
+            var prefix = operational ? string.Empty : "rejectedCandidate.";
+            data[$"{prefix}score"] = match.Score.ToInvariant();
+            data[$"{prefix}x"] = match.Pose.X.ToInvariant();
+            data[$"{prefix}y"] = match.Pose.Y.ToInvariant();
+            data[$"{prefix}angle"] = match.Pose.Angle.ToInvariant();
+            data[$"{prefix}scale"] = match.Scale.ToRoundTripScaleInvariant();
+            data[$"{prefix}outerCoverage"] = match.OuterCoverage.ToInvariant();
+            data[$"{prefix}innerCoverage"] = match.InnerCoverage.ToInvariant();
+            data[$"{prefix}edgeDistanceP95Px"] = match.EdgeDistanceP95Px.ToInvariant();
+            data[$"{prefix}polarityAgreement"] = match.PolarityAgreement.ToInvariant();
+        }
+
+        AddGeometryDiagnostics(data, match);
+        AddFailureDiagnostics(data, match.Diagnostic);
+        return data;
+    }
+
+    private static void AddGeometryDiagnostics(
+        IDictionary<string, string> data,
+        TemplateMatchResult match)
+    {
         if (match.ShapePoints is { Count: > 0 })
         {
             data["shapePoints"] = string.Join(
@@ -97,17 +159,37 @@ public sealed class TemplateLocateTool : IVisionTool
         {
             data["shapeReverseScore"] = shapeReverseScore.ToInvariant();
         }
+    }
 
-        return Task.FromResult(new ToolResult
+    private static void AddFailureDiagnostics(
+        IDictionary<string, string> data,
+        TemplateMatchingDiagnostic? diagnostic)
+    {
+        if (diagnostic is null)
         {
-            ToolId = definition.Id,
-            ToolName = definition.Name,
-            Kind = Kind,
-            Outcome = match.Outcome,
-            Duration = stopwatch.Elapsed,
-            Message = match.Message,
-            Data = data
-        });
+            return;
+        }
+
+        data["failureCode"] = diagnostic.Code;
+        data["failureStage"] = diagnostic.FailureStage;
+    }
+
+    private static void RemoveOutputs(VisionToolContext context, VisionToolDefinition definition)
+    {
+        context.Properties.Remove("pose");
+        foreach (var port in new[]
+                 {
+                     "PositionOutput",
+                     "OriginOutput",
+                     "ScoreOutput",
+                     "XOutput",
+                     "YOutput",
+                     "AngleOutput",
+                     "ScaleOutput"
+                 })
+        {
+            context.RemovePortOutput(definition, port);
+        }
     }
 
     private static string SerializeContours(IEnumerable<IReadOnlyList<Point2D>> contours)
@@ -121,13 +203,4 @@ public sealed class TemplateLocateTool : IVisionTool
                     contour.Select(point => $"{point.X.ToInvariant()},{point.Y.ToInvariant()}"))));
     }
 
-    private static RoiDefinition? FindBoundRoi(Recipe recipe, VisionToolDefinition definition)
-    {
-        if (!definition.Parameters.TryGetValue("roiId", out var roiId) || string.IsNullOrWhiteSpace(roiId))
-        {
-            return null;
-        }
-
-        return recipe.Rois.FirstOrDefault(roi => string.Equals(roi.Id, roiId, StringComparison.OrdinalIgnoreCase));
-    }
 }

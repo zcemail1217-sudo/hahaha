@@ -7,14 +7,17 @@ public static class VisionPipelineFactory
 {
     public static IVisionPipeline CreateDefault(
         IDeviceConfigurationRepository deviceConfigurationRepository,
+        ITemplateMatchingService templateMatchingService,
         ICommunicationChannelRuntime? communicationChannels = null)
     {
+        ArgumentNullException.ThrowIfNull(deviceConfigurationRepository);
+        ArgumentNullException.ThrowIfNull(templateMatchingService);
         return new ConfiguredVisionPipeline(
         [
             new AcquireImageTool(),
             new ImageProcessTool(),
-            new TemplateLocateTool(),
-            new MultiTargetMatchTool(),
+            new TemplateLocateTool(templateMatchingService),
+            new MultiTargetMatchTool(templateMatchingService),
             new CoordinateTransformTool(),
             new RoiMapTool(),
             new FindLineTool(),

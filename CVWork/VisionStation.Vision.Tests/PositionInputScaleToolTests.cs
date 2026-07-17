@@ -4,8 +4,10 @@ using Xunit;
 
 namespace VisionStation.Vision.Tests;
 
-public sealed class PositionInputScaleToolTests
+public sealed class PositionInputScaleToolTests : IDisposable
 {
+    private readonly TemplateMatchingService _matchingService = TemplateMatchingService.CreateLegacyOnly();
+
     [Fact]
     public async Task TemplatePointScalesAndRotatesOffsetWithCurrentPose()
     {
@@ -335,13 +337,16 @@ public sealed class PositionInputScaleToolTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
-        var result = await new MultiTargetMatchTool().ExecuteAsync(definition, context, cancellation.Token);
+        var result = await new MultiTargetMatchTool(_matchingService)
+            .ExecuteAsync(definition, context, cancellation.Token);
 
         Assert.Equal(InspectionOutcome.Ng, result.Outcome);
         Assert.Equal("CONFIG_INVALID_PARAMETER", result.Data["code"]);
         Assert.False(context.Properties.ContainsKey("pose"));
         Assert.False(context.TryGetPortInput<Pose2D>(outputConsumer, "PositionInput", out _));
-        Assert.False(context.TryGetPortInput<int>(outputConsumer, "CountInput", out _));
+        Assert.True(context.TryGetPortInput<int>(outputConsumer, "CountInput", out var count));
+        Assert.Equal(0, count);
+        Assert.Equal("0", result.Data["count"]);
     }
 
     [Theory]
@@ -412,7 +417,7 @@ public sealed class PositionInputScaleToolTests
             VisionToolKind.FindLine => new FindLineTool(),
             VisionToolKind.FindCircle => new FindCircleTool(),
             VisionToolKind.DefectDetect => new DefectDetectTool(),
-            VisionToolKind.MultiTargetMatch => new MultiTargetMatchTool(),
+            VisionToolKind.MultiTargetMatch => new MultiTargetMatchTool(_matchingService),
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
         };
 
@@ -647,7 +652,7 @@ public sealed class PositionInputScaleToolTests
             VisionToolKind.FindLine => new FindLineTool(),
             VisionToolKind.FindCircle => new FindCircleTool(),
             VisionToolKind.DefectDetect => new DefectDetectTool(),
-            VisionToolKind.MultiTargetMatch => new MultiTargetMatchTool(),
+            VisionToolKind.MultiTargetMatch => new MultiTargetMatchTool(_matchingService),
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
         };
         using var cancellation = new CancellationTokenSource();
@@ -761,7 +766,8 @@ public sealed class PositionInputScaleToolTests
             frame);
         context.SetImageOutput(imageSource, frame);
 
-        var result = await new MultiTargetMatchTool().ExecuteAsync(definition, context);
+        var result = await new MultiTargetMatchTool(_matchingService)
+            .ExecuteAsync(definition, context);
 
         Assert.Equal(InspectionOutcome.Ok, result.Outcome);
         Assert.Equal("1", result.Data["scale"]);
@@ -1048,14 +1054,14 @@ public sealed class PositionInputScaleToolTests
         };
     }
 
-    private static IVisionTool CreateTool(VisionToolKind kind)
+    private IVisionTool CreateTool(VisionToolKind kind)
     {
         return kind switch
         {
             VisionToolKind.FindLine => new FindLineTool(),
             VisionToolKind.FindCircle => new FindCircleTool(),
             VisionToolKind.DefectDetect => new DefectDetectTool(),
-            VisionToolKind.MultiTargetMatch => new MultiTargetMatchTool(),
+            VisionToolKind.MultiTargetMatch => new MultiTargetMatchTool(_matchingService),
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
         };
     }
@@ -1194,6 +1200,15 @@ public sealed class PositionInputScaleToolTests
     {
         foreach (var portKey in GetBusinessOutputPortKeys(kind))
         {
+            if (kind == VisionToolKind.MultiTargetMatch && portKey == "CountOutput")
+            {
+                Assert.True(
+                    context.TryGetPortInput<int>(outputConsumer, $"{portKey}Input", out var count),
+                    "Multi-target CountOutput must remain diagnostic on NG.");
+                Assert.Equal(0, count);
+                continue;
+            }
+
             Assert.False(
                 context.TryGetPortInputValue(outputConsumer, $"{portKey}Input", out _),
                 $"Stale output {portKey} remained accessible.");
@@ -1214,6 +1229,11 @@ public sealed class PositionInputScaleToolTests
             "-1" => -1,
             _ => throw new ArgumentOutOfRangeException(nameof(value), value, null)
         };
+    }
+
+    public void Dispose()
+    {
+        _matchingService.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 
     private static ImageFrame CreateFrame()
