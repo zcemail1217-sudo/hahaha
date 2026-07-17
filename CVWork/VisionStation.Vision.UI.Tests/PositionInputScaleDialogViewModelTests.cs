@@ -711,6 +711,231 @@ public sealed class PositionInputScaleDialogViewModelTests
         Assert.Equal(20, searchOverlay.Height, 6);
     }
 
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(0d)]
+    [InlineData(-1d)]
+    public void MultiTargetRunRejectsInvalidCurrentScaleInsteadOfMatchingOriginalRoi(double invalidScale)
+    {
+        var frame = CreateFrame();
+        var source = new VisionToolDefinition { Id = "position-source", Kind = VisionToolKind.TemplateLocate };
+        var roi = new RoiDefinition
+        {
+            Id = "area-roi",
+            Shape = RoiShapeKind.Rectangle,
+            X = 4,
+            Y = 4,
+            Width = 12,
+            Height = 10
+        };
+        var parameters = new Dictionary<string, string>(TemplateMatcher.Learn(
+            frame,
+            null,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["templateX"] = "8",
+                ["templateY"] = "8",
+                ["templateWidth"] = "12",
+                ["templateHeight"] = "12"
+            }), StringComparer.OrdinalIgnoreCase)
+        {
+            ["input:PositionInput:toolId"] = source.Id,
+            ["input:PositionInput:portKey"] = "PositionOutput",
+            ["roiReferencePoseX"] = "10",
+            ["roiReferencePoseY"] = "8",
+            ["roiReferencePoseAngle"] = "0",
+            ["roiReferencePoseScale"] = "0.5",
+            ["roiReferencePoseToolId"] = source.Id
+        };
+        var tool = new VisionToolItem
+        {
+            Id = "multi-target",
+            Kind = VisionToolKind.MultiTargetMatch,
+            RoiId = roi.Id,
+            ParametersText = string.Join("; ", parameters.Select(item => $"{item.Key}={item.Value}"))
+        };
+        var pipeline = new PoseResultPipeline(
+            frame,
+            source.Id,
+            new Pose2D(20, 16, 0) { Scale = invalidScale });
+        var viewModel = new TemplateLocateToolDialogViewModel(
+            tool,
+            Array.Empty<RoiChoiceItem>(),
+            [roi],
+            "Flow",
+            frame,
+            new RuntimePaths(Path.GetTempPath()),
+            new NullAppLogService(),
+            new Recipe { Tools = [source] },
+            pipeline);
+
+        viewModel.RunToolCommand.Execute();
+
+        Assert.True(
+            SpinWait.SpinUntil(() => pipeline.ExecutionCount == 1 && !viewModel.IsBusy, TimeSpan.FromSeconds(10)),
+            $"Multi-target preview did not finish: {viewModel.StatusText}");
+        Assert.Equal("-", viewModel.ScoreText);
+        Assert.Equal(
+            "Position input mapping failed: PositionInput.Scale must be finite and greater than zero.",
+            viewModel.StatusText);
+        var searchOverlay = Assert.Single(viewModel.PreviewOverlays);
+        Assert.Equal(VisionOverlayState.Warning, searchOverlay.State);
+        Assert.Equal(4, searchOverlay.X, 6);
+        Assert.Equal(4, searchOverlay.Y, 6);
+        Assert.Equal(12, searchOverlay.Width, 6);
+        Assert.Equal(10, searchOverlay.Height, 6);
+        viewModel.ApplyTo(tool);
+        Assert.Equal("0.5", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
+    }
+
+    public static IEnumerable<object[]> InvalidConfiguredScaleCases()
+    {
+        foreach (var invalidScale in new[] { "NaN", "0", "-1" })
+        {
+            yield return ["roiReferencePoseScale", invalidScale];
+            yield return ["standardScale", invalidScale];
+        }
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(0d)]
+    [InlineData(-1d)]
+    public void MultiTargetRunDoesNotCaptureOrSaveInvalidCurrentScale(double invalidScale)
+    {
+        var scenario = CreateMultiTargetRunScenario(
+            roiReferenceScale: null,
+            sourceStandardScale: null,
+            currentScale: invalidScale);
+
+        scenario.ViewModel.RunToolCommand.Execute();
+
+        Assert.True(
+            SpinWait.SpinUntil(
+                () => scenario.Pipeline.ExecutionCount == 1 && !scenario.ViewModel.IsBusy,
+                TimeSpan.FromSeconds(10)),
+            $"Multi-target preview did not finish: {scenario.ViewModel.StatusText}");
+        Assert.Equal("-", scenario.ViewModel.ScoreText);
+        Assert.Equal(
+            "Position input mapping failed: PositionInput.Scale must be finite and greater than zero.",
+            scenario.ViewModel.StatusText);
+        Assert.Single(scenario.ViewModel.PreviewOverlays);
+
+        scenario.ViewModel.ApplyTo(scenario.Tool);
+        Assert.False(scenario.Tool.ToDefinition().Parameters.ContainsKey("roiReferencePoseScale"));
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidConfiguredScaleCases))]
+    public async Task MultiTargetRunRejectsInvalidExplicitReferenceScaleBeforePipeline(
+        string parameter,
+        string invalidScale)
+    {
+        var scenario = CreateMultiTargetRunScenario(
+            roiReferenceScale: parameter == "roiReferencePoseScale" ? invalidScale : null,
+            sourceStandardScale: parameter == "standardScale" ? invalidScale : null,
+            currentScale: 1);
+
+        scenario.ViewModel.RunToolCommand.Execute();
+
+        Assert.True(
+            SpinWait.SpinUntil(() => !scenario.ViewModel.IsBusy, TimeSpan.FromSeconds(10)),
+            $"Multi-target preview did not finish: {scenario.ViewModel.StatusText}");
+        Assert.Equal(0, scenario.Pipeline.ExecutionCount);
+        Assert.Equal("-", scenario.ViewModel.ScoreText);
+        Assert.Equal(
+            $"Position input mapping failed: {parameter} must be finite and greater than zero.",
+            scenario.ViewModel.StatusText);
+        var searchOverlay = Assert.Single(scenario.ViewModel.PreviewOverlays);
+        Assert.Equal(VisionOverlayState.Warning, searchOverlay.State);
+        Assert.Equal(4, searchOverlay.X, 6);
+        Assert.Equal(4, searchOverlay.Y, 6);
+        Assert.Equal(12, searchOverlay.Width, 6);
+        Assert.Equal(10, searchOverlay.Height, 6);
+
+        Assert.True(await scenario.ViewModel.PrepareToCloseAsync());
+        scenario.ViewModel.ApplyTo(scenario.Tool);
+        Assert.Equal("1", scenario.Tool.ToDefinition().Parameters["roiReferencePoseScale"]);
+    }
+
+    private static MultiTargetRunScenario CreateMultiTargetRunScenario(
+        string? roiReferenceScale,
+        string? sourceStandardScale,
+        double currentScale)
+    {
+        var frame = CreateFrame();
+        var sourceParameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (sourceStandardScale is not null)
+        {
+            sourceParameters["templateX"] = "8";
+            sourceParameters["templateY"] = "8";
+            sourceParameters["templateWidth"] = "12";
+            sourceParameters["templateHeight"] = "12";
+            sourceParameters["standardScale"] = sourceStandardScale;
+        }
+
+        var source = new VisionToolDefinition
+        {
+            Id = "position-source",
+            Kind = VisionToolKind.TemplateLocate,
+            Parameters = sourceParameters
+        };
+        var roi = new RoiDefinition
+        {
+            Id = "area-roi",
+            Shape = RoiShapeKind.Rectangle,
+            X = 4,
+            Y = 4,
+            Width = 12,
+            Height = 10
+        };
+        var parameters = new Dictionary<string, string>(TemplateMatcher.Learn(
+            frame,
+            null,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["templateX"] = "8",
+                ["templateY"] = "8",
+                ["templateWidth"] = "12",
+                ["templateHeight"] = "12"
+            }), StringComparer.OrdinalIgnoreCase)
+        {
+            ["input:PositionInput:toolId"] = source.Id,
+            ["input:PositionInput:portKey"] = "PositionOutput"
+        };
+        if (roiReferenceScale is not null)
+        {
+            parameters["roiReferencePoseX"] = "10";
+            parameters["roiReferencePoseY"] = "8";
+            parameters["roiReferencePoseAngle"] = "0";
+            parameters["roiReferencePoseScale"] = roiReferenceScale;
+            parameters["roiReferencePoseToolId"] = source.Id;
+        }
+
+        var tool = new VisionToolItem
+        {
+            Id = "multi-target",
+            Kind = VisionToolKind.MultiTargetMatch,
+            RoiId = roi.Id,
+            ParametersText = string.Join("; ", parameters.Select(item => $"{item.Key}={item.Value}"))
+        };
+        var pipeline = new PoseResultPipeline(
+            frame,
+            source.Id,
+            new Pose2D(20, 16, 0) { Scale = currentScale });
+        var viewModel = new TemplateLocateToolDialogViewModel(
+            tool,
+            Array.Empty<RoiChoiceItem>(),
+            [roi],
+            "Flow",
+            frame,
+            new RuntimePaths(Path.GetTempPath()),
+            new NullAppLogService(),
+            new Recipe { Tools = [source] },
+            pipeline);
+        return new MultiTargetRunScenario(viewModel, pipeline, tool);
+    }
+
     private static VisionToolItem CreatePositionInputTool(string id, VisionToolKind kind, string roiId)
     {
         return new VisionToolItem
@@ -740,11 +965,14 @@ public sealed class PositionInputScaleDialogViewModelTests
         string toolId,
         Pose2D pose) : IVisionPipeline
     {
+        public int ExecutionCount { get; private set; }
+
         public Task<VisionPipelineResult> ExecuteAsync(
             Recipe recipe,
             ImageFrame inputFrame,
             CancellationToken cancellationToken = default)
         {
+            ExecutionCount++;
             return Task.FromResult(new VisionPipelineResult(
                 frame,
                 [
@@ -767,6 +995,11 @@ public sealed class PositionInputScaleDialogViewModelTests
                 string.Empty));
         }
     }
+
+    private sealed record MultiTargetRunScenario(
+        TemplateLocateToolDialogViewModel ViewModel,
+        PoseResultPipeline Pipeline,
+        VisionToolItem Tool);
 
     private sealed class UnexpectedPipeline : IVisionPipeline
     {

@@ -415,6 +415,193 @@ public sealed class PositionInputScaleToolTests
         Assert.True(result.Data.ContainsKey("searchRoiShape"));
     }
 
+    public static IEnumerable<object[]> InvalidScaleToolCases()
+    {
+        var kinds = new[]
+        {
+            VisionToolKind.FindLine,
+            VisionToolKind.FindCircle,
+            VisionToolKind.DefectDetect,
+            VisionToolKind.MultiTargetMatch
+        };
+        var invalidScales = new[] { "NaN", "0", "-1" };
+        foreach (var kind in kinds)
+        {
+            foreach (var invalidScale in invalidScales)
+            {
+                yield return [kind, invalidScale, true];
+                yield return [kind, invalidScale, false];
+            }
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidScaleToolCases))]
+    public async Task PositionInputToolsRejectInvalidLearnedStandardScaleBeforeAlgorithmAndClearAllOutputs(
+        VisionToolKind kind,
+        string invalidScale,
+        bool hasBoundRoi)
+    {
+        var imageSource = new VisionToolDefinition { Id = "image-source" };
+        var positionSource = new VisionToolDefinition
+        {
+            Id = "position-source",
+            Kind = VisionToolKind.TemplateLocate,
+            Parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["templateX"] = "8",
+                ["templateY"] = "8",
+                ["templateWidth"] = "12",
+                ["templateHeight"] = "12",
+                ["standardScale"] = invalidScale
+            }
+        };
+        var definition = CreatePositionInputDefinition(
+            kind,
+            imageSource,
+            positionSource,
+            "1");
+        RemoveTaughtReferencePose(definition);
+        AddRealTemplateParametersIfRequired(definition);
+        var outputConsumer = CreateAllOutputConsumer(definition, kind);
+        var roi = hasBoundRoi ? CreateBoundRoi(kind) : null;
+        using var context = CreatePositionInputContext(
+            imageSource,
+            positionSource,
+            definition,
+            outputConsumer,
+            roi);
+        SeedAllBusinessOutputs(context, definition, kind);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var result = await CreateTool(kind).ExecuteAsync(
+            definition,
+            context,
+            cancellation.Token);
+
+        Assert.Equal(InspectionOutcome.Ng, result.Outcome);
+        Assert.Equal("CONFIG_INVALID_PARAMETER", result.Data["code"]);
+        AssertAllBusinessOutputsAreInaccessible(context, outputConsumer, kind);
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidScaleToolCases))]
+    public async Task PositionInputToolsRejectInvalidCurrentScaleBeforeAlgorithmAndClearAllOutputs(
+        VisionToolKind kind,
+        string invalidScale,
+        bool hasBoundRoi)
+    {
+        var imageSource = new VisionToolDefinition { Id = "image-source" };
+        var positionSource = new VisionToolDefinition { Id = "position-source" };
+        var definition = CreatePositionInputDefinition(kind, imageSource, positionSource, "1");
+        AddRealTemplateParametersIfRequired(definition);
+        var outputConsumer = CreateAllOutputConsumer(definition, kind);
+        var roi = hasBoundRoi ? CreateBoundRoi(kind) : null;
+        using var context = CreatePositionInputContext(
+            imageSource,
+            positionSource,
+            definition,
+            outputConsumer,
+            roi);
+        context.SetPortOutput(
+            positionSource,
+            "PositionOutput",
+            new Pose2D(16, 16, 0) { Scale = ParseScale(invalidScale) });
+        SeedAllBusinessOutputs(context, definition, kind);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var result = await CreateTool(kind).ExecuteAsync(
+            definition,
+            context,
+            cancellation.Token);
+
+        Assert.Equal(InspectionOutcome.Ng, result.Outcome);
+        Assert.Equal("CONFIG_INVALID_PARAMETER", result.Data["code"]);
+        AssertAllBusinessOutputsAreInaccessible(context, outputConsumer, kind);
+    }
+
+    [Theory]
+    [InlineData(VisionToolKind.FindLine)]
+    [InlineData(VisionToolKind.FindCircle)]
+    [InlineData(VisionToolKind.DefectDetect)]
+    [InlineData(VisionToolKind.MultiTargetMatch)]
+    public async Task PositionInputToolsKeepLegacyBehaviorWhenSourceHasNoReferencePose(VisionToolKind kind)
+    {
+        var imageSource = new VisionToolDefinition { Id = "image-source" };
+        var positionSource = new VisionToolDefinition { Id = "position-source" };
+        var definition = CreatePositionInputDefinition(kind, imageSource, positionSource, "1");
+        RemoveTaughtReferencePose(definition);
+        AddRealTemplateParametersIfRequired(definition);
+        var frame = CreateFrame();
+        using var context = new VisionToolContext(
+            new Recipe { Tools = [imageSource, positionSource, definition] },
+            frame);
+        context.SetImageOutput(imageSource, frame);
+        context.SetPortOutput(positionSource, "PositionOutput", new Pose2D(16, 16, 0));
+
+        var result = await CreateTool(kind).ExecuteAsync(definition, context);
+
+        Assert.NotEqual("CONFIG_INVALID_PARAMETER", result.Data.GetValueOrDefault("code"));
+    }
+
+    [Theory]
+    [InlineData(null, 8d)]
+    [InlineData("0.5", 16d)]
+    public async Task DefectDetectMapsLearnedReferenceUsingExplicitOrDefaultStandardScale(
+        string? standardScale,
+        double expectedWidth)
+    {
+        var imageSource = new VisionToolDefinition { Id = "image-source" };
+        var positionSource = new VisionToolDefinition
+        {
+            Id = "position-source",
+            Kind = VisionToolKind.TemplateLocate,
+            Parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["templateX"] = "8",
+                ["templateY"] = "8",
+                ["templateWidth"] = "12",
+                ["templateHeight"] = "12"
+            }
+        };
+        if (standardScale is not null)
+        {
+            positionSource.Parameters["standardScale"] = standardScale;
+        }
+
+        var definition = CreatePositionInputDefinition(
+            VisionToolKind.DefectDetect,
+            imageSource,
+            positionSource,
+            "1");
+        RemoveTaughtReferencePose(definition);
+        var roi = new RoiDefinition
+        {
+            Id = "roi",
+            Shape = RoiShapeKind.Rectangle,
+            X = 10,
+            Y = 10,
+            Width = 8,
+            Height = 8
+        };
+        using var context = CreatePositionInputContext(
+            imageSource,
+            positionSource,
+            definition,
+            new VisionToolDefinition { Id = "output-consumer" },
+            roi);
+
+        var result = await new DefectDetectTool().ExecuteAsync(definition, context);
+
+        Assert.NotEqual("CONFIG_INVALID_PARAMETER", result.Data.GetValueOrDefault("code"));
+        Assert.Equal(16, double.Parse(result.Data["searchRoiX"]), 6);
+        Assert.Equal(16, double.Parse(result.Data["searchRoiY"]), 6);
+        Assert.Equal(expectedWidth, double.Parse(result.Data["searchRoiWidth"]), 6);
+        Assert.Equal(expectedWidth, double.Parse(result.Data["searchRoiHeight"]), 6);
+    }
+
     [Theory]
     [InlineData(VisionToolKind.FindLine)]
     [InlineData(VisionToolKind.FindCircle)]
@@ -595,19 +782,251 @@ public sealed class PositionInputScaleToolTests
         VisionToolDefinition positionSource,
         VisionToolDefinition definition,
         VisionToolDefinition outputConsumer,
-        RoiDefinition roi)
+        RoiDefinition? roi)
     {
         var frame = CreateFrame();
         var context = new VisionToolContext(
             new Recipe
             {
                 Tools = [imageSource, positionSource, definition, outputConsumer],
-                Rois = [roi]
+                Rois = roi is null ? [] : [roi]
             },
             frame);
         context.SetImageOutput(imageSource, frame);
         context.SetPortOutput(positionSource, "PositionOutput", new Pose2D(16, 16, 0));
         return context;
+    }
+
+    private static void RemoveTaughtReferencePose(VisionToolDefinition definition)
+    {
+        definition.Parameters.Remove("roiReferencePoseX");
+        definition.Parameters.Remove("roiReferencePoseY");
+        definition.Parameters.Remove("roiReferencePoseAngle");
+        definition.Parameters.Remove("roiReferencePoseScale");
+        definition.Parameters.Remove("roiReferencePoseToolId");
+    }
+
+    private static void AddRealTemplateParametersIfRequired(VisionToolDefinition definition)
+    {
+        if (definition.Kind != VisionToolKind.MultiTargetMatch)
+        {
+            return;
+        }
+
+        foreach (var parameter in TemplateMatcher.Learn(
+                     CreateFrame(),
+                     null,
+                     new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                     {
+                         ["templateX"] = "8",
+                         ["templateY"] = "8",
+                         ["templateWidth"] = "12",
+                         ["templateHeight"] = "12"
+                     }))
+        {
+            definition.Parameters[parameter.Key] = parameter.Value;
+        }
+    }
+
+    private static RoiDefinition CreateBoundRoi(VisionToolKind kind)
+    {
+        return kind switch
+        {
+            VisionToolKind.FindLine => new RoiDefinition
+            {
+                Id = "roi",
+                Shape = RoiShapeKind.RotatedRectangle,
+                X = 16,
+                Y = 16,
+                Width = 20,
+                Height = 10
+            },
+            VisionToolKind.FindCircle => new RoiDefinition
+            {
+                Id = "roi",
+                Shape = RoiShapeKind.Circle,
+                X = 16,
+                Y = 16,
+                Radius = 8
+            },
+            _ => new RoiDefinition
+            {
+                Id = "roi",
+                Shape = RoiShapeKind.Rectangle,
+                X = 4,
+                Y = 4,
+                Width = 24,
+                Height = 24
+            }
+        };
+    }
+
+    private static IVisionTool CreateTool(VisionToolKind kind)
+    {
+        return kind switch
+        {
+            VisionToolKind.FindLine => new FindLineTool(),
+            VisionToolKind.FindCircle => new FindCircleTool(),
+            VisionToolKind.DefectDetect => new DefectDetectTool(),
+            VisionToolKind.MultiTargetMatch => new MultiTargetMatchTool(),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
+        };
+    }
+
+    private static VisionToolDefinition CreateAllOutputConsumer(
+        VisionToolDefinition definition,
+        VisionToolKind kind)
+    {
+        var consumer = new VisionToolDefinition
+        {
+            Id = "output-consumer",
+            Parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        };
+        foreach (var portKey in GetBusinessOutputPortKeys(kind))
+        {
+            var inputKey = $"{portKey}Input";
+            consumer.Parameters[$"input:{inputKey}:toolId"] = definition.Id;
+            consumer.Parameters[$"input:{inputKey}:portKey"] = portKey;
+        }
+
+        return consumer;
+    }
+
+    private static IReadOnlyList<string> GetBusinessOutputPortKeys(VisionToolKind kind)
+    {
+        return kind switch
+        {
+            VisionToolKind.FindLine => ["LineOutput", "MidPointOutput"],
+            VisionToolKind.FindCircle => ["CircleOutput", "CenterOutput", "RadiusOutput"],
+            VisionToolKind.DefectDetect =>
+            [
+                "CountOutput",
+                "AllCentersOutput",
+                "BestCenterOutput",
+                "BestAreaOutput",
+                "BestCircularityOutput",
+                "BestWidthOutput",
+                "BestHeightOutput",
+                "BestAspectRatioOutput",
+                "BestPerimeterOutput",
+                "BestCircleOutput",
+                "BestContourOutput",
+                "BestRectOutput"
+            ],
+            VisionToolKind.MultiTargetMatch =>
+            [
+                "PositionOutput",
+                "OriginOutput",
+                "BestPositionOutput",
+                "ScoreOutput",
+                "XOutput",
+                "YOutput",
+                "AngleOutput",
+                "CountOutput",
+                "AllPositionsOutput",
+                "ScoresOutput"
+            ],
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
+        };
+    }
+
+    private static void SeedAllBusinessOutputs(
+        VisionToolContext context,
+        VisionToolDefinition definition,
+        VisionToolKind kind)
+    {
+        var point = new Point2D(16, 16);
+        var pose = new Pose2D(16, 16, 0);
+        var staleOutputs = kind switch
+        {
+            VisionToolKind.FindLine => new Dictionary<string, object>
+            {
+                ["LineOutput"] = new Line2D(new Point2D(4, 4), new Point2D(28, 28)),
+                ["MidPointOutput"] = point
+            },
+            VisionToolKind.FindCircle => new Dictionary<string, object>
+            {
+                ["CircleOutput"] = new Circle2D(point, 8),
+                ["CenterOutput"] = point,
+                ["RadiusOutput"] = 8d
+            },
+            VisionToolKind.DefectDetect => new Dictionary<string, object>
+            {
+                ["CountOutput"] = 1,
+                ["AllCentersOutput"] = new[] { point },
+                ["BestCenterOutput"] = point,
+                ["BestAreaOutput"] = 10d,
+                ["BestCircularityOutput"] = 0.9d,
+                ["BestWidthOutput"] = 4d,
+                ["BestHeightOutput"] = 5d,
+                ["BestAspectRatioOutput"] = 0.8d,
+                ["BestPerimeterOutput"] = 12d,
+                ["BestCircleOutput"] = new Circle2D(point, 2),
+                ["BestContourOutput"] = new[] { point, new Point2D(17, 16), new Point2D(16, 17) },
+                ["BestRectOutput"] = new RoiDefinition
+                {
+                    Id = "stale-rect",
+                    Shape = RoiShapeKind.Rectangle,
+                    X = 14,
+                    Y = 14,
+                    Width = 4,
+                    Height = 5
+                }
+            },
+            VisionToolKind.MultiTargetMatch => new Dictionary<string, object>
+            {
+                ["PositionOutput"] = pose,
+                ["OriginOutput"] = pose,
+                ["BestPositionOutput"] = pose,
+                ["ScoreOutput"] = 0.9d,
+                ["XOutput"] = 16d,
+                ["YOutput"] = 16d,
+                ["AngleOutput"] = 0d,
+                ["CountOutput"] = 1,
+                ["AllPositionsOutput"] = new[] { pose },
+                ["ScoresOutput"] = new[] { 0.9d }
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
+        };
+
+        foreach (var output in staleOutputs)
+        {
+            context.SetPortOutput(definition, output.Key, output.Value);
+        }
+
+        if (kind == VisionToolKind.MultiTargetMatch)
+        {
+            context.Properties["pose"] = pose;
+        }
+    }
+
+    private static void AssertAllBusinessOutputsAreInaccessible(
+        VisionToolContext context,
+        VisionToolDefinition outputConsumer,
+        VisionToolKind kind)
+    {
+        foreach (var portKey in GetBusinessOutputPortKeys(kind))
+        {
+            Assert.False(
+                context.TryGetPortInputValue(outputConsumer, $"{portKey}Input", out _),
+                $"Stale output {portKey} remained accessible.");
+        }
+
+        if (kind == VisionToolKind.MultiTargetMatch)
+        {
+            Assert.False(context.Properties.ContainsKey("pose"));
+        }
+    }
+
+    private static double ParseScale(string value)
+    {
+        return value switch
+        {
+            "NaN" => double.NaN,
+            "0" => 0,
+            "-1" => -1,
+            _ => throw new ArgumentOutOfRangeException(nameof(value), value, null)
+        };
     }
 
     private static ImageFrame CreateFrame()

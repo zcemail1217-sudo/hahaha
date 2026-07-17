@@ -219,17 +219,17 @@ internal static class GeometryToolSupport
             return false;
         }
 
-        if (TryGetStandardPose(source.Parameters, out pose, out failure))
-        {
-            return true;
-        }
-
-        if (failure is not null)
+        if (!TryGetScale(source.Parameters, "standardScale", out var scale, out failure))
         {
             return false;
         }
 
-        return TryGetLearnedTemplatePose(source.Parameters, out pose);
+        if (TryGetStandardPose(source.Parameters, scale, out pose))
+        {
+            return true;
+        }
+
+        return TryGetLearnedTemplatePose(source.Parameters, scale, out pose);
     }
 
     private static bool TryGetTaughtReferencePose(
@@ -265,11 +265,10 @@ internal static class GeometryToolSupport
 
     private static bool TryGetStandardPose(
         IReadOnlyDictionary<string, string> parameters,
-        out Pose2D pose,
-        out PositionInputMappingFailure? failure)
+        double scale,
+        out Pose2D pose)
     {
         pose = new Pose2D(0, 0, 0);
-        failure = null;
         if (!TryGetDouble(parameters, "standardX", out var x) ||
             !TryGetDouble(parameters, "standardY", out var y))
         {
@@ -277,16 +276,14 @@ internal static class GeometryToolSupport
         }
 
         TryGetDouble(parameters, "standardAngle", out var angle);
-        if (!TryGetScale(parameters, "standardScale", out var scale, out failure))
-        {
-            return false;
-        }
-
         pose = new Pose2D(x, y, angle) { Scale = scale };
         return true;
     }
 
-    private static bool TryGetLearnedTemplatePose(IReadOnlyDictionary<string, string> parameters, out Pose2D pose)
+    private static bool TryGetLearnedTemplatePose(
+        IReadOnlyDictionary<string, string> parameters,
+        double scale,
+        out Pose2D pose)
     {
         pose = new Pose2D(0, 0, 0);
         if (!TryGetDouble(parameters, "templateX", out var x) ||
@@ -299,7 +296,7 @@ internal static class GeometryToolSupport
             return false;
         }
 
-        pose = new Pose2D(x + width / 2.0, y + height / 2.0, 0);
+        pose = new Pose2D(x + width / 2.0, y + height / 2.0, 0) { Scale = scale };
         return true;
     }
 
