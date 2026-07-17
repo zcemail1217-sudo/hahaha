@@ -25,26 +25,17 @@ public static class TemplateReferencePoseCodec
 
     private static TemplateLearnedGeometry? ReadHalcon(IReadOnlyDictionary<string, string> parameters)
     {
-        var requiredKeys = new[]
-        {
-            HalconStandardX,
-            HalconStandardY,
-            HalconStandardAngle,
-            HalconStandardScale,
-            HalconTemplateWidth,
-            HalconTemplateHeight
-        };
-        if (requiredKeys.Any(key => !parameters.ContainsKey(key)))
+        var hasX = TryReadOptionalFiniteDouble(parameters, HalconStandardX, out var x);
+        var hasY = TryReadOptionalFiniteDouble(parameters, HalconStandardY, out var y);
+        var hasAngle = TryReadOptionalFiniteDouble(parameters, HalconStandardAngle, out var angle);
+        var hasScale = TryReadOptionalScale(parameters, HalconStandardScale, out var scale);
+        var hasWidth = TryReadPositiveInt(parameters, HalconTemplateWidth, out var width);
+        var hasHeight = TryReadPositiveInt(parameters, HalconTemplateHeight, out var height);
+        if (!hasX || !hasY || !hasAngle || !hasScale || !hasWidth || !hasHeight)
         {
             return null;
         }
 
-        var x = ParseFiniteDouble(parameters[HalconStandardX], HalconStandardX);
-        var y = ParseFiniteDouble(parameters[HalconStandardY], HalconStandardY);
-        var angle = ParseFiniteDouble(parameters[HalconStandardAngle], HalconStandardAngle);
-        var scale = ParseScale(parameters[HalconStandardScale], HalconStandardScale);
-        var width = ParsePositiveInt(parameters[HalconTemplateWidth], HalconTemplateWidth);
-        var height = ParsePositiveInt(parameters[HalconTemplateHeight], HalconTemplateHeight);
         return new TemplateLearnedGeometry(
             new Pose2D(x, y, angle) { Scale = scale },
             width,
@@ -56,27 +47,28 @@ public static class TemplateReferencePoseCodec
         var scale = parameters.TryGetValue("standardScale", out var scaleRaw)
             ? ParseScale(scaleRaw, "standardScale")
             : 1d;
-        if (!TryReadPositiveInt(parameters, "templateWidth", out var width) ||
-            !TryReadPositiveInt(parameters, "templateHeight", out var height))
+        var hasWidth = TryReadPositiveInt(parameters, "templateWidth", out var width);
+        var hasHeight = TryReadPositiveInt(parameters, "templateHeight", out var height);
+        var hasStandardX = TryReadOptionalFiniteDouble(parameters, "standardX", out var standardX);
+        var hasStandardY = TryReadOptionalFiniteDouble(parameters, "standardY", out var standardY);
+        var angle = parameters.TryGetValue("standardAngle", out var angleRaw)
+            ? ParseFiniteDouble(angleRaw, "standardAngle")
+            : 0d;
+        var hasTemplateX = TryReadOptionalFiniteDouble(parameters, "templateX", out var templateX);
+        var hasTemplateY = TryReadOptionalFiniteDouble(parameters, "templateY", out var templateY);
+        if (!hasWidth || !hasHeight)
         {
             return null;
         }
 
-        var hasStandardX = TryReadOptionalFiniteDouble(parameters, "standardX", out var standardX);
-        var hasStandardY = TryReadOptionalFiniteDouble(parameters, "standardY", out var standardY);
         if (hasStandardX && hasStandardY)
         {
-            var angle = parameters.TryGetValue("standardAngle", out var angleRaw)
-                ? ParseFiniteDouble(angleRaw, "standardAngle")
-                : 0d;
             return new TemplateLearnedGeometry(
                 new Pose2D(standardX, standardY, angle) { Scale = scale },
                 width,
                 height);
         }
 
-        var hasTemplateX = TryReadOptionalFiniteDouble(parameters, "templateX", out var templateX);
-        var hasTemplateY = TryReadOptionalFiniteDouble(parameters, "templateY", out var templateY);
         if (!hasTemplateX || !hasTemplateY)
         {
             return null;
@@ -100,6 +92,21 @@ public static class TemplateReferencePoseCodec
         }
 
         value = ParseFiniteDouble(raw, key);
+        return true;
+    }
+
+    private static bool TryReadOptionalScale(
+        IReadOnlyDictionary<string, string> parameters,
+        string key,
+        out double value)
+    {
+        value = 0;
+        if (!parameters.TryGetValue(key, out var raw))
+        {
+            return false;
+        }
+
+        value = ParseScale(raw, key);
         return true;
     }
 

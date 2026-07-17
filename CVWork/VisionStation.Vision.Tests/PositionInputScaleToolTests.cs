@@ -873,6 +873,41 @@ public sealed class PositionInputScaleToolTests
         Assert.Equal("CONFIG_INVALID_PARAMETER", result.Data["code"]);
     }
 
+    [Theory]
+    [InlineData(VisionToolKind.FindLine)]
+    [InlineData(VisionToolKind.FindCircle)]
+    [InlineData(VisionToolKind.DefectDetect)]
+    [InlineData(VisionToolKind.MultiTargetMatch)]
+    public async Task PositionInputToolsRejectInvalidHalconScaleInIncompleteGeometryBeforeAlgorithmAndClearAllOutputs(
+        VisionToolKind kind)
+    {
+        var imageSource = new VisionToolDefinition { Id = "image-source" };
+        var positionSource = CreateHalconPositionSource("NaN");
+        positionSource.Parameters.Remove("halcon.templateHeight");
+        var definition = CreatePositionInputDefinition(kind, imageSource, positionSource, "1");
+        RemoveTaughtReferencePose(definition);
+        AddRealTemplateParametersIfRequired(definition);
+        var outputConsumer = CreateAllOutputConsumer(definition, kind);
+        using var context = CreatePositionInputContext(
+            imageSource,
+            positionSource,
+            definition,
+            outputConsumer,
+            CreateBoundRoi(kind));
+        SeedAllBusinessOutputs(context, definition, kind);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var result = await CreateTool(kind).ExecuteAsync(
+            definition,
+            context,
+            cancellation.Token);
+
+        Assert.Equal(InspectionOutcome.Ng, result.Outcome);
+        Assert.Equal("CONFIG_INVALID_PARAMETER", result.Data["code"]);
+        AssertAllBusinessOutputsAreInaccessible(context, outputConsumer, kind);
+    }
+
     private static VisionToolDefinition CreatePositionInputDefinition(
         VisionToolKind kind,
         VisionToolDefinition imageSource,

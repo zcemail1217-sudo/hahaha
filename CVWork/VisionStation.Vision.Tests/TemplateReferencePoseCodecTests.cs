@@ -190,6 +190,75 @@ public sealed class TemplateReferencePoseCodecTests
         Assert.Equal(TemplateMatchingDiagnosticCodes.ConfigInvalidParameter, exception.Code);
     }
 
+    public static IEnumerable<object[]> InvalidIncompleteHalconActiveFields()
+    {
+        yield return ["halcon.standardX", "NaN", "halcon.templateHeight"];
+        yield return ["halcon.standardY", "Infinity", "halcon.templateHeight"];
+        yield return ["halcon.standardAngle", "not-a-number", "halcon.templateHeight"];
+        yield return ["halcon.standardScale", "NaN", "halcon.templateHeight"];
+        yield return ["halcon.standardScale", "0", "halcon.templateHeight"];
+        yield return ["halcon.standardScale", "-1", "halcon.templateHeight"];
+        yield return ["halcon.templateWidth", "0", "halcon.templateHeight"];
+        yield return ["halcon.templateHeight", "garbage", "halcon.templateWidth"];
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidIncompleteHalconActiveFields))]
+    public void HalconRejectsEveryExplicitInvalidActiveFieldBeforeCheckingCompleteness(
+        string invalidKey,
+        string invalidValue,
+        string missingKey)
+    {
+        var parameters = CompleteHalconGeometry();
+        parameters[invalidKey] = invalidValue;
+        parameters.Remove(missingKey);
+
+        var exception = Assert.Throws<TemplateMatchingConfigurationException>(() =>
+            TemplateReferencePoseCodec.ReadActive(parameters));
+
+        Assert.Equal(TemplateMatchingDiagnosticCodes.ConfigInvalidParameter, exception.Code);
+    }
+
+    public static IEnumerable<object[]> InvalidIncompleteLegacyActiveFields()
+    {
+        yield return ["standardX", "NaN", "templateHeight"];
+        yield return ["standardY", "Infinity", "templateHeight"];
+        yield return ["standardAngle", "not-a-number", "templateHeight"];
+        yield return ["standardScale", "NaN", "templateHeight"];
+        yield return ["templateX", "NaN", "templateHeight"];
+        yield return ["templateY", "Infinity", "templateHeight"];
+        yield return ["templateWidth", "0", "templateHeight"];
+        yield return ["templateHeight", "0", "templateWidth"];
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidIncompleteLegacyActiveFields))]
+    public void LegacyRejectsEveryExplicitInvalidActiveFieldBeforeCheckingCompleteness(
+        string invalidKey,
+        string invalidValue,
+        string missingKey)
+    {
+        var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["engine"] = "OpenCv",
+            ["standardX"] = "10",
+            ["standardY"] = "20",
+            ["standardAngle"] = "30",
+            ["standardScale"] = "1",
+            ["templateX"] = "5",
+            ["templateY"] = "7",
+            ["templateWidth"] = "40",
+            ["templateHeight"] = "50"
+        };
+        parameters[invalidKey] = invalidValue;
+        parameters.Remove(missingKey);
+
+        var exception = Assert.Throws<TemplateMatchingConfigurationException>(() =>
+            TemplateReferencePoseCodec.ReadActive(parameters));
+
+        Assert.Equal(TemplateMatchingDiagnosticCodes.ConfigInvalidParameter, exception.Code);
+    }
+
     [Theory]
     [InlineData("NaN")]
     [InlineData("0")]
