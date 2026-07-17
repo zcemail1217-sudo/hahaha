@@ -40,7 +40,7 @@ public sealed class PositionInputScaleDialogViewModelTests
         var pipeline = new PoseResultPipeline(
             frame,
             source.Id,
-            new Pose2D(100, 200, 30) { Scale = 1.1 });
+            new Pose2D(100, 200, 30) { Scale = 0.0004 });
         var viewModel = new FindLineToolDialogViewModel(
             tool,
             [roi],
@@ -53,7 +53,7 @@ public sealed class PositionInputScaleDialogViewModelTests
         var applied = await viewModel.ApplyToAsync(tool);
 
         Assert.True(applied);
-        Assert.Equal("1.1", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
+        Assert.Equal("0.0004", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public sealed class PositionInputScaleDialogViewModelTests
         var pipeline = new PoseResultPipeline(
             frame,
             source.Id,
-            new Pose2D(100, 200, 30) { Scale = 0.9 });
+            new Pose2D(100, 200, 30) { Scale = 0.0004 });
         var viewModel = new FindCircleToolDialogViewModel(
             tool,
             [roi],
@@ -99,7 +99,7 @@ public sealed class PositionInputScaleDialogViewModelTests
         var applied = await viewModel.ApplyToAsync(tool);
 
         Assert.True(applied);
-        Assert.Equal("0.9", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
+        Assert.Equal("0.0004", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
     }
 
     [Fact]
@@ -133,7 +133,7 @@ public sealed class PositionInputScaleDialogViewModelTests
         var pipeline = new PoseResultPipeline(
             frame,
             source.Id,
-            new Pose2D(100, 200, 30) { Scale = 1.25 });
+            new Pose2D(100, 200, 30) { Scale = 0.0004 });
         var viewModel = new BlobAnalysisToolDialogViewModel(
             tool,
             [roi],
@@ -146,7 +146,7 @@ public sealed class PositionInputScaleDialogViewModelTests
         var applied = await viewModel.ApplyToAsync(tool);
 
         Assert.True(applied);
-        Assert.Equal("1.25", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
+        Assert.Equal("0.0004", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
     }
 
     [Fact]
@@ -180,7 +180,7 @@ public sealed class PositionInputScaleDialogViewModelTests
         var pipeline = new PoseResultPipeline(
             frame,
             source.Id,
-            new Pose2D(100, 200, 30) { Scale = 1.2 });
+            new Pose2D(100, 200, 30) { Scale = 0.0004 });
         var viewModel = new TemplateLocateToolDialogViewModel(
             tool,
             Array.Empty<RoiChoiceItem>(),
@@ -196,7 +196,7 @@ public sealed class PositionInputScaleDialogViewModelTests
         viewModel.ApplyTo(tool);
 
         Assert.True(prepared);
-        Assert.Equal("1.2", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
+        Assert.Equal("0.0004", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
     }
 
     [Fact]

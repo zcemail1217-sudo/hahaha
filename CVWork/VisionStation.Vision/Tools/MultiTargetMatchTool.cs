@@ -83,7 +83,7 @@ public sealed class MultiTargetMatchTool : IVisionTool
             ["x"] = best?.X.ToInvariant() ?? "0",
             ["y"] = best?.Y.ToInvariant() ?? "0",
             ["angle"] = best?.Angle.ToInvariant() ?? "0",
-            ["scale"] = best?.Scale.ToInvariant() ?? "1",
+            ["scale"] = best?.Scale.ToRoundTripScaleInvariant() ?? "1",
             ["inputFrameId"] = frame.Id,
             ["templateWidth"] = best?.Width.ToString() ?? definition.Parameters.GetValueOrDefault("templateWidth") ?? "0",
             ["templateHeight"] = best?.Height.ToString() ?? definition.Parameters.GetValueOrDefault("templateHeight") ?? "0",

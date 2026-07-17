@@ -981,7 +981,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         _parameters["standardX"] = _matchX.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["standardY"] = _matchY.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["standardAngle"] = _matchAngle.ToString("0.###", CultureInfo.InvariantCulture);
-        _parameters["standardScale"] = _matchScale.ToString("0.###", CultureInfo.InvariantCulture);
+        _parameters["standardScale"] = _matchScale.ToString("R", CultureInfo.InvariantCulture);
         StatusText = $"已设置当前匹配结果为标准：{PoseText}";
     }
 
@@ -1129,7 +1129,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         _parameters["standardX"] = match.Pose.X.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["standardY"] = match.Pose.Y.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["standardAngle"] = match.Pose.Angle.ToString("0.###", CultureInfo.InvariantCulture);
-        _parameters["standardScale"] = match.Pose.Scale.ToString("0.###", CultureInfo.InvariantCulture);
+        _parameters["standardScale"] = match.Pose.Scale.ToString("R", CultureInfo.InvariantCulture);
         return true;
     }
 
@@ -1311,7 +1311,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         _parameters["roiReferencePoseX"] = pose.X.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["roiReferencePoseY"] = pose.Y.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["roiReferencePoseAngle"] = pose.Angle.ToString("0.###", CultureInfo.InvariantCulture);
-        _parameters["roiReferencePoseScale"] = pose.Scale.ToString("0.###", CultureInfo.InvariantCulture);
+        _parameters["roiReferencePoseScale"] = pose.Scale.ToString("R", CultureInfo.InvariantCulture);
         _parameters["roiReferencePoseToolId"] = GetPositionInputSourceToolId();
     }
 
@@ -2164,7 +2164,8 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                      "templateSourceRoiId",
                      "standardX",
                      "standardY",
-                     "standardAngle"
+                     "standardAngle",
+                     "standardScale"
                  })
         {
             _parameters.Remove(key);

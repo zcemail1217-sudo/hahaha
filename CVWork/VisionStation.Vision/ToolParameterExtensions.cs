@@ -17,6 +17,11 @@ internal static class ToolParameterExtensions
         return value.ToString("0.###", CultureInfo.InvariantCulture);
     }
 
+    public static string ToRoundTripScaleInvariant(this double value)
+    {
+        return value.ToString("R", CultureInfo.InvariantCulture);
+    }
+
     private static bool TryParseFlexibleDouble(string? text, out double value)
     {
         if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value) ||

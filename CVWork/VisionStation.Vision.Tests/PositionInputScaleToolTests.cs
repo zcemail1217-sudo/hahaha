@@ -125,14 +125,14 @@ public sealed class PositionInputScaleToolTests
     }
 
     [Theory]
-    [InlineData("NaN", "NaN")]
-    [InlineData("0", "0")]
-    [InlineData("-1", "-1")]
-    [InlineData("not-a-number", "'not-a-number'")]
-    [InlineData("", "''")]
+    [InlineData("NaN")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("not-a-number")]
+    [InlineData("")]
+    [InlineData("1e309")]
     public async Task FindLineRejectsInvalidReferenceScaleBeforeAlgorithmAndClearsOutputs(
-        string scale,
-        string expectedActualValue)
+        string scale)
     {
         var imageSource = new VisionToolDefinition { Id = "image-source" };
         var positionSource = new VisionToolDefinition { Id = "position-source" };
@@ -173,7 +173,7 @@ public sealed class PositionInputScaleToolTests
         Assert.Equal(InspectionOutcome.Ng, result.Outcome);
         Assert.Equal("CONFIG_INVALID_PARAMETER", result.Data["code"]);
         Assert.Equal(
-            $"Position input mapping failed: roiReferencePoseScale must be finite and greater than zero; actual value is {expectedActualValue}.",
+            $"Position input mapping failed: roiReferencePoseScale must be finite and greater than zero; actual value is '{scale}'.",
             result.Message);
         Assert.False(context.TryGetPortInput<Line2D>(outputConsumer, "LineInput", out _));
         Assert.False(context.TryGetPortInput<Point2D>(outputConsumer, "PointInput", out _));
@@ -715,6 +715,19 @@ public sealed class PositionInputScaleToolTests
         };
 
         Assert.Equal(1.1, candidate.Pose.Scale, 6);
+    }
+
+    [Fact]
+    public void TemplateAndMultiTargetResultScaleFormatterRoundTripsSmallPositiveScale()
+    {
+        const double scale = 0.0004;
+
+        var serialized = scale.ToRoundTripScaleInvariant();
+
+        Assert.NotEqual("0", serialized);
+        Assert.Equal(
+            scale,
+            double.Parse(serialized, System.Globalization.CultureInfo.InvariantCulture));
     }
 
     [Fact]

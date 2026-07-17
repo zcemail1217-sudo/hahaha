@@ -116,7 +116,9 @@ internal static class GeometryToolSupport
 
         if (!PoseSimilarityTransform.IsValidScale(positionInput.Scale))
         {
-            failure = CreateInvalidScaleFailure("PositionInput.Scale", positionInput.Scale);
+            failure = CreateInvalidScaleFailure(
+                "PositionInput.Scale",
+                positionInput.Scale.ToString("R", CultureInfo.InvariantCulture));
             return false;
         }
 
@@ -407,7 +409,7 @@ internal static class GeometryToolSupport
 
         if (!PoseSimilarityTransform.IsValidScale(scale))
         {
-            failure = CreateInvalidScaleFailure(key, scale);
+            failure = CreateInvalidScaleFailure(key, rawValue);
             return false;
         }
 
@@ -419,13 +421,6 @@ internal static class GeometryToolSupport
         return new PositionInputMappingFailure(
             "CONFIG_INVALID_PARAMETER",
             $"Position input mapping failed: {parameter} must be finite and greater than zero; actual value is '{value}'.");
-    }
-
-    private static PositionInputMappingFailure CreateInvalidScaleFailure(string parameter, double value)
-    {
-        return new PositionInputMappingFailure(
-            "CONFIG_INVALID_PARAMETER",
-            $"Position input mapping failed: {parameter} must be finite and greater than zero; actual value is {value.ToString(CultureInfo.InvariantCulture)}.");
     }
 
     private sealed record Bounds(double X, double Y, double Width, double Height);

@@ -953,7 +953,7 @@ public sealed class BlobAnalysisToolDialogViewModel : BindableBase
         _parameters["roiReferencePoseX"] = pose.X.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["roiReferencePoseY"] = pose.Y.ToString("0.###", CultureInfo.InvariantCulture);
         _parameters["roiReferencePoseAngle"] = pose.Angle.ToString("0.###", CultureInfo.InvariantCulture);
-        _parameters["roiReferencePoseScale"] = pose.Scale.ToString("0.###", CultureInfo.InvariantCulture);
+        _parameters["roiReferencePoseScale"] = pose.Scale.ToString("R", CultureInfo.InvariantCulture);
         _parameters["roiReferencePoseToolId"] = GetPositionInputSourceToolId();
     }
 

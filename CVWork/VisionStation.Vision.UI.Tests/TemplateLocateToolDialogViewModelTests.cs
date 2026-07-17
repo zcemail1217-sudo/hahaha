@@ -252,6 +252,32 @@ public sealed class TemplateLocateToolDialogViewModelTests
     }
 
     [Fact]
+    public void ResetTemplateCommandRemovesCompleteStandardPoseAndKeepsUnrelatedParameters()
+    {
+        using var tempDirectory = new TempDirectory();
+        var tool = new VisionToolItem
+        {
+            Id = "template-tool",
+            Kind = VisionToolKind.TemplateLocate,
+            ParametersText =
+                "standardX=10; standardY=20; standardAngle=30; standardScale=0.0004; " +
+                "minScore=0.75; keepMe=unchanged"
+        };
+        var viewModel = CreateViewModel(tool, tempDirectory);
+
+        viewModel.ResetTemplateCommand.Execute();
+        viewModel.ApplyTo(tool);
+
+        var saved = tool.ToDefinition().Parameters;
+        Assert.False(saved.ContainsKey("standardX"));
+        Assert.False(saved.ContainsKey("standardY"));
+        Assert.False(saved.ContainsKey("standardAngle"));
+        Assert.False(saved.ContainsKey("standardScale"));
+        Assert.Equal("0.75", saved["minScore"]);
+        Assert.Equal("unchanged", saved["keepMe"]);
+    }
+
+    [Fact]
     public void SetStandardWithoutMultiTargetMatchReportsThatMatchingIsRequired()
     {
         using var tempDirectory = new TempDirectory();
