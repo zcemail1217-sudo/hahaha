@@ -423,14 +423,17 @@ public sealed class PositionInputScaleDialogViewModelTests
     }
 
     [Fact]
-    public async Task MultiTargetPrepareWithoutPositionInputRemovesReferenceScale()
+    public async Task MultiTargetPrepareWithoutPositionInputRemovesCompleteReference()
     {
         var frame = CreateFrame();
         var tool = new VisionToolItem
         {
             Id = "multi-target",
             Kind = VisionToolKind.MultiTargetMatch,
-            ParametersText = "roiReferencePoseScale=1.1"
+            ParametersText =
+                "roiReferencePoseX=100; roiReferencePoseY=200; " +
+                "roiReferencePoseAngle=30; roiReferencePoseScale=1.1; " +
+                "roiReferencePoseToolId=old-source"
         };
         var viewModel = new TemplateLocateToolDialogViewModel(
             tool,
@@ -447,7 +450,9 @@ public sealed class PositionInputScaleDialogViewModelTests
         viewModel.ApplyTo(tool);
 
         Assert.True(prepared);
-        Assert.False(tool.ToDefinition().Parameters.ContainsKey("roiReferencePoseScale"));
+        Assert.DoesNotContain(
+            tool.ToDefinition().Parameters.Keys,
+            key => key.StartsWith("roiReferencePose", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -491,6 +496,99 @@ public sealed class PositionInputScaleDialogViewModelTests
 
         Assert.True(prepared);
         Assert.Equal("1.2", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
+    }
+
+    [Fact]
+    public void MultiTargetRunRecapturesReferenceAfterPositionInputSourceChanges()
+    {
+        var scenario = CreateMultiTargetRunScenario(
+            roiReferenceScale: "0.5",
+            sourceStandardScale: null,
+            currentScale: 1.25,
+            sourceToolId: "new-source",
+            referenceToolId: "old-source");
+
+        scenario.ViewModel.RunToolCommand.Execute();
+
+        Assert.True(
+            SpinWait.SpinUntil(() => !scenario.ViewModel.IsBusy, TimeSpan.FromSeconds(10)),
+            $"Multi-target preview did not finish: {scenario.ViewModel.StatusText}");
+        Assert.Equal(1, scenario.Pipeline.ExecutionCount);
+        var searchOverlay = Assert.Single(
+            scenario.ViewModel.PreviewOverlays,
+            overlay => overlay.Kind == VisionOverlayKind.Rectangle &&
+                       overlay.State == VisionOverlayState.Warning);
+        Assert.Equal(4, searchOverlay.X, 6);
+        Assert.Equal(4, searchOverlay.Y, 6);
+        Assert.Equal(12, searchOverlay.Width, 6);
+        Assert.Equal(10, searchOverlay.Height, 6);
+
+        scenario.ViewModel.ApplyTo(scenario.Tool);
+        var saved = scenario.Tool.ToDefinition().Parameters;
+        Assert.Equal("20", saved["roiReferencePoseX"]);
+        Assert.Equal("16", saved["roiReferencePoseY"]);
+        Assert.Equal("1.25", saved["roiReferencePoseScale"]);
+        Assert.Equal("new-source", saved["roiReferencePoseToolId"]);
+    }
+
+    [Theory]
+    [InlineData("not-a-number")]
+    [InlineData("NaN")]
+    public void MultiTargetRunIgnoresStaleInvalidReferenceScaleFromPreviousSource(string staleScale)
+    {
+        var scenario = CreateMultiTargetRunScenario(
+            roiReferenceScale: staleScale,
+            sourceStandardScale: null,
+            currentScale: 1.2,
+            sourceToolId: "new-source",
+            referenceToolId: "old-source");
+
+        scenario.ViewModel.RunToolCommand.Execute();
+
+        Assert.True(
+            SpinWait.SpinUntil(() => !scenario.ViewModel.IsBusy, TimeSpan.FromSeconds(10)),
+            $"Multi-target preview did not finish: {scenario.ViewModel.StatusText}");
+        Assert.Equal(1, scenario.Pipeline.ExecutionCount);
+        Assert.DoesNotContain("roiReferencePoseScale must", scenario.ViewModel.StatusText);
+        scenario.ViewModel.ApplyTo(scenario.Tool);
+        var saved = scenario.Tool.ToDefinition().Parameters;
+        Assert.Equal("1.2", saved["roiReferencePoseScale"]);
+        Assert.Equal("new-source", saved["roiReferencePoseToolId"]);
+    }
+
+    [Fact]
+    public async Task MultiTargetLegacyReferenceWithoutToolIdRemainsCompatible()
+    {
+        var frame = CreateFrame();
+        var source = new VisionToolDefinition { Id = "position-source", Kind = VisionToolKind.TemplateLocate };
+        var tool = new VisionToolItem
+        {
+            Id = "multi-target",
+            Kind = VisionToolKind.MultiTargetMatch,
+            ParametersText =
+                "input:PositionInput:toolId=position-source; " +
+                "roiReferencePoseX=100; roiReferencePoseY=200; " +
+                "roiReferencePoseAngle=30; roiReferencePoseScale=1.1"
+        };
+        var viewModel = new TemplateLocateToolDialogViewModel(
+            tool,
+            Array.Empty<RoiChoiceItem>(),
+            Array.Empty<RoiDefinition>(),
+            "Flow",
+            frame,
+            new RuntimePaths(Path.GetTempPath()),
+            new NullAppLogService(),
+            new Recipe { Tools = [source] },
+            new UnexpectedPipeline());
+
+        Assert.True(await viewModel.PrepareToCloseAsync());
+        viewModel.ApplyTo(tool);
+
+        var saved = tool.ToDefinition().Parameters;
+        Assert.Equal("100", saved["roiReferencePoseX"]);
+        Assert.Equal("200", saved["roiReferencePoseY"]);
+        Assert.Equal("1.1", saved["roiReferencePoseScale"]);
+        Assert.False(saved.ContainsKey("roiReferencePoseToolId"));
     }
 
     [Fact]
@@ -909,7 +1007,9 @@ public sealed class PositionInputScaleDialogViewModelTests
         string? roiReferenceScale,
         string? sourceStandardScale,
         double currentScale,
-        bool hasBoundRoi = true)
+        bool hasBoundRoi = true,
+        string sourceToolId = "position-source",
+        string? referenceToolId = null)
     {
         var frame = CreateFrame();
         var sourceParameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -924,7 +1024,7 @@ public sealed class PositionInputScaleDialogViewModelTests
 
         var source = new VisionToolDefinition
         {
-            Id = "position-source",
+            Id = sourceToolId,
             Kind = VisionToolKind.TemplateLocate,
             Parameters = sourceParameters
         };
@@ -957,7 +1057,7 @@ public sealed class PositionInputScaleDialogViewModelTests
             parameters["roiReferencePoseY"] = "8";
             parameters["roiReferencePoseAngle"] = "0";
             parameters["roiReferencePoseScale"] = roiReferenceScale;
-            parameters["roiReferencePoseToolId"] = source.Id;
+            parameters["roiReferencePoseToolId"] = referenceToolId ?? source.Id;
         }
 
         var tool = new VisionToolItem

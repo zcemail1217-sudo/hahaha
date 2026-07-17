@@ -60,6 +60,9 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     private double _matchScale = 1;
     private TemplateMatchResult? _lastTemplateMatch;
     private IReadOnlyList<MultiTargetMatchCandidate> _multiMatches = Array.Empty<MultiTargetMatchCandidate>();
+    private readonly ObservableCollection<MultiTargetMatchPointItem> _multiTargetResultPoints = new();
+    private readonly Dictionary<MultiTargetMatchPointItem, MultiTargetMatchCandidate> _multiTargetCandidates =
+        new(ReferenceEqualityComparer.Instance);
     private MultiTargetMatchPointItem? _selectedMultiTargetResultPoint;
     private RoiDefinition? _mappedSearchRoi;
     private bool _roiReferenceDirty;
@@ -91,8 +94,9 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         _toolId = tool.Id;
         _toolKind = tool.Kind == VisionToolKind.MultiTargetMatch ? VisionToolKind.MultiTargetMatch : VisionToolKind.TemplateLocate;
         var parameters = _parameters;
+        var positionSourceToolId = GetPositionInputSourceToolId();
         _roiReferenceDirty = _toolKind == VisionToolKind.MultiTargetMatch &&
-                             ReadRoiReferencePose(parameters).Status != PoseReadStatus.Success;
+                             ReadRoiReferencePose(parameters, positionSourceToolId).Status != PoseReadStatus.Success;
 
         _name = tool.Name;
         _roiId = tool.RoiId;
@@ -164,6 +168,8 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         CreatedRois = new ObservableCollection<RoiDefinition>();
         RemovedRoiIds = new ObservableCollection<string>();
         EditableRois = new ObservableCollection<RoiEditorItem>();
+        MultiTargetResultPoints = new ReadOnlyObservableCollection<MultiTargetMatchPointItem>(
+            _multiTargetResultPoints);
         OutputOptions = new ObservableCollection<ToolOutputOptionItem>(CreateOutputOptions(_toolKind, _parameters));
         Polarities = new ObservableCollection<string>
         {
@@ -260,14 +266,17 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
     public ObservableCollection<ToolOutputOptionItem> OutputOptions { get; }
 
-    public ObservableCollection<MultiTargetMatchPointItem> MultiTargetResultPoints { get; } = new();
+    public ReadOnlyObservableCollection<MultiTargetMatchPointItem> MultiTargetResultPoints { get; }
 
     public MultiTargetMatchPointItem? SelectedMultiTargetResultPoint
     {
         get => _selectedMultiTargetResultPoint;
         set
         {
-            if (SetProperty(ref _selectedMultiTargetResultPoint, value))
+            var authoritativeSelection = value is not null && _multiTargetCandidates.ContainsKey(value)
+                ? value
+                : null;
+            if (SetProperty(ref _selectedMultiTargetResultPoint, authoritativeSelection))
             {
                 ApplySelectedMultiTargetResultPoint();
                 RefreshPreviewOverlays();
@@ -963,17 +972,17 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
     private void SetStandard()
     {
-        if (_hasMatchResult)
+        if (!_hasMatchResult)
         {
-            _parameters["standardX"] = _matchX.ToString("0.###", CultureInfo.InvariantCulture);
-            _parameters["standardY"] = _matchY.ToString("0.###", CultureInfo.InvariantCulture);
-            _parameters["standardAngle"] = _matchAngle.ToString("0.###", CultureInfo.InvariantCulture);
-            _parameters["standardScale"] = _matchScale.ToString("0.###", CultureInfo.InvariantCulture);
+            StatusText = "请先匹配模板，再设置标准";
+            return;
         }
 
-        StatusText = ScoreText == "-"
-            ? "请先匹配模板，再设置标准"
-            : $"已设置当前匹配结果为标准：{PoseText}";
+        _parameters["standardX"] = _matchX.ToString("0.###", CultureInfo.InvariantCulture);
+        _parameters["standardY"] = _matchY.ToString("0.###", CultureInfo.InvariantCulture);
+        _parameters["standardAngle"] = _matchAngle.ToString("0.###", CultureInfo.InvariantCulture);
+        _parameters["standardScale"] = _matchScale.ToString("0.###", CultureInfo.InvariantCulture);
+        StatusText = $"已设置当前匹配结果为标准：{PoseText}";
     }
 
     private async Task RunToolAsync()
@@ -1006,7 +1015,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         try
         {
             _lastTemplateMatch = null;
-            _hasMatchResult = false;
+            ClearMultiTargetResults();
             _mappedSearchRoi = null;
             RefreshPreviewOverlays();
             SyncEditorRois();
@@ -1055,11 +1064,9 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                 var multiMatch = await Task.Run(() => MultiTargetMatcher.Match(frame, roi, parameters));
                 stopwatch.Stop();
 
-                _multiMatches = multiMatch.Matches;
-                SetMultiTargetResults(_multiMatches);
+                SetMultiTargetResults(multiMatch.Matches);
                 DurationText = $"{stopwatch.ElapsedMilliseconds}ms";
                 _matchState = multiMatch.Outcome == InspectionOutcome.Ok ? VisionOverlayState.Ok : VisionOverlayState.Ng;
-                _hasMatchResult = _multiMatches.Count > 0;
                 if (MultiTargetResultPoints.FirstOrDefault() is { } bestPoint)
                 {
                     SelectedMultiTargetResultPoint = bestPoint;
@@ -1087,7 +1094,6 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             stopwatch.Stop();
 
             _lastTemplateMatch = match;
-            _multiMatches = Array.Empty<MultiTargetMatchCandidate>();
             ClearMultiTargetResults();
             ScoreText = match.Score.ToString("0.000", CultureInfo.InvariantCulture);
             PoseText = $"X:{match.Pose.X:0.0} Y:{match.Pose.Y:0.0} A:{match.Pose.Angle:0.00}";
@@ -1267,12 +1273,6 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     private void ClearFailedRunResult(string errorMessage)
     {
         _lastTemplateMatch = null;
-        _multiMatches = Array.Empty<MultiTargetMatchCandidate>();
-        _hasMatchResult = false;
-        _matchState = VisionOverlayState.Neutral;
-        ScoreText = "-";
-        PoseText = "-";
-        DurationText = "0ms";
         ClearMultiTargetResults();
         RefreshPreviewOverlays();
         StatusText = errorMessage;
@@ -1337,7 +1337,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             return PoseReadResult.Missing();
         }
 
-        var taughtReference = ReadRoiReferencePose(_parameters);
+        var taughtReference = ReadRoiReferencePose(_parameters, sourceToolId);
         return taughtReference.Status == PoseReadStatus.Missing
             ? ReadPositionSourceReferencePose(sourceToolId)
             : taughtReference;
@@ -1388,8 +1388,22 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             });
     }
 
-    private static PoseReadResult ReadRoiReferencePose(IReadOnlyDictionary<string, string> parameters)
+    private static PoseReadResult ReadRoiReferencePose(
+        IReadOnlyDictionary<string, string> parameters,
+        string sourceToolId)
     {
+        if (string.IsNullOrWhiteSpace(sourceToolId))
+        {
+            return PoseReadResult.Missing();
+        }
+
+        var referenceToolId = parameters.GetValueOrDefault("roiReferencePoseToolId") ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(referenceToolId) &&
+            !string.Equals(referenceToolId, sourceToolId, StringComparison.OrdinalIgnoreCase))
+        {
+            return PoseReadResult.Missing();
+        }
+
         var scale = 1d;
         if (parameters.ContainsKey("roiReferencePoseScale") &&
             (!TryGetDouble(parameters, "roiReferencePoseScale", out scale) ||
@@ -1415,11 +1429,14 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
     private void SetMultiTargetResults(IReadOnlyList<MultiTargetMatchCandidate> matches)
     {
-        SelectedMultiTargetResultPoint = null;
-        MultiTargetResultPoints.Clear();
+        ClearMultiTargetResults();
+        _multiMatches = matches;
         for (var index = 0; index < matches.Count; index++)
         {
-            MultiTargetResultPoints.Add(MultiTargetMatchPointItem.FromCandidate(index + 1, matches[index]));
+            var candidate = matches[index];
+            var point = MultiTargetMatchPointItem.FromCandidate(index + 1, candidate);
+            _multiTargetResultPoints.Add(point);
+            _multiTargetCandidates.Add(point, candidate);
         }
 
         RaisePropertyChanged(nameof(HasMultiTargetResultPoints));
@@ -1430,25 +1447,44 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     {
         if (_toolKind != VisionToolKind.MultiTargetMatch ||
             SelectedMultiTargetResultPoint is not { } selected ||
-            !MultiTargetResultPoints.Contains(selected))
+            !_multiTargetCandidates.TryGetValue(selected, out var candidate))
         {
+            _hasMatchResult = false;
+            _matchX = 0;
+            _matchY = 0;
+            _matchAngle = 0;
+            _matchScale = 1;
+            ScoreText = "-";
+            PoseText = "-";
             return;
         }
 
-        _matchX = selected.Pose.X;
-        _matchY = selected.Pose.Y;
-        _matchAngle = selected.Pose.Angle;
-        _matchScale = selected.Pose.Scale;
+        var pose = candidate.Pose;
+        _matchX = pose.X;
+        _matchY = pose.Y;
+        _matchAngle = pose.Angle;
+        _matchScale = pose.Scale;
         _hasMatchResult = true;
-        ScoreText = selected.NumericScore.ToString("0.000", CultureInfo.InvariantCulture);
+        ScoreText = candidate.Score.ToString("0.000", CultureInfo.InvariantCulture);
         PoseText = $"Count:{MultiTargetResultPoints.Count} Selected #{selected.Index} " +
-                   $"X:{selected.Pose.X:0.0} Y:{selected.Pose.Y:0.0} A:{selected.Pose.Angle:0.00}";
+                   $"X:{pose.X:0.0} Y:{pose.Y:0.0} A:{pose.Angle:0.00}";
     }
 
     private void ClearMultiTargetResults()
     {
         SelectedMultiTargetResultPoint = null;
-        MultiTargetResultPoints.Clear();
+        _multiMatches = Array.Empty<MultiTargetMatchCandidate>();
+        _multiTargetCandidates.Clear();
+        _multiTargetResultPoints.Clear();
+        _hasMatchResult = false;
+        _matchState = VisionOverlayState.Neutral;
+        _matchX = 0;
+        _matchY = 0;
+        _matchAngle = 0;
+        _matchScale = 1;
+        ScoreText = "-";
+        PoseText = "-";
+        DurationText = "0ms";
         RaisePropertyChanged(nameof(HasMultiTargetResultPoints));
         RaisePropertyChanged(nameof(MultiTargetResultSummary));
     }
@@ -1500,53 +1536,22 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
         if (_toolKind == VisionToolKind.MultiTargetMatch)
         {
-            if (SelectedMultiTargetResultPoint is not { } selectedPoint)
+            if (SelectedMultiTargetResultPoint is not { } selectedPoint ||
+                !_multiTargetCandidates.TryGetValue(selectedPoint, out var match))
             {
                 return;
             }
 
-            var selectedIndex = selectedPoint.Index;
-            var visibleMatches = _multiMatches
-                .Select((match, index) => new { Match = match, Index = index + 1 })
-                .Where(item => item.Index == selectedIndex)
-                .ToArray();
-
-            foreach (var item in visibleMatches)
+            if (match.Shape.Equals("Circle", StringComparison.OrdinalIgnoreCase))
             {
-                var match = item.Match;
-                if (match.Shape.Equals("Circle", StringComparison.OrdinalIgnoreCase))
-                {
-                    PreviewOverlays.Add(new VisionOverlayItem
-                    {
-                        Kind = VisionOverlayKind.Circle,
-                        State = _matchState,
-                        Label = $"#{item.Index}",
-                        X = match.X,
-                        Y = match.Y,
-                        Radius = match.Radius > 0 ? match.Radius : Math.Max(match.Width, match.Height) / 2.0
-                    });
-                    PreviewOverlays.Add(new VisionOverlayItem
-                    {
-                        Kind = VisionOverlayKind.Cross,
-                        State = _matchState,
-                        Label = string.Empty,
-                        X = match.X,
-                        Y = match.Y,
-                        Angle = match.Angle
-                    });
-                    continue;
-                }
-
                 PreviewOverlays.Add(new VisionOverlayItem
                 {
-                    Kind = VisionOverlayKind.RotatedRectangle,
+                    Kind = VisionOverlayKind.Circle,
                     State = _matchState,
-                    Label = $"#{item.Index}",
+                    Label = $"#{selectedPoint.Index}",
                     X = match.X,
                     Y = match.Y,
-                    Width = Math.Max(12, match.Width),
-                    Height = Math.Max(12, match.Height),
-                    Angle = match.Angle
+                    Radius = match.Radius > 0 ? match.Radius : Math.Max(match.Width, match.Height) / 2.0
                 });
                 PreviewOverlays.Add(new VisionOverlayItem
                 {
@@ -1557,7 +1562,29 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                     Y = match.Y,
                     Angle = match.Angle
                 });
+                return;
             }
+
+            PreviewOverlays.Add(new VisionOverlayItem
+            {
+                Kind = VisionOverlayKind.RotatedRectangle,
+                State = _matchState,
+                Label = $"#{selectedPoint.Index}",
+                X = match.X,
+                Y = match.Y,
+                Width = Math.Max(12, match.Width),
+                Height = Math.Max(12, match.Height),
+                Angle = match.Angle
+            });
+            PreviewOverlays.Add(new VisionOverlayItem
+            {
+                Kind = VisionOverlayKind.Cross,
+                State = _matchState,
+                Label = string.Empty,
+                X = match.X,
+                Y = match.Y,
+                Angle = match.Angle
+            });
 
             return;
         }

@@ -48,8 +48,10 @@ public sealed class MultiTargetMatchTool : IVisionTool
                 mappingFailure!));
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         var result = MultiTargetMatcher.Match(frame, roi, definition.Parameters, context.GetGrayMat(frame), cancellationToken);
         stopwatch.Stop();
+        cancellationToken.ThrowIfCancellationRequested();
 
         var matches = result.Matches;
         var best = matches.FirstOrDefault();

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Text.Json;
 using VisionStation.Domain;
@@ -101,6 +102,13 @@ public sealed class TemplateLocateToolDialogViewModelTests
         Assert.False(
             string.IsNullOrWhiteSpace(viewModel.TemplatePreviewImagePng),
             viewModel.StatusText);
+        var bestResult = Assert.Single(viewModel.MultiTargetResultPoints);
+        Assert.Same(bestResult, viewModel.SelectedMultiTargetResultPoint);
+        viewModel.SelectedMultiTargetResultPoint = null;
+        Assert.Null(viewModel.SelectedMultiTargetResultPoint);
+        viewModel.SelectedMultiTargetResultPoint = bestResult;
+        Assert.Same(bestResult, viewModel.SelectedMultiTargetResultPoint);
+        viewModel.SetStandardCommand.Execute();
 
         viewModel.ApplyTo(tool);
 
@@ -243,39 +251,133 @@ public sealed class TemplateLocateToolDialogViewModelTests
         Assert.Equal("1", tool.ToDefinition().Parameters["standardScale"]);
     }
 
-    [Theory]
-    [InlineData(1, "1.25")]
-    [InlineData(2, "0.8")]
-    public void MultiTargetBestOrSelectedResultPersistsCandidateScaleAsStandard(
-        int selectedIndex,
-        string expectedScale)
+    [Fact]
+    public void SetStandardWithoutMultiTargetMatchReportsThatMatchingIsRequired()
+    {
+        using var tempDirectory = new TempDirectory();
+        var frame = CreateShapeFrame();
+        var parameters = CreateLearnedPolygonTemplateParameters(frame);
+        parameters["standardX"] = "10";
+        parameters["standardY"] = "20";
+        parameters["standardAngle"] = "30";
+        parameters["standardScale"] = "2";
+        var searchRoi = new RoiDefinition
+        {
+            Id = "blank-search",
+            Shape = RoiShapeKind.Rectangle,
+            X = 0,
+            Y = 0,
+            Width = 40,
+            Height = 30
+        };
+        var tool = new VisionToolItem
+        {
+            Id = "multi-target",
+            Kind = VisionToolKind.MultiTargetMatch,
+            RoiId = searchRoi.Id,
+            ParametersText = string.Join("; ", parameters.Select(item => $"{item.Key}={item.Value}"))
+        };
+        var viewModel = new TemplateLocateToolDialogViewModel(
+            tool,
+            Array.Empty<RoiChoiceItem>(),
+            [searchRoi],
+            "Flow",
+            frame,
+            new RuntimePaths(tempDirectory.Path),
+            new NullAppLogService());
+
+        viewModel.RunToolCommand.Execute();
+        Assert.True(
+            SpinWait.SpinUntil(() => !viewModel.IsBusy, TimeSpan.FromSeconds(10)),
+            $"Multi-target matching did not finish: {viewModel.StatusText}");
+        Assert.Empty(viewModel.MultiTargetResultPoints);
+        Assert.Equal("0.000", viewModel.ScoreText);
+
+        viewModel.SetStandardCommand.Execute();
+        viewModel.ApplyTo(tool);
+
+        Assert.Equal("请先匹配模板，再设置标准", viewModel.StatusText);
+        var saved = tool.ToDefinition().Parameters;
+        Assert.Equal("10", saved["standardX"]);
+        Assert.Equal("20", saved["standardY"]);
+        Assert.Equal("30", saved["standardAngle"]);
+        Assert.Equal("2", saved["standardScale"]);
+    }
+
+    [Fact]
+    public void MultiTargetResultCollectionIsReadOnly()
+    {
+        using var tempDirectory = new TempDirectory();
+        var viewModel = CreateViewModel(
+            new VisionToolItem
+            {
+                Id = "multi-target",
+                Kind = VisionToolKind.MultiTargetMatch
+            },
+            tempDirectory);
+
+        var results = Assert.IsType<ReadOnlyObservableCollection<MultiTargetMatchPointItem>>(
+            viewModel.MultiTargetResultPoints);
+        var list = Assert.IsAssignableFrom<IList<MultiTargetMatchPointItem>>(results);
+
+        Assert.True(list.IsReadOnly);
+        Assert.Throws<NotSupportedException>(() => list.Add(new MultiTargetMatchPointItem(
+            1,
+            "1",
+            "2",
+            "3",
+            "0.900",
+            "4",
+            "5",
+            "Rectangle",
+            "-")));
+    }
+
+    [Fact]
+    public void FakeMultiTargetSelectionCannotChangeStoredStandard()
     {
         using var tempDirectory = new TempDirectory();
         var tool = new VisionToolItem
         {
             Id = "multi-target",
-            Name = "Multi target",
             Kind = VisionToolKind.MultiTargetMatch,
-            Enabled = true,
-            ParametersText = "standardX=0; standardY=0; standardAngle=0; standardScale=2"
+            ParametersText = "standardX=10; standardY=20; standardAngle=30; standardScale=2"
         };
         var viewModel = CreateViewModel(tool, tempDirectory);
-        var candidates = new[]
-        {
-            new MultiTargetMatchCandidate(10, 20, 30, 0.95, 12, 14) { Scale = 1.25 },
-            new MultiTargetMatchCandidate(40, 50, 60, 0.90, 16, 18) { Scale = 0.8 }
-        };
-        foreach (var candidate in candidates.Select((candidate, index) =>
-                     MultiTargetMatchPointItem.FromCandidate(index + 1, candidate)))
-        {
-            viewModel.MultiTargetResultPoints.Add(candidate);
-        }
+        var fake = MultiTargetMatchPointItem.FromCandidate(
+            1,
+            new MultiTargetMatchCandidate(100, 200, 300, 0.99, 12, 14) { Scale = 9 });
 
-        viewModel.SelectedMultiTargetResultPoint = viewModel.MultiTargetResultPoints[selectedIndex - 1];
+        viewModel.SelectedMultiTargetResultPoint = fake;
+        Assert.Null(viewModel.SelectedMultiTargetResultPoint);
         viewModel.SetStandardCommand.Execute();
         viewModel.ApplyTo(tool);
 
-        Assert.Equal(expectedScale, tool.ToDefinition().Parameters["standardScale"]);
+        var saved = tool.ToDefinition().Parameters;
+        Assert.Equal("10", saved["standardX"]);
+        Assert.Equal("20", saved["standardY"]);
+        Assert.Equal("30", saved["standardAngle"]);
+        Assert.Equal("2", saved["standardScale"]);
+    }
+
+    [Fact]
+    public void MultiTargetPointFromCandidatePreservesRawPoseAndScore()
+    {
+        var candidate = new MultiTargetMatchCandidate(
+            10.123456789,
+            20.987654321,
+            30.111222333,
+            0.9123456789,
+            12,
+            14)
+        {
+            Scale = 1.23456789
+        };
+
+        var item = MultiTargetMatchPointItem.FromCandidate(1, candidate);
+
+        Assert.Equal(candidate.Pose, item.Pose);
+        Assert.Equal(candidate.Score, item.NumericScore);
     }
 
     [Fact]

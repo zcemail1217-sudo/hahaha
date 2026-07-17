@@ -37,6 +37,7 @@ public static class MultiTargetMatcher
         IReadOnlyDictionary<string, string> parameters,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var gray = GeometryToolSupport.ToGrayMat(frame);
         return Match(frame, searchRoi, parameters, gray, cancellationToken);
     }
@@ -48,6 +49,7 @@ public static class MultiTargetMatcher
         Mat gray,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!TryReadTemplate(parameters, out var template))
         {
             return CreateFailedResult(frame, "Multi-target template has not been learned.", false);
@@ -61,17 +63,20 @@ public static class MultiTargetMatcher
                 return CreateFailedResult(frame, "Search region is smaller than the learned template.", false, searchRegion);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             using var searchView = new Mat(gray, ToCvRect(searchRegion));
             using var search = searchView.Clone();
             var matchMode = ResolveEffectiveMode(
                 NormalizeMode(GetString(parameters, "multiMatchMode", GetString(parameters, "matchMode", "Shape"))),
                 template,
-                parameters);
+                parameters,
+                cancellationToken);
             if (matchMode == "CircularBlob")
             {
-                return MatchCircularBlobs(frame, searchRegion, search, template, parameters);
+                return MatchCircularBlobs(frame, searchRegion, search, template, parameters, cancellationToken);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             using var searchSource = CreateMatchSource(search, matchMode, parameters);
             var minScore = GetDouble(parameters, "minScore", 0.75);
             var maxMatches = Math.Clamp(GetInt(parameters, "matchCount", GetInt(parameters, "maxMatches", 32)), 1, 256);
@@ -110,7 +115,7 @@ public static class MultiTargetMatcher
                     Math.Min(maxMatches * 4, 160));
             }
 
-            var matches = ApplyNms(rawCandidates, maxMatches, overlapThreshold, minDistance)
+            var matches = ApplyNms(rawCandidates, maxMatches, overlapThreshold, minDistance, cancellationToken)
                 .Select(candidate => new MultiTargetMatchCandidate(
                     candidate.X,
                     candidate.Y,
@@ -177,11 +182,14 @@ public static class MultiTargetMatcher
         IEnumerable<MatchCandidate> candidates,
         int maxMatches,
         double overlapThreshold,
-        double minDistance)
+        double minDistance,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var selected = new List<MatchCandidate>();
         foreach (var candidate in candidates.OrderByDescending(candidate => candidate.Score))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (selected.Any(existing =>
                     IntersectionOverUnion(existing, candidate) > overlapThreshold ||
                     Distance(existing, candidate) < minDistance))
@@ -204,9 +212,11 @@ public static class MultiTargetMatcher
         TemplateSearchRegion searchRegion,
         Mat search,
         Mat template,
-        IReadOnlyDictionary<string, string> parameters)
+        IReadOnlyDictionary<string, string> parameters,
+        CancellationToken cancellationToken)
     {
-        var model = EstimateCircularTemplate(template);
+        cancellationToken.ThrowIfCancellationRequested();
+        var model = EstimateCircularTemplate(template, cancellationToken);
         var minScore = GetCircularMinScore(parameters);
         var maxMatches = Math.Clamp(GetInt(parameters, "matchCount", GetInt(parameters, "maxMatches", 64)), 1, 512);
         var minCount = Math.Clamp(GetInt(parameters, "minCount", 1), 1, 512);
@@ -216,8 +226,10 @@ public static class MultiTargetMatcher
         var minRadius = Math.Max(1.5, model.Radius * (1.0 - radiusTolerance));
         var maxRadius = Math.Max(minRadius + 1, model.Radius * (1.0 + radiusTolerance));
 
-        using var binary = SegmentCircularTargets(search, model.IsDarkTarget);
+        using var binary = SegmentCircularTargets(search, model.IsDarkTarget, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         using var contourSource = binary.Clone();
+        cancellationToken.ThrowIfCancellationRequested();
         Cv2.FindContours(
             contourSource,
             out OpenCvSharp.Point[][] contours,
@@ -228,6 +240,7 @@ public static class MultiTargetMatcher
         var candidates = new List<MatchCandidate>();
         foreach (var contour in contours)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (contour.Length < 5)
             {
                 continue;
@@ -297,9 +310,11 @@ public static class MultiTargetMatcher
             minRadius,
             maxRadius,
             minDistance,
-            minScore);
+            minScore,
+            cancellationToken);
 
-        var matches = ApplyNms(candidates, maxMatches, 0.35, minDistance)
+        cancellationToken.ThrowIfCancellationRequested();
+        var matches = ApplyNms(candidates, maxMatches, 0.35, minDistance, cancellationToken)
             .Select(candidate => new MultiTargetMatchCandidate(
                 candidate.X,
                 candidate.Y,
@@ -340,13 +355,16 @@ public static class MultiTargetMatcher
         double minRadius,
         double maxRadius,
         double minDistance,
-        double minScore)
+        double minScore,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var blurred = new Mat();
         Cv2.MedianBlur(search, blurred, 5);
 
         var houghParam1 = Math.Clamp(GetDouble(parameters, "houghCannyHigh", GetDouble(parameters, "cannyHigh", 140)), 20, 255);
         var houghParam2 = Math.Clamp(GetDouble(parameters, "houghAccumulator", Math.Max(8, model.Radius * 0.65)), 5, 80);
+        cancellationToken.ThrowIfCancellationRequested();
         var circles = Cv2.HoughCircles(
             blurred,
             HoughModes.Gradient,
@@ -357,8 +375,10 @@ public static class MultiTargetMatcher
             Math.Max(1, (int)Math.Floor(minRadius)),
             Math.Max(2, (int)Math.Ceiling(maxRadius)));
 
+        cancellationToken.ThrowIfCancellationRequested();
         foreach (var circle in circles)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var radius = Math.Max(1, circle.Radius);
             var contrastScore = EstimateCircularContrastScore(
                 search,
@@ -391,6 +411,8 @@ public static class MultiTargetMatcher
                 "Circle",
                 radius));
         }
+
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     private static double EstimateCircularContrastScore(Mat search, double centerX, double centerY, double radius, bool darkTarget)
@@ -432,13 +454,14 @@ public static class MultiTargetMatcher
         return Math.Clamp(contrastScore * 0.7 + targetToneScore * 0.3, 0, 1);
     }
 
-    private static CircularTemplateModel EstimateCircularTemplate(Mat template)
+    private static CircularTemplateModel EstimateCircularTemplate(Mat template, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var blurred = new Mat();
         Cv2.GaussianBlur(template, blurred, new Size(3, 3), 0);
 
-        var dark = EvaluateCircularTemplatePolarity(blurred, true);
-        var bright = EvaluateCircularTemplatePolarity(blurred, false);
+        var dark = EvaluateCircularTemplatePolarity(blurred, true, cancellationToken);
+        var bright = EvaluateCircularTemplatePolarity(blurred, false, cancellationToken);
         if (dark.Score >= bright.Score && dark.Radius > 0)
         {
             return dark;
@@ -455,8 +478,12 @@ public static class MultiTargetMatcher
             0);
     }
 
-    private static CircularTemplateModel EvaluateCircularTemplatePolarity(Mat template, bool darkTarget)
+    private static CircularTemplateModel EvaluateCircularTemplatePolarity(
+        Mat template,
+        bool darkTarget,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var binary = new Mat();
         Cv2.Threshold(
             template,
@@ -465,7 +492,9 @@ public static class MultiTargetMatcher
             255,
             darkTarget ? ThresholdTypes.BinaryInv | ThresholdTypes.Otsu : ThresholdTypes.Binary | ThresholdTypes.Otsu);
 
+        cancellationToken.ThrowIfCancellationRequested();
         using var contourSource = binary.Clone();
+        cancellationToken.ThrowIfCancellationRequested();
         Cv2.FindContours(
             contourSource,
             out OpenCvSharp.Point[][] contours,
@@ -477,6 +506,7 @@ public static class MultiTargetMatcher
         var best = new CircularTemplateModel(0, darkTarget, 0);
         foreach (var contour in contours)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (contour.Length < 5)
             {
                 continue;
@@ -515,23 +545,38 @@ public static class MultiTargetMatcher
         return best;
     }
 
-    private static Mat SegmentCircularTargets(Mat search, bool darkTarget)
+    private static Mat SegmentCircularTargets(
+        Mat search,
+        bool darkTarget,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var blurred = new Mat();
         Cv2.GaussianBlur(search, blurred, new Size(3, 3), 0);
 
+        cancellationToken.ThrowIfCancellationRequested();
         var binary = new Mat();
-        Cv2.Threshold(
-            blurred,
-            binary,
-            0,
-            255,
-            darkTarget ? ThresholdTypes.BinaryInv | ThresholdTypes.Otsu : ThresholdTypes.Binary | ThresholdTypes.Otsu);
+        try
+        {
+            Cv2.Threshold(
+                blurred,
+                binary,
+                0,
+                255,
+                darkTarget ? ThresholdTypes.BinaryInv | ThresholdTypes.Otsu : ThresholdTypes.Binary | ThresholdTypes.Otsu);
 
-        using var kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new Size(3, 3));
-        Cv2.MorphologyEx(binary, binary, MorphTypes.Open, kernel);
-        Cv2.MorphologyEx(binary, binary, MorphTypes.Close, kernel);
-        return binary;
+            cancellationToken.ThrowIfCancellationRequested();
+            using var kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new Size(3, 3));
+            Cv2.MorphologyEx(binary, binary, MorphTypes.Open, kernel);
+            cancellationToken.ThrowIfCancellationRequested();
+            Cv2.MorphologyEx(binary, binary, MorphTypes.Close, kernel);
+            return binary;
+        }
+        catch
+        {
+            binary.Dispose();
+            throw;
+        }
     }
 
     private static double IntersectionOverUnion(MatchCandidate a, MatchCandidate b)
@@ -698,7 +743,8 @@ public static class MultiTargetMatcher
     private static string ResolveEffectiveMode(
         string requestedMode,
         Mat template,
-        IReadOnlyDictionary<string, string> parameters)
+        IReadOnlyDictionary<string, string> parameters,
+        CancellationToken cancellationToken)
     {
         if (requestedMode == "CircularBlob" ||
             !GetBool(parameters, "autoCircularTarget", true))
@@ -718,7 +764,7 @@ public static class MultiTargetMatcher
             return "CircularBlob";
         }
 
-        var model = EstimateCircularTemplate(template);
+        var model = EstimateCircularTemplate(template, cancellationToken);
         return model.Score >= 0.72 ? "CircularBlob" : requestedMode;
     }
 

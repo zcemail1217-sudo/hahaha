@@ -125,10 +125,14 @@ public sealed class PositionInputScaleToolTests
     }
 
     [Theory]
-    [InlineData("NaN")]
-    [InlineData("0")]
-    [InlineData("-1")]
-    public async Task FindLineRejectsInvalidReferenceScaleBeforeAlgorithmAndClearsOutputs(string scale)
+    [InlineData("NaN", "NaN")]
+    [InlineData("0", "0")]
+    [InlineData("-1", "-1")]
+    [InlineData("not-a-number", "'not-a-number'")]
+    [InlineData("", "''")]
+    public async Task FindLineRejectsInvalidReferenceScaleBeforeAlgorithmAndClearsOutputs(
+        string scale,
+        string expectedActualValue)
     {
         var imageSource = new VisionToolDefinition { Id = "image-source" };
         var positionSource = new VisionToolDefinition { Id = "position-source" };
@@ -168,6 +172,9 @@ public sealed class PositionInputScaleToolTests
 
         Assert.Equal(InspectionOutcome.Ng, result.Outcome);
         Assert.Equal("CONFIG_INVALID_PARAMETER", result.Data["code"]);
+        Assert.Equal(
+            $"Position input mapping failed: roiReferencePoseScale must be finite and greater than zero; actual value is {expectedActualValue}.",
+            result.Message);
         Assert.False(context.TryGetPortInput<Line2D>(outputConsumer, "LineInput", out _));
         Assert.False(context.TryGetPortInput<Point2D>(outputConsumer, "PointInput", out _));
     }

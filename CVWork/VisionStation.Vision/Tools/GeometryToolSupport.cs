@@ -393,19 +393,32 @@ internal static class GeometryToolSupport
         out PositionInputMappingFailure? failure)
     {
         failure = null;
-        if (!parameters.ContainsKey(key))
+        if (!parameters.TryGetValue(key, out var rawValue))
         {
             scale = 1;
             return true;
         }
 
-        if (!TryGetDouble(parameters, key, out scale) || !PoseSimilarityTransform.IsValidScale(scale))
+        if (!double.TryParse(rawValue, NumberStyles.Float, CultureInfo.InvariantCulture, out scale))
+        {
+            failure = CreateInvalidScaleFailure(key, rawValue);
+            return false;
+        }
+
+        if (!PoseSimilarityTransform.IsValidScale(scale))
         {
             failure = CreateInvalidScaleFailure(key, scale);
             return false;
         }
 
         return true;
+    }
+
+    private static PositionInputMappingFailure CreateInvalidScaleFailure(string parameter, string value)
+    {
+        return new PositionInputMappingFailure(
+            "CONFIG_INVALID_PARAMETER",
+            $"Position input mapping failed: {parameter} must be finite and greater than zero; actual value is '{value}'.");
     }
 
     private static PositionInputMappingFailure CreateInvalidScaleFailure(string parameter, double value)
