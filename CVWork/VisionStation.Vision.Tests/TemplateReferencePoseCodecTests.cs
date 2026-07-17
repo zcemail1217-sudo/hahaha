@@ -30,10 +30,22 @@ public sealed class TemplateReferencePoseCodecTests
         parameters.Remove("halcon.standardScale");
         parameters["standardScale"] = "2";
 
-        Assert.Null(TemplateReferencePoseCodec.ReadActive(parameters));
+        var exception = Assert.Throws<TemplateMatchingConfigurationException>(() =>
+            TemplateReferencePoseCodec.ReadActive(parameters));
+
+        Assert.Equal(TemplateMatchingDiagnosticCodes.ConfigInvalidParameter, exception.Code);
     }
 
     [Theory]
+    [InlineData("halcon.modelPath")]
+    [InlineData("halcon.modelMetadataPath")]
+    [InlineData("halcon.modelFormat")]
+    [InlineData("halcon.modelVersion")]
+    [InlineData("halcon.modelRuntimeVersion")]
+    [InlineData("halcon.modelGeneration")]
+    [InlineData("halcon.modelChecksum")]
+    [InlineData("halcon.metadataChecksum")]
+    [InlineData("halcon.generationParameterFingerprint")]
     [InlineData("halcon.standardX")]
     [InlineData("halcon.standardY")]
     [InlineData("halcon.standardAngle")]
@@ -46,7 +58,10 @@ public sealed class TemplateReferencePoseCodecTests
         parameters.Remove(missingKey);
         AddCompleteLegacyGeometry(parameters);
 
-        Assert.Null(TemplateReferencePoseCodec.ReadActive(parameters));
+        var exception = Assert.Throws<TemplateMatchingConfigurationException>(() =>
+            TemplateReferencePoseCodec.ReadActive(parameters));
+
+        Assert.Equal(TemplateMatchingDiagnosticCodes.ConfigInvalidParameter, exception.Code);
     }
 
     [Theory]
@@ -302,6 +317,15 @@ public sealed class TemplateReferencePoseCodecTests
         return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["engine"] = "Halcon",
+            ["halcon.modelPath"] = "recipes/recipe/flows/flow/template/model.shm",
+            ["halcon.modelMetadataPath"] = "recipes/recipe/flows/flow/template/model.json",
+            ["halcon.modelFormat"] = TemplateModelParameterCodec.HalconScaledShapeModelFormat,
+            ["halcon.modelVersion"] = "1",
+            ["halcon.modelRuntimeVersion"] = "24.11",
+            ["halcon.modelGeneration"] = "generation-1",
+            ["halcon.modelChecksum"] = new string('a', 64),
+            ["halcon.metadataChecksum"] = new string('b', 64),
+            ["halcon.generationParameterFingerprint"] = new string('c', 64),
             ["halcon.standardX"] = "10",
             ["halcon.standardY"] = "20",
             ["halcon.standardAngle"] = "30",

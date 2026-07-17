@@ -5,41 +5,15 @@ namespace VisionStation.Vision;
 
 public static class TemplateReferencePoseCodec
 {
-    private const string HalconStandardX = "halcon.standardX";
-    private const string HalconStandardY = "halcon.standardY";
-    private const string HalconStandardAngle = "halcon.standardAngle";
-    private const string HalconStandardScale = "halcon.standardScale";
-    private const string HalconTemplateWidth = "halcon.templateWidth";
-    private const string HalconTemplateHeight = "halcon.templateHeight";
-
     public static TemplateLearnedGeometry? ReadActive(IReadOnlyDictionary<string, string> parameters)
     {
         ArgumentNullException.ThrowIfNull(parameters);
         return TemplateMatchingEngineResolver.Resolve(parameters) switch
         {
-            TemplateMatchingEngine.Halcon => ReadHalcon(parameters),
+            TemplateMatchingEngine.Halcon => TemplateModelParameterCodec.ReadHalcon(parameters)?.Geometry,
             TemplateMatchingEngine.OpenCv or TemplateMatchingEngine.ManagedNcc => ReadLegacy(parameters),
             _ => throw new InvalidOperationException("Unknown cannot be an active template matching engine.")
         };
-    }
-
-    private static TemplateLearnedGeometry? ReadHalcon(IReadOnlyDictionary<string, string> parameters)
-    {
-        var hasX = TryReadOptionalFiniteDouble(parameters, HalconStandardX, out var x);
-        var hasY = TryReadOptionalFiniteDouble(parameters, HalconStandardY, out var y);
-        var hasAngle = TryReadOptionalFiniteDouble(parameters, HalconStandardAngle, out var angle);
-        var hasScale = TryReadOptionalScale(parameters, HalconStandardScale, out var scale);
-        var hasWidth = TryReadPositiveInt(parameters, HalconTemplateWidth, out var width);
-        var hasHeight = TryReadPositiveInt(parameters, HalconTemplateHeight, out var height);
-        if (!hasX || !hasY || !hasAngle || !hasScale || !hasWidth || !hasHeight)
-        {
-            return null;
-        }
-
-        return new TemplateLearnedGeometry(
-            new Pose2D(x, y, angle) { Scale = scale },
-            width,
-            height);
     }
 
     private static TemplateLearnedGeometry? ReadLegacy(IReadOnlyDictionary<string, string> parameters)
@@ -92,21 +66,6 @@ public static class TemplateReferencePoseCodec
         }
 
         value = ParseFiniteDouble(raw, key);
-        return true;
-    }
-
-    private static bool TryReadOptionalScale(
-        IReadOnlyDictionary<string, string> parameters,
-        string key,
-        out double value)
-    {
-        value = 0;
-        if (!parameters.TryGetValue(key, out var raw))
-        {
-            return false;
-        }
-
-        value = ParseScale(raw, key);
         return true;
     }
 

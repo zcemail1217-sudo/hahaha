@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\VisionStation.Domain\VisionStation.Domain.csproj" />
+    <ProjectReference Include="..\VisionStation.Vision\VisionStation.Vision.csproj" />
   </ItemGroup>
 
   <ItemGroup>

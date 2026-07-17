@@ -828,30 +828,32 @@ public sealed class PositionInputScaleToolTests : IDisposable
     [InlineData(VisionToolKind.FindCircle)]
     [InlineData(VisionToolKind.DefectDetect)]
     [InlineData(VisionToolKind.MultiTargetMatch)]
-    public async Task PositionInputToolsTreatMissingHalconScaleAsIncompleteWithoutLegacyFallback(
+    public async Task PositionInputToolsRejectMissingHalconScaleAndClearAllOutputs(
         VisionToolKind kind)
     {
         var imageSource = new VisionToolDefinition { Id = "image-source" };
         var positionSource = CreateHalconPositionSource(null);
         var definition = CreatePositionInputDefinition(kind, imageSource, positionSource, "1");
         RemoveTaughtReferencePose(definition);
-        var roi = CreateBoundRoi(kind);
+        AddRealTemplateParametersIfRequired(definition);
+        var outputConsumer = CreateAllOutputConsumer(definition, kind);
         using var context = CreatePositionInputContext(
             imageSource,
             positionSource,
             definition,
-            new VisionToolDefinition { Id = "output-consumer" },
-            roi);
+            outputConsumer,
+            CreateBoundRoi(kind));
         context.SetPortOutput(
             positionSource,
             "PositionOutput",
             new Pose2D(18, 18, 0) { Scale = 0.5 });
+        SeedAllBusinessOutputs(context, definition, kind);
 
         var result = await CreateTool(kind).ExecuteAsync(definition, context);
 
-        Assert.NotEqual("CONFIG_INVALID_PARAMETER", result.Data.GetValueOrDefault("code"));
-        Assert.Equal(roi.X, double.Parse(result.Data["searchRoiX"]), 6);
-        Assert.Equal(roi.Y, double.Parse(result.Data["searchRoiY"]), 6);
+        Assert.Equal(InspectionOutcome.Ng, result.Outcome);
+        Assert.Equal("CONFIG_INVALID_PARAMETER", result.Data["code"]);
+        AssertAllBusinessOutputsAreInaccessible(context, outputConsumer, kind);
     }
 
     [Theory]
@@ -949,6 +951,15 @@ public sealed class PositionInputScaleToolTests : IDisposable
             Parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["engine"] = "Halcon",
+                ["halcon.modelPath"] = "recipes/recipe/flows/flow/template/model.shm",
+                ["halcon.modelMetadataPath"] = "recipes/recipe/flows/flow/template/model.json",
+                ["halcon.modelFormat"] = TemplateModelParameterCodec.HalconScaledShapeModelFormat,
+                ["halcon.modelVersion"] = "1",
+                ["halcon.modelRuntimeVersion"] = "24.11",
+                ["halcon.modelGeneration"] = "generation-1",
+                ["halcon.modelChecksum"] = new string('a', 64),
+                ["halcon.metadataChecksum"] = new string('b', 64),
+                ["halcon.generationParameterFingerprint"] = new string('c', 64),
                 ["halcon.standardX"] = "16",
                 ["halcon.standardY"] = "16",
                 ["halcon.standardAngle"] = "0",
