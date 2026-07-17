@@ -243,6 +243,41 @@ public sealed class TemplateLocateToolDialogViewModelTests
         Assert.Equal("1", tool.ToDefinition().Parameters["standardScale"]);
     }
 
+    [Theory]
+    [InlineData(1, "1.25")]
+    [InlineData(2, "0.8")]
+    public void MultiTargetBestOrSelectedResultPersistsCandidateScaleAsStandard(
+        int selectedIndex,
+        string expectedScale)
+    {
+        using var tempDirectory = new TempDirectory();
+        var tool = new VisionToolItem
+        {
+            Id = "multi-target",
+            Name = "Multi target",
+            Kind = VisionToolKind.MultiTargetMatch,
+            Enabled = true,
+            ParametersText = "standardX=0; standardY=0; standardAngle=0; standardScale=2"
+        };
+        var viewModel = CreateViewModel(tool, tempDirectory);
+        var candidates = new[]
+        {
+            new MultiTargetMatchCandidate(10, 20, 30, 0.95, 12, 14) { Scale = 1.25 },
+            new MultiTargetMatchCandidate(40, 50, 60, 0.90, 16, 18) { Scale = 0.8 }
+        };
+        foreach (var candidate in candidates.Select((candidate, index) =>
+                     MultiTargetMatchPointItem.FromCandidate(index + 1, candidate)))
+        {
+            viewModel.MultiTargetResultPoints.Add(candidate);
+        }
+
+        viewModel.SelectedMultiTargetResultPoint = viewModel.MultiTargetResultPoints[selectedIndex - 1];
+        viewModel.SetStandardCommand.Execute();
+        viewModel.ApplyTo(tool);
+
+        Assert.Equal(expectedScale, tool.ToDefinition().Parameters["standardScale"]);
+    }
+
     [Fact]
     public void StartingNewRunClearsPreviousSingleMatchOverlaysBeforeAwaitingResult()
     {

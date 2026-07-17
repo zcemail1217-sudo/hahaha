@@ -826,6 +826,53 @@ public sealed class PositionInputScaleDialogViewModelTests
     }
 
     [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(0d)]
+    [InlineData(-1d)]
+    public void MultiTargetRunWithoutRoiStillRejectsInvalidCurrentScaleBeforeMatcher(double invalidScale)
+    {
+        var scenario = CreateMultiTargetRunScenario(
+            roiReferenceScale: "0.5",
+            sourceStandardScale: null,
+            currentScale: invalidScale,
+            hasBoundRoi: false);
+
+        scenario.ViewModel.RunToolCommand.Execute();
+
+        Assert.True(
+            SpinWait.SpinUntil(() => !scenario.ViewModel.IsBusy, TimeSpan.FromSeconds(10)),
+            $"Multi-target preview did not finish: {scenario.ViewModel.StatusText}");
+        Assert.Equal(1, scenario.Pipeline.ExecutionCount);
+        Assert.Equal("-", scenario.ViewModel.ScoreText);
+        Assert.Empty(scenario.ViewModel.MultiTargetResultPoints);
+        Assert.Equal(
+            "Position input mapping failed: PositionInput.Scale must be finite and greater than zero.",
+            scenario.ViewModel.StatusText);
+        Assert.DoesNotContain(
+            scenario.ViewModel.PreviewOverlays,
+            overlay => overlay.State is VisionOverlayState.Ok or VisionOverlayState.Ng);
+    }
+
+    [Fact]
+    public void MultiTargetRunWithoutRoiReusesCapturedCurrentPose()
+    {
+        var scenario = CreateMultiTargetRunScenario(
+            roiReferenceScale: null,
+            sourceStandardScale: null,
+            currentScale: 1.2,
+            hasBoundRoi: false);
+
+        scenario.ViewModel.RunToolCommand.Execute();
+
+        Assert.True(
+            SpinWait.SpinUntil(() => !scenario.ViewModel.IsBusy, TimeSpan.FromSeconds(10)),
+            $"Multi-target preview did not finish: {scenario.ViewModel.StatusText}");
+        Assert.Equal(1, scenario.Pipeline.ExecutionCount);
+        scenario.ViewModel.ApplyTo(scenario.Tool);
+        Assert.Equal("1.2", scenario.Tool.ToDefinition().Parameters["roiReferencePoseScale"]);
+    }
+
+    [Theory]
     [MemberData(nameof(InvalidConfiguredScaleCases))]
     public async Task MultiTargetRunRejectsInvalidExplicitReferenceScaleBeforePipeline(
         string parameter,
@@ -861,7 +908,8 @@ public sealed class PositionInputScaleDialogViewModelTests
     private static MultiTargetRunScenario CreateMultiTargetRunScenario(
         string? roiReferenceScale,
         string? sourceStandardScale,
-        double currentScale)
+        double currentScale,
+        bool hasBoundRoi = true)
     {
         var frame = CreateFrame();
         var sourceParameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -916,7 +964,7 @@ public sealed class PositionInputScaleDialogViewModelTests
         {
             Id = "multi-target",
             Kind = VisionToolKind.MultiTargetMatch,
-            RoiId = roi.Id,
+            RoiId = hasBoundRoi ? roi.Id : string.Empty,
             ParametersText = string.Join("; ", parameters.Select(item => $"{item.Key}={item.Value}"))
         };
         var pipeline = new PoseResultPipeline(
@@ -926,7 +974,7 @@ public sealed class PositionInputScaleDialogViewModelTests
         var viewModel = new TemplateLocateToolDialogViewModel(
             tool,
             Array.Empty<RoiChoiceItem>(),
-            [roi],
+            hasBoundRoi ? [roi] : [],
             "Flow",
             frame,
             new RuntimePaths(Path.GetTempPath()),

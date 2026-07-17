@@ -597,7 +597,8 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     public async Task<bool> PrepareToCloseAsync()
     {
         SyncEditorRois();
-        return await CaptureRoiReferencePoseIfNeededAsync();
+        var capture = await CaptureRoiReferencePoseIfNeededAsync();
+        return capture.IsSuccess;
     }
 
     private void CreateRoi()
@@ -1017,13 +1018,22 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                 return;
             }
 
-            if (!await CaptureRoiReferencePoseIfNeededAsync())
+            var capture = await CaptureRoiReferencePoseIfNeededAsync();
+            if (!capture.IsSuccess)
             {
                 ClearFailedRunResult(StatusText);
                 return;
             }
 
-            var mapping = await GetMappedSearchRoiAsync(FindSelectedRoi());
+            if (_toolKind == VisionToolKind.MultiTargetMatch && capture.CurrentPose is not null)
+            {
+                configuredReference = capture.CurrentPose;
+            }
+
+            var mapping = await GetMappedSearchRoiAsync(
+                FindSelectedRoi(),
+                configuredReference,
+                capture.CurrentPose);
             if (!mapping.IsSuccess)
             {
                 ClearFailedRunResult(mapping.ErrorMessage);
@@ -1047,18 +1057,25 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
                 _multiMatches = multiMatch.Matches;
                 SetMultiTargetResults(_multiMatches);
-                var best = _multiMatches.FirstOrDefault();
-                ScoreText = best?.Score.ToString("0.000", CultureInfo.InvariantCulture) ?? "0.000";
-                PoseText = best is null
-                    ? $"Count:{_multiMatches.Count}"
-                    : $"Count:{_multiMatches.Count} Best X:{best.X:0.0} Y:{best.Y:0.0} A:{best.Angle:0.00}";
                 DurationText = $"{stopwatch.ElapsedMilliseconds}ms";
-                _matchX = best?.X ?? 0;
-                _matchY = best?.Y ?? 0;
-                _matchAngle = best?.Angle ?? 0;
-                _matchScale = 1;
                 _matchState = multiMatch.Outcome == InspectionOutcome.Ok ? VisionOverlayState.Ok : VisionOverlayState.Ng;
                 _hasMatchResult = _multiMatches.Count > 0;
+                if (MultiTargetResultPoints.FirstOrDefault() is { } bestPoint)
+                {
+                    SelectedMultiTargetResultPoint = bestPoint;
+                    PoseText = $"Count:{_multiMatches.Count} Best " +
+                               $"X:{bestPoint.Pose.X:0.0} Y:{bestPoint.Pose.Y:0.0} A:{bestPoint.Pose.Angle:0.00}";
+                }
+                else
+                {
+                    ScoreText = "0.000";
+                    PoseText = $"Count:{_multiMatches.Count}";
+                    _matchX = 0;
+                    _matchY = 0;
+                    _matchAngle = 0;
+                    _matchScale = 1;
+                }
+
                 RefreshPreviewOverlays();
                 SelectTab(Tabs.First(tab => tab.Key == "Result"));
                 StatusText = multiMatch.Message;
@@ -1126,17 +1143,17 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         return true;
     }
 
-    private async Task<bool> CaptureRoiReferencePoseIfNeededAsync()
+    private async Task<RoiReferenceCaptureResult> CaptureRoiReferencePoseIfNeededAsync()
     {
         if (!_roiReferenceDirty)
         {
-            return true;
+            return RoiReferenceCaptureResult.Success();
         }
 
         if (_toolKind != VisionToolKind.MultiTargetMatch)
         {
             _roiReferenceDirty = false;
-            return true;
+            return RoiReferenceCaptureResult.Success();
         }
 
         var sourceToolId = GetPositionInputSourceToolId();
@@ -1144,30 +1161,33 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         {
             RemoveRoiReferencePose();
             _roiReferenceDirty = false;
-            return true;
+            return RoiReferenceCaptureResult.Success();
         }
 
         var currentPose = await ReadCurrentPositionInputPoseAsync();
         if (currentPose.Status == PoseReadStatus.Invalid)
         {
             StatusText = currentPose.ErrorMessage;
-            return false;
+            return RoiReferenceCaptureResult.Failure(currentPose);
         }
 
         if (currentPose.Status == PoseReadStatus.Missing)
         {
             StatusText = "模板位置未就绪。请先运行模板定位，再保存或预览跟随 ROI。";
-            return false;
+            return RoiReferenceCaptureResult.Failure(currentPose);
         }
 
         SetRoiReferencePose(currentPose.Pose!);
         _roiReferenceDirty = false;
-        return true;
+        return RoiReferenceCaptureResult.Success(currentPose);
     }
 
-    private async Task<RoiMappingResult> GetMappedSearchRoiAsync(RoiDefinition? roi)
+    private async Task<RoiMappingResult> GetMappedSearchRoiAsync(
+        RoiDefinition? roi,
+        PoseReadResult referencePose,
+        PoseReadResult? capturedCurrentPose)
     {
-        if (_toolKind != VisionToolKind.MultiTargetMatch || roi is null)
+        if (_toolKind != VisionToolKind.MultiTargetMatch)
         {
             return RoiMappingResult.Success(roi);
         }
@@ -1178,7 +1198,12 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             return RoiMappingResult.Success(roi);
         }
 
-        var currentPose = await ReadCurrentPositionInputPoseAsync();
+        if (referencePose.Status == PoseReadStatus.Invalid)
+        {
+            return RoiMappingResult.Failure(referencePose.ErrorMessage);
+        }
+
+        var currentPose = capturedCurrentPose ?? await ReadCurrentPositionInputPoseAsync();
         if (currentPose.Status == PoseReadStatus.Invalid)
         {
             return RoiMappingResult.Failure(currentPose.ErrorMessage);
@@ -1189,20 +1214,14 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             return RoiMappingResult.Success(roi);
         }
 
-        var referencePose = ReadRoiReferencePose(_parameters);
-        if (referencePose.Status == PoseReadStatus.Missing)
-        {
-            referencePose = ReadPositionSourceReferencePose(sourceToolId);
-        }
-
-        if (referencePose.Status == PoseReadStatus.Invalid)
-        {
-            return RoiMappingResult.Failure(referencePose.ErrorMessage);
-        }
-
         if (referencePose.Status == PoseReadStatus.Missing)
         {
             return RoiMappingResult.Success(roi);
+        }
+
+        if (roi is null)
+        {
+            return RoiMappingResult.Success(null);
         }
 
         return RoiMappingResult.Success(PoseSimilarityTransform.MapRoi(roi, referencePose.Pose!, currentPose.Pose!));
@@ -1400,17 +1419,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         MultiTargetResultPoints.Clear();
         for (var index = 0; index < matches.Count; index++)
         {
-            var match = matches[index];
-            MultiTargetResultPoints.Add(new MultiTargetMatchPointItem(
-                index + 1,
-                FormatResultNumber(match.X, "0.###"),
-                FormatResultNumber(match.Y, "0.###"),
-                FormatResultNumber(match.Angle, "0.###"),
-                FormatResultNumber(match.Score, "0.000"),
-                match.Width.ToString(CultureInfo.InvariantCulture),
-                match.Height.ToString(CultureInfo.InvariantCulture),
-                string.IsNullOrWhiteSpace(match.Shape) ? "Rectangle" : match.Shape,
-                match.Radius > 0 ? FormatResultNumber(match.Radius, "0.###") : "-"));
+            MultiTargetResultPoints.Add(MultiTargetMatchPointItem.FromCandidate(index + 1, matches[index]));
         }
 
         RaisePropertyChanged(nameof(HasMultiTargetResultPoints));
@@ -1421,19 +1430,19 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     {
         if (_toolKind != VisionToolKind.MultiTargetMatch ||
             SelectedMultiTargetResultPoint is not { } selected ||
-            selected.Index < 1 ||
-            selected.Index > _multiMatches.Count)
+            !MultiTargetResultPoints.Contains(selected))
         {
             return;
         }
 
-        var match = _multiMatches[selected.Index - 1];
-        _matchX = match.X;
-        _matchY = match.Y;
-        _matchAngle = match.Angle;
-        _matchScale = 1;
-        ScoreText = match.Score.ToString("0.000", CultureInfo.InvariantCulture);
-        PoseText = $"Count:{_multiMatches.Count} Selected #{selected.Index} X:{match.X:0.0} Y:{match.Y:0.0} A:{match.Angle:0.00}";
+        _matchX = selected.Pose.X;
+        _matchY = selected.Pose.Y;
+        _matchAngle = selected.Pose.Angle;
+        _matchScale = selected.Pose.Scale;
+        _hasMatchResult = true;
+        ScoreText = selected.NumericScore.ToString("0.000", CultureInfo.InvariantCulture);
+        PoseText = $"Count:{MultiTargetResultPoints.Count} Selected #{selected.Index} " +
+                   $"X:{selected.Pose.X:0.0} Y:{selected.Pose.Y:0.0} A:{selected.Pose.Angle:0.00}";
     }
 
     private void ClearMultiTargetResults()
@@ -1442,11 +1451,6 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         MultiTargetResultPoints.Clear();
         RaisePropertyChanged(nameof(HasMultiTargetResultPoints));
         RaisePropertyChanged(nameof(MultiTargetResultSummary));
-    }
-
-    private static string FormatResultNumber(double value, string format)
-    {
-        return double.IsFinite(value) ? value.ToString(format, CultureInfo.InvariantCulture) : "-";
     }
 
     private async Task RunFlowAsync()
@@ -2235,6 +2239,19 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         public static RoiMappingResult Failure(string errorMessage)
         {
             return new RoiMappingResult(false, null, errorMessage);
+        }
+    }
+
+    private sealed record RoiReferenceCaptureResult(bool IsSuccess, PoseReadResult? CurrentPose)
+    {
+        public static RoiReferenceCaptureResult Success(PoseReadResult? currentPose = null)
+        {
+            return new RoiReferenceCaptureResult(true, currentPose);
+        }
+
+        public static RoiReferenceCaptureResult Failure(PoseReadResult currentPose)
+        {
+            return new RoiReferenceCaptureResult(false, currentPose);
         }
     }
 

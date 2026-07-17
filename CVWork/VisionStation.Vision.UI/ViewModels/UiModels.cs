@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Input;
 using VisionStation.Vision.UI.Models;
 using VisionStation.Domain;
+using VisionStation.Vision;
 
 namespace VisionStation.Vision.UI.ViewModels;
 
@@ -22,9 +23,49 @@ public sealed record MultiTargetMatchPointItem(
     string Shape,
     string Radius)
 {
+    public Pose2D Pose { get; init; } = CreatePose(X, Y, Angle);
+
+    public double NumericScore { get; init; } = ParseNumber(Score);
+
     public string SizeText => $"{Width} x {Height}";
 
     public string RadiusText => string.IsNullOrWhiteSpace(Radius) || Radius == "0" ? "-" : Radius;
+
+    public static MultiTargetMatchPointItem FromCandidate(int index, MultiTargetMatchCandidate candidate)
+    {
+        return new MultiTargetMatchPointItem(
+            index,
+            FormatNumber(candidate.X, "0.###"),
+            FormatNumber(candidate.Y, "0.###"),
+            FormatNumber(candidate.Angle, "0.###"),
+            FormatNumber(candidate.Score, "0.000"),
+            candidate.Width.ToString(CultureInfo.InvariantCulture),
+            candidate.Height.ToString(CultureInfo.InvariantCulture),
+            string.IsNullOrWhiteSpace(candidate.Shape) ? "Rectangle" : candidate.Shape,
+            candidate.Radius > 0 ? FormatNumber(candidate.Radius, "0.###") : "-")
+        {
+            Pose = candidate.Pose,
+            NumericScore = candidate.Score
+        };
+    }
+
+    private static Pose2D CreatePose(string x, string y, string angle)
+    {
+        return new Pose2D(ParseNumber(x), ParseNumber(y), ParseNumber(angle));
+    }
+
+    private static double ParseNumber(string value)
+    {
+        return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) &&
+               double.IsFinite(number)
+            ? number
+            : 0;
+    }
+
+    private static string FormatNumber(double value, string format)
+    {
+        return double.IsFinite(value) ? value.ToString(format, CultureInfo.InvariantCulture) : "-";
+    }
 }
 
 public sealed record ToolOutputValueItem(string Name, string Value, string DataType, string Source)
