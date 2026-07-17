@@ -8,6 +8,7 @@
   <ItemGroup>
     <PackageReference Include="OpenCvSharp4" Version="4.13.0.20260302" />
     <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260302" />
+    <PackageReference Include="MVTec.HalconDotNet" Version="26050.0.0" />
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
   </ItemGroup>
 
