@@ -118,20 +118,28 @@ public sealed class VisionOverlayBuilder : IVisionOverlayBuilder
     private static void AddMultiTargetOverlay(List<VisionOverlayItem> overlays, ToolResult result, VisionOverlayState state)
     {
         var index = 0;
-        foreach (var match in ParseMultiTargetMatches(result.Data.GetValueOrDefault("matches")))
+        foreach (var match in MultiTargetMatchResultReader.Read(result.Data))
         {
             index++;
+            var angle = NormalizeAngle(match.Angle);
             if (match.Shape.Equals("Circle", StringComparison.OrdinalIgnoreCase))
             {
-                overlays.Add(new VisionOverlayItem
+                var baseRadius = match.Radius > 0
+                    ? match.Radius
+                    : Math.Max(match.Width, match.Height) / 2d;
+                if (TryScalePositive(baseRadius, match.Scale, out var radius))
                 {
-                    Kind = VisionOverlayKind.Circle,
-                    State = state,
-                    Label = $"#{index}",
-                    X = match.X,
-                    Y = match.Y,
-                    Radius = match.Radius > 0 ? match.Radius : Math.Max(match.Width, match.Height) / 2.0
-                });
+                    overlays.Add(new VisionOverlayItem
+                    {
+                        Kind = VisionOverlayKind.Circle,
+                        State = state,
+                        Label = $"#{index}",
+                        X = match.X,
+                        Y = match.Y,
+                        Radius = radius
+                    });
+                }
+
                 overlays.Add(new VisionOverlayItem
                 {
                     Kind = VisionOverlayKind.Cross,
@@ -139,22 +147,27 @@ public sealed class VisionOverlayBuilder : IVisionOverlayBuilder
                     Label = string.Empty,
                     X = match.X,
                     Y = match.Y,
-                    Angle = match.Angle
+                    Angle = angle
                 });
                 continue;
             }
 
-            overlays.Add(new VisionOverlayItem
+            if (TryScalePositive(match.Width, match.Scale, out var width) &&
+                TryScalePositive(match.Height, match.Scale, out var height))
             {
-                Kind = VisionOverlayKind.RotatedRectangle,
-                State = state,
-                Label = $"#{index}",
-                X = match.X,
-                Y = match.Y,
-                Width = Math.Max(12, match.Width),
-                Height = Math.Max(12, match.Height),
-                Angle = match.Angle
-            });
+                overlays.Add(new VisionOverlayItem
+                {
+                    Kind = VisionOverlayKind.RotatedRectangle,
+                    State = state,
+                    Label = $"#{index}",
+                    X = match.X,
+                    Y = match.Y,
+                    Width = Math.Max(12, width),
+                    Height = Math.Max(12, height),
+                    Angle = angle
+                });
+            }
+
             overlays.Add(new VisionOverlayItem
             {
                 Kind = VisionOverlayKind.Cross,
@@ -162,43 +175,29 @@ public sealed class VisionOverlayBuilder : IVisionOverlayBuilder
                 Label = string.Empty,
                 X = match.X,
                 Y = match.Y,
-                Angle = match.Angle
+                Angle = angle
             });
         }
     }
 
-    private static IReadOnlyList<OverlayMatch> ParseMultiTargetMatches(string? text)
+    private static bool TryScalePositive(double value, double scale, out double scaled)
     {
-        if (string.IsNullOrWhiteSpace(text))
+        scaled = 0;
+        if (!double.IsFinite(value) ||
+            !double.IsFinite(scale) ||
+            value <= 0 ||
+            scale <= 0)
         {
-            return Array.Empty<OverlayMatch>();
+            return false;
         }
 
-        var matches = new List<OverlayMatch>();
-        foreach (var item in text.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var parts = item.Split(',', StringSplitOptions.TrimEntries);
-            if (parts.Length < 6 ||
-                !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var x) ||
-                !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var y) ||
-                !double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var angle) ||
-                !double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var score) ||
-                !double.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out var width) ||
-                !double.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out var height))
-            {
-                continue;
-            }
+        scaled = value * scale;
+        return double.IsFinite(scaled) && scaled > 0;
+    }
 
-            var shape = parts.Length >= 7 ? parts[6] : "Rectangle";
-            var radius = parts.Length >= 8 &&
-                         double.TryParse(parts[7], NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedRadius)
-                ? parsedRadius
-                : 0;
-
-            matches.Add(new OverlayMatch(x, y, angle, score, width, height, shape, radius));
-        }
-
-        return matches;
+    private static double NormalizeAngle(double angle)
+    {
+        return double.IsFinite(angle) ? angle % 360d : 0d;
     }
 
     private static bool TryParsePointList(string? text, out IReadOnlyList<Point2D> points)
@@ -770,13 +769,4 @@ public sealed class VisionOverlayBuilder : IVisionOverlayBuilder
 
     private sealed record OverlayBounds(double X, double Y, double Width, double Height);
 
-    private sealed record OverlayMatch(
-        double X,
-        double Y,
-        double Angle,
-        double Score,
-        double Width,
-        double Height,
-        string Shape = "Rectangle",
-        double Radius = 0);
 }

@@ -14,6 +14,35 @@ namespace VisionStation.Vision.UI.Tests;
 public sealed class TemplateLocateToolDialogViewModelTests
 {
     [Theory]
+    [InlineData(VisionToolKind.TemplateLocate, "ScaleOutput")]
+    [InlineData(VisionToolKind.MultiTargetMatch, "ScalesOutput")]
+    public void ScaleOutputOptionIsConfigurableAndSurvivesApply(
+        VisionToolKind kind,
+        string outputKey)
+    {
+        using var tempDirectory = new TempDirectory();
+        var tool = new VisionToolItem
+        {
+            Id = "scale-output-tool",
+            Name = "Scale output",
+            Kind = kind,
+            Enabled = true,
+            ParametersText = $"engine=OpenCv; matchMode=Shape; enabledOutputs={outputKey}"
+        };
+        var viewModel = CreateViewModel(tool, tempDirectory);
+
+        var option = Assert.Single(viewModel.OutputOptions, item => item.Key == outputKey);
+        Assert.True(option.IsEnabled);
+
+        viewModel.ApplyTo(tool);
+
+        Assert.Contains(
+            outputKey,
+            tool.ToDefinition().Parameters["enabledOutputs"]
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
+    [Theory]
     [InlineData(null, "3")]
     [InlineData("4.5", "4.5")]
     public void ApplyTo_LegacyTemplateLocateShape_MigratesToShapeV2(

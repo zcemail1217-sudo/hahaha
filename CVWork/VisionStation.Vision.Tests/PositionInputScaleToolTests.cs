@@ -1128,7 +1128,8 @@ public sealed class PositionInputScaleToolTests : IDisposable
                 "AngleOutput",
                 "CountOutput",
                 "AllPositionsOutput",
-                "ScoresOutput"
+                "ScoresOutput",
+                "ScalesOutput"
             ],
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
         };
@@ -1188,7 +1189,8 @@ public sealed class PositionInputScaleToolTests : IDisposable
                 ["AngleOutput"] = 0d,
                 ["CountOutput"] = 1,
                 ["AllPositionsOutput"] = new[] { pose },
-                ["ScoresOutput"] = new[] { 0.9d }
+                ["ScoresOutput"] = new[] { 0.9d },
+                ["ScalesOutput"] = new[] { pose.Scale }
             },
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
         };

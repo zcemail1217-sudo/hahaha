@@ -143,7 +143,7 @@ public sealed class TemplateLocateOverlayFactoryTests
         Assert.Single(overlays, item =>
             item.Kind == VisionOverlayKind.Polyline && item.State == VisionOverlayState.Info);
         Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.Cross);
-        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.RotatedRectangle);
+        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.Rectangle);
     }
 
     [Theory]
@@ -181,7 +181,7 @@ public sealed class TemplateLocateOverlayFactoryTests
 
         var overlays = TemplateLocateOverlayFactory.Create(legacy);
 
-        var rectangle = Assert.Single(overlays, item => item.Kind == VisionOverlayKind.RotatedRectangle);
+        var rectangle = Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Rectangle);
         var cross = Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Cross);
         Assert.Equal(VisionOverlayState.Ng, rectangle.State);
         Assert.Equal(VisionOverlayState.Ng, cross.State);
@@ -215,7 +215,7 @@ public sealed class TemplateLocateOverlayFactoryTests
         Assert.Single(overlays, item =>
             item.Kind == VisionOverlayKind.Polyline && item.State == VisionOverlayState.Info);
         Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.Cross);
-        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.RotatedRectangle);
+        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.Rectangle);
     }
 
     [Theory]
@@ -237,7 +237,7 @@ public sealed class TemplateLocateOverlayFactoryTests
         var overlays = TemplateLocateOverlayFactory.Create(source with { Data = data });
 
         Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Cross);
-        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.RotatedRectangle);
+        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.Rectangle);
     }
 
     [Fact]
@@ -259,8 +259,214 @@ public sealed class TemplateLocateOverlayFactoryTests
 
         var overlays = TemplateLocateOverlayFactory.Create(result);
 
-        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.RotatedRectangle);
+        Assert.DoesNotContain(overlays, item => item.Kind == VisionOverlayKind.Rectangle);
         Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Cross);
+    }
+
+    [Fact]
+    public void ScaledRotatedNonSquareFallbackUsesWholeTemplateAabb()
+    {
+        var result = new ToolResult
+        {
+            ToolId = "locate",
+            Kind = VisionToolKind.TemplateLocate,
+            Outcome = InspectionOutcome.Ok,
+            Data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["x"] = "100",
+                ["y"] = "100",
+                ["angle"] = "35",
+                ["scale"] = "1.1",
+                ["score"] = "0.95",
+                ["templateWidth"] = "40",
+                ["templateHeight"] = "20",
+                ["hasMatch"] = "True"
+            }
+        };
+
+        var overlays = TemplateLocateOverlayFactory.Create(result);
+
+        var rectangle = Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Rectangle);
+        var radians = 35 * Math.PI / 180.0;
+        var expectedWidth = Math.Abs(44 * Math.Cos(radians)) + Math.Abs(22 * Math.Sin(radians));
+        var expectedHeight = Math.Abs(44 * Math.Sin(radians)) + Math.Abs(22 * Math.Cos(radians));
+        Assert.Equal(100 - expectedWidth / 2, rectangle.X, 10);
+        Assert.Equal(100 - expectedHeight / 2, rectangle.Y, 10);
+        Assert.Equal(expectedWidth, rectangle.Width, 10);
+        Assert.Equal(expectedHeight, rectangle.Height, 10);
+        Assert.Equal(0, rectangle.Angle);
+    }
+
+    [Fact]
+    public void StructuredScaledRotatedFallbackUsesTheSameWholeTemplateAabb()
+    {
+        var result = new TemplateMatchResult(
+            true,
+            InspectionOutcome.Ok,
+            0.95,
+            new Pose2D(100, 100, 35) { Scale = 1.1 },
+            0,
+            0,
+            40,
+            20,
+            new TemplateSearchRegion(0, 0, 200, 200),
+            "OK",
+            false);
+
+        var overlays = TemplateLocateOverlayFactory.Create(result);
+
+        var rectangle = Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Rectangle);
+        var radians = 35 * Math.PI / 180.0;
+        var expectedWidth = Math.Abs(44 * Math.Cos(radians)) + Math.Abs(22 * Math.Sin(radians));
+        var expectedHeight = Math.Abs(44 * Math.Sin(radians)) + Math.Abs(22 * Math.Cos(radians));
+        Assert.Equal(100 - expectedWidth / 2, rectangle.X, 10);
+        Assert.Equal(100 - expectedHeight / 2, rectangle.Y, 10);
+        Assert.Equal(expectedWidth, rectangle.Width, 10);
+        Assert.Equal(expectedHeight, rectangle.Height, 10);
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(0d)]
+    [InlineData(-1d)]
+    public void StructuredInvalidScaleFailsClosed(double scale)
+    {
+        var result = new TemplateMatchResult(
+            true,
+            InspectionOutcome.Ok,
+            0.95,
+            new Pose2D(100, 100, 35) { Scale = scale },
+            0,
+            0,
+            40,
+            20,
+            new TemplateSearchRegion(0, 0, 200, 200),
+            "OK",
+            false);
+
+        var overlays = TemplateLocateOverlayFactory.Create(result);
+
+        Assert.Empty(overlays);
+    }
+
+    [Fact]
+    public void StructuredFallbackOverflowKeepsOnlyFiniteDiagnosticCross()
+    {
+        var result = new TemplateMatchResult(
+            true,
+            InspectionOutcome.Ok,
+            0.95,
+            new Pose2D(100, 100, 35) { Scale = 1e308 },
+            0,
+            0,
+            2,
+            2,
+            new TemplateSearchRegion(0, 0, 200, 200),
+            "OK",
+            false);
+
+        var overlays = TemplateLocateOverlayFactory.Create(result);
+
+        var cross = Assert.Single(overlays);
+        Assert.Equal(VisionOverlayKind.Cross, cross.Kind);
+        AssertFiniteGeometry(cross);
+    }
+
+    [Fact]
+    public void PersistedFallbackOverflowKeepsOnlyFiniteDiagnosticCross()
+    {
+        var result = new ToolResult
+        {
+            ToolId = "locate",
+            Kind = VisionToolKind.TemplateLocate,
+            Outcome = InspectionOutcome.Ok,
+            Data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["x"] = "100",
+                ["y"] = "100",
+                ["angle"] = "35",
+                ["scale"] = "1E+308",
+                ["score"] = "0.95",
+                ["templateWidth"] = "2",
+                ["templateHeight"] = "2",
+                ["hasMatch"] = "True"
+            }
+        };
+
+        var overlays = TemplateLocateOverlayFactory.Create(result);
+
+        var cross = Assert.Single(overlays);
+        Assert.Equal(VisionOverlayKind.Cross, cross.Kind);
+        AssertFiniteGeometry(cross);
+    }
+
+    [Fact]
+    public void ExtremeFiniteAngleIsNormalizedBeforeCalculatingFallbackBounds()
+    {
+        var result = new TemplateMatchResult(
+            true,
+            InspectionOutcome.Ok,
+            0.95,
+            new Pose2D(100, 100, double.MaxValue) { Scale = 1 },
+            0,
+            0,
+            40,
+            20,
+            new TemplateSearchRegion(0, 0, 200, 200),
+            "OK",
+            false);
+
+        var overlays = TemplateLocateOverlayFactory.Create(result);
+
+        var rectangle = Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Rectangle);
+        AssertFiniteGeometry(rectangle);
+        var radians = (double.MaxValue % 360d) * Math.PI / 180d;
+        Assert.Equal(
+            Math.Abs(40 * Math.Cos(radians)) + Math.Abs(20 * Math.Sin(radians)),
+            rectangle.Width,
+            10);
+        Assert.Equal(
+            Math.Abs(40 * Math.Sin(radians)) + Math.Abs(20 * Math.Cos(radians)),
+            rectangle.Height,
+            10);
+    }
+
+    [Fact]
+    public void RejectedCandidateFieldsKeepRedDiagnosticCrossAndScaledFallback()
+    {
+        var result = new ToolResult
+        {
+            ToolId = "locate",
+            Kind = VisionToolKind.TemplateLocate,
+            Outcome = InspectionOutcome.Ng,
+            Data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["hasMatch"] = "False",
+                ["rejectedCandidate.x"] = "100",
+                ["rejectedCandidate.y"] = "100",
+                ["rejectedCandidate.angle"] = "35",
+                ["rejectedCandidate.scale"] = "1.1",
+                ["rejectedCandidate.score"] = "0.7",
+                ["templateWidth"] = "40",
+                ["templateHeight"] = "20"
+            }
+        };
+
+        var overlays = TemplateLocateOverlayFactory.Create(result);
+
+        var rectangle = Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Rectangle);
+        var cross = Assert.Single(overlays, item => item.Kind == VisionOverlayKind.Cross);
+        Assert.Equal(VisionOverlayState.Ng, rectangle.State);
+        Assert.Equal(VisionOverlayState.Ng, cross.State);
+        Assert.Equal((100d, 100d, 35d), (cross.X, cross.Y, cross.Angle));
+        Assert.Contains("S=0.700", cross.Label);
+        var radians = 35 * Math.PI / 180d;
+        var expectedWidth = Math.Abs(44 * Math.Cos(radians)) + Math.Abs(22 * Math.Sin(radians));
+        var expectedHeight = Math.Abs(44 * Math.Sin(radians)) + Math.Abs(22 * Math.Cos(radians));
+        Assert.Equal(expectedWidth, rectangle.Width, 10);
+        Assert.Equal(expectedHeight, rectangle.Height, 10);
+        Assert.Equal(100 - expectedWidth / 2, rectangle.X, 10);
+        Assert.Equal(100 - expectedHeight / 2, rectangle.Y, 10);
     }
 
     private static ToolResult CreateV2ToolResult()
@@ -286,5 +492,17 @@ public sealed class TemplateLocateOverlayFactoryTests
                 ["matchedTemplateRoiContours"] = "10,20;30,40"
             }
         };
+    }
+
+    private static void AssertFiniteGeometry(VisionOverlayItem overlay)
+    {
+        Assert.True(double.IsFinite(overlay.X));
+        Assert.True(double.IsFinite(overlay.Y));
+        Assert.True(double.IsFinite(overlay.Width));
+        Assert.True(double.IsFinite(overlay.Height));
+        Assert.True(double.IsFinite(overlay.Angle));
+        Assert.True(double.IsFinite(overlay.Radius));
+        Assert.True(double.IsFinite(overlay.X2));
+        Assert.True(double.IsFinite(overlay.Y2));
     }
 }

@@ -3919,7 +3919,8 @@ public sealed class VisionDebugViewModel : BindableBase
             return;
         }
 
-        foreach (var point in ParseMultiTargetMatchPoints(result.Data.GetValueOrDefault("matches")))
+        foreach (var point in MultiTargetMatchResultReader.Read(result.Data)
+                     .Select((candidate, index) => MultiTargetMatchPointItem.FromCandidate(index + 1, candidate)))
         {
             SelectedToolMatchPoints.Add(point);
         }
@@ -3957,6 +3958,8 @@ public sealed class VisionDebugViewModel : BindableBase
                 GetData(result, "y", "-"),
             VisionToolKind.TemplateLocate when port.Key == "AngleOutput" =>
                 GetData(result, "angle", "-"),
+            VisionToolKind.TemplateLocate when port.Key == "ScaleOutput" =>
+                GetData(result, "scale", "-"),
             VisionToolKind.MultiTargetMatch when port.Key == "CountOutput" =>
                 GetData(result, "count", "0"),
             VisionToolKind.MultiTargetMatch when port.Key is "PositionOutput" or "OriginOutput" or "BestPositionOutput" =>
@@ -3973,6 +3976,8 @@ public sealed class VisionDebugViewModel : BindableBase
                 FormatMultiMatchPositions(result),
             VisionToolKind.MultiTargetMatch when port.Key == "ScoresOutput" =>
                 FormatMultiMatchScores(result),
+            VisionToolKind.MultiTargetMatch when port.Key == "ScalesOutput" =>
+                FormatMultiMatchScales(result),
             VisionToolKind.CoordinateTransform when port.Key == "PointOutput" =>
                 FormatPoint(result, "worldX", "worldY"),
             VisionToolKind.CoordinateTransform when port.Key == "PositionOutput" =>
@@ -4077,84 +4082,46 @@ public sealed class VisionDebugViewModel : BindableBase
 
     private static string FormatMultiMatchPositions(ToolResult result)
     {
-        var matches = GetData(result, "matches", string.Empty);
-        if (string.IsNullOrWhiteSpace(matches))
+        var matches = MultiTargetMatchResultReader.Read(result.Data);
+        if (matches.Count == 0)
         {
             return "-";
         }
 
         return string.Join("; ", matches
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Take(5)
-            .Select((item, index) =>
-            {
-                var parts = item.Split(',', StringSplitOptions.TrimEntries);
-                return parts.Length >= 3
-                    ? $"#{index + 1} X={parts[0]} Y={parts[1]} A={parts[2]}"
-                    : $"#{index + 1} {item}";
-            }));
+            .Select((match, index) =>
+                $"#{index + 1} X={match.X.ToString("0.###", CultureInfo.InvariantCulture)} " +
+                $"Y={match.Y.ToString("0.###", CultureInfo.InvariantCulture)} " +
+                $"A={match.Angle.ToString("0.###", CultureInfo.InvariantCulture)}"));
     }
 
     private static string FormatMultiMatchScores(ToolResult result)
     {
-        var matches = GetData(result, "matches", string.Empty);
-        if (string.IsNullOrWhiteSpace(matches))
+        var matches = MultiTargetMatchResultReader.Read(result.Data);
+        if (matches.Count == 0)
         {
             return "-";
         }
 
         return string.Join(", ", matches
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Take(12)
-            .Select((item, index) =>
-            {
-                var parts = item.Split(',', StringSplitOptions.TrimEntries);
-                return parts.Length >= 4 ? $"#{index + 1}:{parts[3]}" : $"#{index + 1}:-";
-            }));
+            .Select((match, index) =>
+                $"#{index + 1}:{match.Score.ToString("0.000", CultureInfo.InvariantCulture)}"));
     }
 
-    private static IReadOnlyList<MultiTargetMatchPointItem> ParseMultiTargetMatchPoints(string? text)
+    private static string FormatMultiMatchScales(ToolResult result)
     {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return Array.Empty<MultiTargetMatchPointItem>();
-        }
-
-        var points = new List<MultiTargetMatchPointItem>();
-        foreach (var item in text.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var parts = item.Split(',', StringSplitOptions.TrimEntries);
-            if (parts.Length < 6)
-            {
-                continue;
-            }
-
-            var radius = parts.Length >= 8 ? FormatMatchNumber(parts[7], "0.###") : "-";
-            points.Add(new MultiTargetMatchPointItem(
-                points.Count + 1,
-                FormatMatchNumber(parts[0], "0.###"),
-                FormatMatchNumber(parts[1], "0.###"),
-                FormatMatchNumber(parts[2], "0.###"),
-                FormatMatchNumber(parts[3], "0.000"),
-                FormatMatchNumber(parts[4], "0.###"),
-                FormatMatchNumber(parts[5], "0.###"),
-                parts.Length >= 7 && !string.IsNullOrWhiteSpace(parts[6]) ? parts[6] : "Rectangle",
-                radius));
-        }
-
-        return points;
-    }
-
-    private static string FormatMatchNumber(string? text, string format)
-    {
-        if (string.IsNullOrWhiteSpace(text))
+        var matches = MultiTargetMatchResultReader.Read(result.Data);
+        if (matches.Count == 0)
         {
             return "-";
         }
 
-        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && double.IsFinite(value)
-            ? value.ToString(format, CultureInfo.InvariantCulture)
-            : text;
+        return string.Join(", ", matches
+            .Take(12)
+            .Select((match, index) =>
+                $"#{index + 1}:{match.Scale.ToString("R", CultureInfo.InvariantCulture)}"));
     }
 
     private static string FormatLine(ToolResult result)

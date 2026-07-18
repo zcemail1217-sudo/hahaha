@@ -1,3 +1,4 @@
+using System.Text.Json;
 using VisionStation.Domain;
 using VisionStation.Vision.Tools;
 using Xunit;
@@ -72,7 +73,9 @@ public sealed class TemplateMatchingToolPortSafetyTests
 
         Assert.Equal(InspectionOutcome.Ok, result.Outcome);
         Assert.True(context.TryGetPortInput<Pose2D>(fixture.Consumer, InputOf("PositionOutput"), out var pose));
+        Assert.True(context.TryGetPortInput<double>(fixture.Consumer, InputOf("ScaleOutput"), out var scale));
         Assert.Equal(1.1, pose.Scale, 12);
+        Assert.Equal(pose.Scale, scale, 12);
         Assert.Equal("1.1", result.Data["scale"]);
         Assert.Equal("Halcon", result.Data["engine"]);
         Assert.Equal(0, service.DisposeCount);
@@ -129,6 +132,32 @@ public sealed class TemplateMatchingToolPortSafetyTests
         Assert.Equal("0.94", result.Data["polarityAgreement"]);
     }
 
+    [Fact]
+    public async Task HalconSingleWithoutCandidatePublishesOnlyFailureDiagnostics()
+    {
+        var diagnostic = TemplateMatchingDiagnostics.Create(
+            TemplateMatchingDiagnosticCodes.MatchOperatorFailed,
+            "no-candidate");
+        var service = new RecordingMatchingService(_ => Task.FromResult(
+            Batch(TemplateMatchingEngine.Halcon, InspectionOutcome.Ng, false, [], diagnostic)));
+        var fixture = ToolFixture.Create(VisionToolKind.TemplateLocate, new Dictionary<string, string>
+        {
+            ["engine"] = "Halcon"
+        });
+        using var context = fixture.Context;
+
+        var result = await new TemplateLocateTool(service).ExecuteAsync(fixture.Definition, context);
+
+        Assert.Equal(diagnostic.Code, result.Data["failureCode"]);
+        Assert.Equal(diagnostic.FailureStage, result.Data["failureStage"]);
+        Assert.DoesNotContain("x", result.Data.Keys, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("y", result.Data.Keys, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("angle", result.Data.Keys, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("scale", result.Data.Keys, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain(result.Data.Keys, key => key.StartsWith("rejectedCandidate.", StringComparison.OrdinalIgnoreCase));
+        AssertNoPorts(fixture, SingleOperationalPorts);
+    }
+
     [Theory]
     [InlineData(null, TemplateMatchingEngine.OpenCv, "OpenCv")]
     [InlineData("halcon", TemplateMatchingEngine.Halcon, "Halcon")]
@@ -150,6 +179,34 @@ public sealed class TemplateMatchingToolPortSafetyTests
         using var context = fixture.Context;
 
         var result = await new TemplateLocateTool(service).ExecuteAsync(fixture.Definition, context);
+
+        Assert.Equal(expected, result.Data["engine"]);
+    }
+
+    [Theory]
+    [InlineData(null, TemplateMatchingEngine.OpenCv, "OpenCv")]
+    [InlineData("halcon", TemplateMatchingEngine.Halcon, "Halcon")]
+    [InlineData("future-engine", TemplateMatchingEngine.Unknown, "Unknown")]
+    public async Task MultiEngineDataAlsoComesOnlyFromNormalizedBatchEngine(
+        string? configuredEngine,
+        TemplateMatchingEngine batchEngine,
+        string expected)
+    {
+        var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["expectedCount"] = "1"
+        };
+        if (configuredEngine is not null)
+        {
+            parameters["engine"] = configuredEngine;
+        }
+
+        var service = new RecordingMatchingService(_ => Task.FromResult(
+            Batch(batchEngine, InspectionOutcome.Ng, false, [])));
+        var fixture = ToolFixture.Create(VisionToolKind.MultiTargetMatch, parameters);
+        using var context = fixture.Context;
+
+        var result = await new MultiTargetMatchTool(service).ExecuteAsync(fixture.Definition, context);
 
         Assert.Equal(expected, result.Data["engine"]);
     }
@@ -209,7 +266,13 @@ public sealed class TemplateMatchingToolPortSafetyTests
     [Fact]
     public async Task MultiExactCountOkPublishesPoseAndScorePortsWithProjectedScale()
     {
-        var first = Candidate(new Pose2D(20, 30, 5) { Scale = 0.9 });
+        var first = Candidate(new Pose2D(20, 30, 5) { Scale = 0.9 }) with
+        {
+            OuterCoverage = 0.93,
+            InnerCoverage = 0.86,
+            EdgeDistanceP95Px = 2.2,
+            PolarityAgreement = 0.94
+        };
         var second = Candidate(new Pose2D(60, 70, -15) { Scale = 1.1 });
         var service = new RecordingMatchingService(_ => Task.FromResult(
             Batch(TemplateMatchingEngine.Halcon, InspectionOutcome.Ok, true, [first, second])));
@@ -224,9 +287,58 @@ public sealed class TemplateMatchingToolPortSafetyTests
 
         Assert.Equal(InspectionOutcome.Ok, result.Outcome);
         Assert.True(context.TryGetPortInput<Pose2D[]>(fixture.Consumer, InputOf("AllPositionsOutput"), out var poses));
+        Assert.True(context.TryGetPortInput<double[]>(fixture.Consumer, InputOf("ScalesOutput"), out var scales));
         Assert.Equal([0.9, 1.1], poses.Select(pose => pose.Scale));
+        Assert.Equal(poses.Select(pose => pose.Scale), scales);
         Assert.Equal("0.9", result.Data["scale"]);
+        Assert.Equal("0.9,1.1", result.Data["scales"]);
+        Assert.Equal("0.91,0.91", result.Data["scores"]);
+        Assert.Equal("2", result.Data["matchSchemaVersion"]);
+        Assert.Equal("2", result.Data["overlaySchemaVersion"]);
+        Assert.Equal(
+            "20,30,5,0.91,40,20,Rectangle,0;60,70,-15,0.91,40,20,Rectangle,0",
+            result.Data["matches"]);
+        using var matchesV2 = JsonDocument.Parse(result.Data["matchesV2"]);
+        Assert.Collection(
+            matchesV2.RootElement.EnumerateArray(),
+            first =>
+            {
+                Assert.Equal(0.9, first.GetProperty("scale").GetDouble(), 12);
+                Assert.Equal(0.93, first.GetProperty("outerCoverage").GetDouble(), 12);
+                Assert.Equal(0.86, first.GetProperty("innerCoverage").GetDouble(), 12);
+                Assert.Equal(2.2, first.GetProperty("edgeDistanceP95Px").GetDouble(), 12);
+                Assert.Equal(0.94, first.GetProperty("polarityAgreement").GetDouble(), 12);
+            },
+            second => Assert.Equal(1.1, second.GetProperty("scale").GetDouble(), 12));
         Assert.True(context.Properties.ContainsKey("pose"));
+    }
+
+    [Fact]
+    public async Task InvalidCandidateShapeGeometryClearsSeededMultiOutputsAtomically()
+    {
+        var candidate = Candidate(new Pose2D(20, 30, 5) { Scale = 1 }) with
+        {
+            Shape = "Circle",
+            Radius = double.NaN
+        };
+        var service = new RecordingMatchingService(_ => Task.FromResult(
+            Batch(TemplateMatchingEngine.Halcon, InspectionOutcome.Ok, true, [candidate])));
+        var fixture = ToolFixture.Create(VisionToolKind.MultiTargetMatch, new Dictionary<string, string>
+        {
+            ["engine"] = "Halcon",
+            ["expectedCount"] = "1"
+        });
+        using var context = fixture.Context;
+        fixture.SeedMultiOutputs();
+
+        var exception = await Record.ExceptionAsync(() =>
+            new MultiTargetMatchTool(service).ExecuteAsync(fixture.Definition, context));
+
+        Assert.NotNull(exception);
+        AssertNoPorts(fixture, MultiOperationalPorts.Append("CountOutput"));
+        Assert.False(context.Properties.ContainsKey("pose"));
+        var invalid = Assert.IsType<InvalidOperationException>(exception);
+        Assert.Contains("shape geometry", invalid.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

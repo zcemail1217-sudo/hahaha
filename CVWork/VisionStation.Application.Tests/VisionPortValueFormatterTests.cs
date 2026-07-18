@@ -88,4 +88,23 @@ public sealed class VisionPortValueFormatterTests
 
         Assert.Equal(expected, value);
     }
+
+    [Theory]
+    [InlineData("ScaleOutput", "1.1")]
+    [InlineData("ScalesOutput", "0.9,1,1.1")]
+    public void FormatPortValue_UsesPublishedScaleData(string portKey, string expected)
+    {
+        var result = new ToolResult
+        {
+            Data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["scale"] = "1.1",
+                ["scales"] = "0.9,1,1.1"
+            }
+        };
+
+        var value = VisionPortValueFormatter.FormatPortValue(result, portKey, null);
+
+        Assert.Equal(expected, value);
+    }
 }

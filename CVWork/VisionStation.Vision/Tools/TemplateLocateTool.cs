@@ -63,6 +63,7 @@ public sealed class TemplateLocateTool : IVisionTool
             context.SetPortOutput(definition, "XOutput", match.Pose.X);
             context.SetPortOutput(definition, "YOutput", match.Pose.Y);
             context.SetPortOutput(definition, "AngleOutput", match.Pose.Angle);
+            context.SetPortOutput(definition, "ScaleOutput", match.Pose.Scale);
         }
 
         stopwatch.Stop();

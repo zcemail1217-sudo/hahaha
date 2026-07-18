@@ -66,6 +66,26 @@ public sealed class VisionToolCatalogTests
         Assert.DoesNotContain(tools, item => item.Kind == VisionToolKind.SerialCommunication);
     }
 
+    [Fact]
+    public void TemplateMatchingCatalogPublishesSingleAndMultiScalePorts()
+    {
+        var single = VisionToolCatalog.GetOutputPorts(VisionToolKind.TemplateLocate);
+        var multi = VisionToolCatalog.GetOutputPorts(VisionToolKind.MultiTargetMatch);
+
+        Assert.Contains(single, port =>
+            port.Key == "ScaleOutput" &&
+            port.DataType == "Number");
+        Assert.Contains(multi, port =>
+            port.Key == "ScalesOutput" &&
+            port.DataType == "Number[]");
+        Assert.Contains("ScaleOutput", VisionToolCatalog.GetDefaultOutputKeys(VisionToolKind.TemplateLocate));
+        Assert.Contains("ScalesOutput", VisionToolCatalog.GetDefaultOutputKeys(VisionToolKind.MultiTargetMatch));
+        Assert.Contains(
+            "ScalesOutput",
+            VisionToolCatalog.GetDefaultParameters(VisionToolKind.MultiTargetMatch)["enabledOutputs"]
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
     private static IEnumerable<ToolboxCatalogItem> Flatten(IEnumerable<ToolboxCatalogItem> items)
     {
         foreach (var item in items)

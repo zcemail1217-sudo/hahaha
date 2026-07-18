@@ -27,6 +27,16 @@ public sealed record MultiTargetMatchPointItem(
 
     public double NumericScore { get; init; } = ParseNumber(Score);
 
+    public double Scale { get; init; } = 1.0;
+
+    public double OuterCoverage { get; init; }
+
+    public double InnerCoverage { get; init; }
+
+    public double EdgeDistanceP95Px { get; init; }
+
+    public double PolarityAgreement { get; init; }
+
     public string SizeText => $"{Width} x {Height}";
 
     public string RadiusText => string.IsNullOrWhiteSpace(Radius) || Radius == "0" ? "-" : Radius;
@@ -45,7 +55,12 @@ public sealed record MultiTargetMatchPointItem(
             candidate.Radius > 0 ? FormatNumber(candidate.Radius, "0.###") : "-")
         {
             Pose = candidate.Pose,
-            NumericScore = candidate.Score
+            NumericScore = candidate.Score,
+            Scale = candidate.Scale,
+            OuterCoverage = candidate.OuterCoverage,
+            InnerCoverage = candidate.InnerCoverage,
+            EdgeDistanceP95Px = candidate.EdgeDistanceP95Px,
+            PolarityAgreement = candidate.PolarityAgreement
         };
     }
 

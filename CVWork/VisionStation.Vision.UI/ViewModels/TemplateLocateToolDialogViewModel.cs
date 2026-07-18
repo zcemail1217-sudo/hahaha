@@ -2021,6 +2021,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             yield return new ToolOutputOptionItem("BestPositionOutput", "最佳位置", "Pose", enabled.Contains("BestPositionOutput"));
             yield return new ToolOutputOptionItem("AllPositionsOutput", "全部位置", "Pose[]", enabled.Contains("AllPositionsOutput"));
             yield return new ToolOutputOptionItem("ScoresOutput", "全部分数", "Number[]", enabled.Contains("ScoresOutput"));
+            yield return new ToolOutputOptionItem("ScalesOutput", "全部尺度", "Number[]", enabled.Contains("ScalesOutput"));
             yield return new ToolOutputOptionItem("ResultOutput", "OK/NG", "Result", enabled.Contains("ResultOutput"));
             yield break;
         }
@@ -2030,6 +2031,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         yield return new ToolOutputOptionItem("XOutput", "X坐标", "Number", enabled.Contains("XOutput"));
         yield return new ToolOutputOptionItem("YOutput", "Y坐标", "Number", enabled.Contains("YOutput"));
         yield return new ToolOutputOptionItem("AngleOutput", "角度", "Number", enabled.Contains("AngleOutput"));
+        yield return new ToolOutputOptionItem("ScaleOutput", "尺度", "Number", enabled.Contains("ScaleOutput"));
         yield return new ToolOutputOptionItem("OriginOutput", "训练原点", "Pose", enabled.Contains("OriginOutput"));
         yield return new ToolOutputOptionItem("ResultOutput", "OK/NG", "Result", enabled.Contains("ResultOutput"));
     }
@@ -2039,7 +2041,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         if (string.IsNullOrWhiteSpace(text))
         {
             return new HashSet<string>(
-                ["PositionOutput", "OriginOutput", "ResultOutput", "CountOutput", "BestPositionOutput"],
+                ["PositionOutput", "OriginOutput", "ScaleOutput", "ResultOutput", "CountOutput", "BestPositionOutput", "ScalesOutput"],
                 StringComparer.OrdinalIgnoreCase);
         }
 
@@ -2049,7 +2051,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
         return keys.Count == 0
             ? new HashSet<string>(
-                ["PositionOutput", "OriginOutput", "ResultOutput", "CountOutput", "BestPositionOutput"],
+                ["PositionOutput", "OriginOutput", "ScaleOutput", "ResultOutput", "CountOutput", "BestPositionOutput", "ScalesOutput"],
                 StringComparer.OrdinalIgnoreCase)
             : keys;
     }

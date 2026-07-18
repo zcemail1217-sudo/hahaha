@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using VisionStation.Domain;
 
 namespace VisionStation.Vision.Tools;
@@ -130,6 +131,7 @@ public sealed class MultiTargetMatchTool : IVisionTool
             var bestPose = best.Pose;
             var poses = matches.Select(match => match.Pose).ToArray();
             var scores = matches.Select(match => match.Score).ToArray();
+            var scales = matches.Select(match => match.Pose.Scale).ToArray();
             context.Properties["pose"] = bestPose;
             context.SetPortOutput(definition, "PositionOutput", bestPose);
             context.SetPortOutput(definition, "OriginOutput", bestPose);
@@ -140,6 +142,7 @@ public sealed class MultiTargetMatchTool : IVisionTool
             context.SetPortOutput(definition, "AngleOutput", best.Angle);
             context.SetPortOutput(definition, "AllPositionsOutput", poses);
             context.SetPortOutput(definition, "ScoresOutput", scores);
+            context.SetPortOutput(definition, "ScalesOutput", scales);
         }
 
         stopwatch.Stop();
@@ -189,7 +192,12 @@ public sealed class MultiTargetMatchTool : IVisionTool
             ["matchMode"] = definition.Parameters.GetValueOrDefault("matchMode") ??
                             definition.Parameters.GetValueOrDefault("multiMatchMode") ??
                             "Shape",
-            ["matches"] = FormatMatches(matches)
+            ["matches"] = FormatMatches(matches),
+            ["overlaySchemaVersion"] = "2",
+            ["matchSchemaVersion"] = "2",
+            ["matchesV2"] = FormatMatchesV2(matches),
+            ["scores"] = string.Join(",", matches.Select(match => match.Score.ToInvariant())),
+            ["scales"] = string.Join(",", matches.Select(match => match.Pose.Scale.ToRoundTripScaleInvariant()))
         };
 
         if (roi is not null)
@@ -282,5 +290,25 @@ public sealed class MultiTargetMatchTool : IVisionTool
                 $"{match.X.ToInvariant()},{match.Y.ToInvariant()},{match.Angle.ToInvariant()}," +
                 $"{match.Score.ToInvariant()},{match.Width},{match.Height},{match.Shape}," +
                 match.Radius.ToInvariant()));
+    }
+
+    private static string FormatMatchesV2(IReadOnlyList<MultiTargetMatchCandidate> matches)
+    {
+        return JsonSerializer.Serialize(matches.Select(match => new
+        {
+            x = match.X,
+            y = match.Y,
+            angle = match.Angle,
+            scale = match.Pose.Scale,
+            score = match.Score,
+            outerCoverage = match.OuterCoverage,
+            innerCoverage = match.InnerCoverage,
+            edgeDistanceP95Px = match.EdgeDistanceP95Px,
+            polarityAgreement = match.PolarityAgreement,
+            width = match.Width,
+            height = match.Height,
+            shape = match.Shape,
+            radius = match.Radius
+        }));
     }
 }

@@ -117,6 +117,7 @@ public static class VisionToolCatalog
                 new("XOutput", "X坐标", "Number"),
                 new("YOutput", "Y坐标", "Number"),
                 new("AngleOutput", "角度", "Number"),
+                new("ScaleOutput", "尺度", "Number"),
                 new("OriginOutput", "训练原点", "Pose"),
                 new("ResultOutput", "OK/NG", "Result")
             ],
@@ -132,6 +133,7 @@ public static class VisionToolCatalog
                 new("BestPositionOutput", "最佳位置", "Pose"),
                 new("AllPositionsOutput", "全部位置", "Pose[]"),
                 new("ScoresOutput", "全部分数", "Number[]"),
+                new("ScalesOutput", "全部尺度", "Number[]"),
                 new("ResultOutput", "OK/NG", "Result")
             ],
             VisionToolKind.CoordinateTransform =>
@@ -251,8 +253,8 @@ public static class VisionToolCatalog
         var keys = kind switch
         {
             VisionToolKind.ImageProcess => new[] { "ImageOutput", "ResultOutput" },
-            VisionToolKind.TemplateLocate => new[] { "PositionOutput", "OriginOutput", "ResultOutput" },
-            VisionToolKind.MultiTargetMatch => new[] { "CountOutput", "PositionOutput", "OriginOutput", "BestPositionOutput", "ResultOutput" },
+            VisionToolKind.TemplateLocate => new[] { "PositionOutput", "OriginOutput", "ScaleOutput", "ResultOutput" },
+            VisionToolKind.MultiTargetMatch => new[] { "CountOutput", "PositionOutput", "OriginOutput", "BestPositionOutput", "ScalesOutput", "ResultOutput" },
             VisionToolKind.CoordinateTransform => new[] { "PointOutput", "PositionOutput", "XOutput", "YOutput", "AngleOutput", "ResultOutput" },
             VisionToolKind.FindLine => new[] { "LineOutput", "MidPointOutput", "ResultOutput" },
             VisionToolKind.FindCircle => new[] { "CircleOutput", "CenterOutput", "ResultOutput" },
@@ -307,7 +309,7 @@ public static class VisionToolCatalog
                 ["cannyLow"] = "60",
                 ["cannyHigh"] = "160",
                 ["nmsOverlap"] = "0.35",
-                ["enabledOutputs"] = "CountOutput,PositionOutput,OriginOutput,BestPositionOutput,ResultOutput"
+                ["enabledOutputs"] = "CountOutput,PositionOutput,OriginOutput,BestPositionOutput,ScalesOutput,ResultOutput"
             },
             VisionToolKind.CoordinateTransform => new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {

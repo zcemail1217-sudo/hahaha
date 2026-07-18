@@ -19,7 +19,8 @@ public sealed class MultiTargetCancellationTests : IDisposable
         "AngleOutput",
         "CountOutput",
         "AllPositionsOutput",
-        "ScoresOutput"
+        "ScoresOutput",
+        "ScalesOutput"
     ];
 
     [Fact]
@@ -136,6 +137,7 @@ public sealed class MultiTargetCancellationTests : IDisposable
         context.SetPortOutput(definition, "CountOutput", 1);
         context.SetPortOutput(definition, "AllPositionsOutput", new[] { pose });
         context.SetPortOutput(definition, "ScoresOutput", new[] { 0.9d });
+        context.SetPortOutput(definition, "ScalesOutput", new[] { pose.Scale });
     }
 
     private static byte[] CreateWhiteImage(int width, int height)

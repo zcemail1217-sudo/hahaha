@@ -249,6 +249,52 @@ public sealed class TemplateMatchResultProjectorTests
         Assert.Contains("validation metrics", multi.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [MemberData(nameof(InvalidRadii))]
+    public void InvalidCandidateRadiusFailsClosedForSingleAndMulti(double radius)
+    {
+        var candidate = Candidate(
+            new Pose2D(10, 10, 0),
+            [[new Point2D(8, 8), new Point2D(12, 8), new Point2D(12, 12), new Point2D(8, 12)]]) with
+        {
+            Shape = "Circle",
+            Radius = radius
+        };
+        var batch = TemplateMatchingTestResults.Match(TemplateMatchingEngine.Halcon, candidate);
+
+        var single = Assert.Throws<InvalidOperationException>(() =>
+            TemplateMatchResultProjector.ToSingle(batch));
+        var multi = Assert.Throws<InvalidOperationException>(() =>
+            TemplateMatchResultProjector.ToMulti(batch));
+
+        Assert.Contains("shape geometry", single.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("shape geometry", multi.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    public void BlankCandidateShapeFailsClosedForSingleAndMulti(string? shape)
+    {
+        var candidate = Candidate(
+            new Pose2D(10, 10, 0),
+            [[new Point2D(8, 8), new Point2D(12, 8), new Point2D(12, 12), new Point2D(8, 12)]]) with
+        {
+            Shape = shape!
+        };
+        var batch = TemplateMatchingTestResults.Match(TemplateMatchingEngine.Halcon, candidate);
+
+        var single = Assert.Throws<InvalidOperationException>(() =>
+            TemplateMatchResultProjector.ToSingle(batch));
+        var multi = Assert.Throws<InvalidOperationException>(() =>
+            TemplateMatchResultProjector.ToMulti(batch));
+
+        Assert.Contains("shape geometry", single.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("shape geometry", multi.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     public static IEnumerable<object[]> InvalidContours()
     {
         yield return [Array.Empty<IReadOnlyList<Point2D>>()];
@@ -281,6 +327,14 @@ public sealed class TemplateMatchResultProjectorTests
         yield return ["PolarityAgreement", double.NegativeInfinity];
         yield return ["PolarityAgreement", -0.01];
         yield return ["PolarityAgreement", 1.01];
+    }
+
+    public static IEnumerable<object[]> InvalidRadii()
+    {
+        yield return [double.NaN];
+        yield return [double.PositiveInfinity];
+        yield return [double.NegativeInfinity];
+        yield return [-0.01];
     }
 
     private static TemplateMatchBatchCandidate Candidate(

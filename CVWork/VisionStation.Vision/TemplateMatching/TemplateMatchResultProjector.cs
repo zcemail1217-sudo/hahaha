@@ -110,6 +110,14 @@ public static class TemplateMatchResultProjector
             throw new InvalidOperationException("Template matching backend returned invalid candidate geometry.");
         }
 
+        if (string.IsNullOrWhiteSpace(candidate.Shape) ||
+            !double.IsFinite(candidate.Radius) ||
+            candidate.Radius < 0)
+        {
+            throw new InvalidOperationException(
+                "Template matching backend returned invalid candidate shape geometry.");
+        }
+
         if (candidate.TemplateRoiContours.Count == 0 ||
             candidate.TemplateRoiContours.Any(contour =>
                 contour.Count < 3 ||
