@@ -4,7 +4,14 @@ using VisionStation.Domain;
 
 namespace VisionStation.Vision;
 
-internal sealed class HalconTemplateLearner
+internal interface IHalconTemplateLearner
+{
+    Task<TemplateLearningResult> LearnAsync(
+        TemplateLearningRequest request,
+        CancellationToken cancellationToken);
+}
+
+internal sealed class HalconTemplateLearner : IHalconTemplateLearner
 {
     private readonly IHalconRuntimeProbe _runtimeProbe;
     private readonly IHalconTemplateFeatureExtractor _featureExtractor;
@@ -323,8 +330,8 @@ internal sealed class HalconTemplateLearner
                     "HALCON learning owner recipe/flow/tool identifiers must be non-empty and trimmed."));
         }
 
-        if (TryGet(request.Parameters, TemplateMatchingParameterCatalog.Engine, out string engine) &&
-            !string.Equals(engine, "Halcon", StringComparison.Ordinal))
+        TemplateMatchingEngine engine = TemplateMatchingEngineResolver.Resolve(request.Parameters);
+        if (engine != TemplateMatchingEngine.Halcon)
         {
             throw new TemplateMatchingConfigurationException(
                 TemplateMatchingDiagnostics.Create(
@@ -332,14 +339,9 @@ internal sealed class HalconTemplateLearner
                     "HALCON learner received parameters for a different engine."));
         }
 
-        if (TryGet(request.Parameters, TemplateMatchingParameterCatalog.MatchMode, out string matchMode) &&
-            !string.Equals(matchMode, "Shape", StringComparison.Ordinal))
-        {
-            throw new TemplateMatchingConfigurationException(
-                TemplateMatchingDiagnostics.Create(
-                    TemplateMatchingDiagnosticCodes.ConfigInvalidParameter,
-                    "HALCON learner supports only Shape match mode."));
-        }
+        TemplateMatchingEngineResolver.EnsureHalconShapeMode(
+            request.Parameters,
+            ResolveCardinality(request.Parameters) == TemplateMatchCardinality.ExactCount);
     }
 
     private static TemplateMatchCardinality ResolveCardinality(

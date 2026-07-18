@@ -108,10 +108,14 @@ internal sealed class FilledSupportMask
 
     public int Area { get; }
 
-    public static double ComputeIoU(FilledSupportMask first, FilledSupportMask second)
+    public static double ComputeIoU(
+        FilledSupportMask first,
+        FilledSupportMask second,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(first);
         ArgumentNullException.ThrowIfNull(second);
+        cancellationToken.ThrowIfCancellationRequested();
         if (first.Area == 0 && second.Area == 0)
         {
             return 0;
@@ -124,6 +128,7 @@ internal sealed class FilledSupportMask
         var intersection = 0;
         for (var y = top; y < bottom; y++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             for (var x = left; x < right; x++)
             {
                 if (first.IsSet(x, y) && second.IsSet(x, y))
@@ -133,6 +138,7 @@ internal sealed class FilledSupportMask
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         int union = first.Area + second.Area - intersection;
         return union <= 0 ? 0 : intersection / (double)union;
     }
@@ -221,7 +227,18 @@ internal readonly record struct TemplateEdgeMetrics(double Coverage, double Dist
 
 internal readonly record struct TemplateInnerEdgeMetrics(double Coverage, int ValidGroupCount);
 
-internal sealed class TemplateCandidateEvidenceBuilder
+internal interface ITemplateCandidateEvidenceBuilder
+{
+    IReadOnlyList<TemplateCandidateEvidence> BuildBatch(
+        ImageFrame frame,
+        RoiDefinition? searchRoi,
+        HalconTemplateModelMetadata metadata,
+        IReadOnlyList<TemplateCandidate> candidates,
+        HalconTemplateMatchingParameters parameters,
+        CancellationToken cancellationToken = default);
+}
+
+internal sealed class TemplateCandidateEvidenceBuilder : ITemplateCandidateEvidenceBuilder
 {
     private static readonly Pose2D RelativeReferencePose = new(0, 0, 0) { Scale = 1 };
 

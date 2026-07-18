@@ -271,6 +271,65 @@ public sealed class HalconTemplateLearnerTests : IDisposable
         Assert.Equal(0, operators.CreateCount);
     }
 
+    [Fact]
+    public async Task RealLearnerAcceptsCaseInsensitiveResolvedHalconShapeValues()
+    {
+        Directory.CreateDirectory(_root);
+        var operators = new RecordingHalconOperatorBackend();
+        var store = new RecordingTemplateModelStore(_root);
+        HalconTemplateLearner learner = CreateLearner(Features(), operators, store);
+        TemplateLearningRequest valid = ValidRequest();
+        var request = new TemplateLearningRequest(
+            valid.Owner,
+            valid.Frame,
+            valid.TemplateRoi,
+            valid.SearchRoi,
+            new Dictionary<string, string>(valid.Parameters, StringComparer.OrdinalIgnoreCase)
+            {
+                [TemplateMatchingParameterCatalog.Engine] = " halcon ",
+                [TemplateMatchingParameterCatalog.MatchMode] = " shape "
+            });
+
+        TemplateLearningResult result = await learner.LearnAsync(request, default);
+
+        Assert.True(result.Success, result.Diagnostic?.TechnicalDetails);
+        Assert.Equal(1, operators.CreateCount);
+        Assert.Equal(1, store.CommitCount);
+    }
+
+    [Fact]
+    public async Task ExactCountMultiModeIsRejectedBeforeRuntimeStoreOrOperatorCalls()
+    {
+        Directory.CreateDirectory(_root);
+        var runtime = ReadyRuntimeProbe();
+        var operators = new RecordingHalconOperatorBackend();
+        var store = new RecordingTemplateModelStore(_root);
+        var learner = new HalconTemplateLearner(
+            runtime,
+            new StubFeatureExtractor(Features()),
+            store,
+            new ImmediateHalconScheduler(),
+            operators);
+        TemplateLearningRequest valid = ValidRequest();
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(
+            TemplateMatchCardinality.ExactCount);
+        parameters["multiMatchMode"] = "Orb";
+        var request = new TemplateLearningRequest(
+            valid.Owner,
+            valid.Frame,
+            valid.TemplateRoi,
+            valid.SearchRoi,
+            parameters);
+
+        TemplateLearningResult result = await learner.LearnAsync(request, default);
+
+        Assert.False(result.Success);
+        Assert.Equal(TemplateMatchingDiagnosticCodes.ConfigUnsupportedMode, result.Diagnostic?.Code);
+        Assert.Equal(0, runtime.CallCount);
+        Assert.Equal(0, store.BeginCount);
+        Assert.Equal(0, operators.CreateCount);
+    }
+
     [Theory]
     [InlineData("stride")]
     [InlineData("format")]

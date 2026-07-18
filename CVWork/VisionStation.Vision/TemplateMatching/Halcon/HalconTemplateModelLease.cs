@@ -47,7 +47,7 @@ internal sealed class HalconTemplateModelLease : IAsyncDisposable
 /// <summary>
 /// Grants exclusive operation access to one cached model handle.
 /// </summary>
-internal sealed class HalconTemplateModelOperationLease : IAsyncDisposable
+internal sealed class HalconTemplateModelOperationLease : IHalconModelOperation, IAsyncDisposable
 {
     private readonly HalconTemplateModelCache _cache;
     private readonly IHalconModelHandle _handle;

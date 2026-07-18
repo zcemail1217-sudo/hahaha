@@ -8,6 +8,17 @@ internal interface IHalconModelBorrow
 }
 
 /// <summary>
+/// Executes tracked work against one already-loaded model while preserving the cache operation
+/// lease and shared scheduler boundaries.
+/// </summary>
+internal interface IHalconModelOperation
+{
+    Task<T> InvokeAsync<T>(
+        Func<IHalconModelBorrow, T> invocation,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// Owns one native model resource inside the operator adapter. It never exposes HalconDotNet types.
 /// </summary>
 internal interface IHalconRawModelHandle : IHalconModelBorrow, IDisposable

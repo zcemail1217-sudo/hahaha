@@ -282,6 +282,7 @@ public sealed class TemplateMatchingRoutingTests
             TemplateMatchingDiagnosticCodes.MatchInnerFeaturesWeak,
             TemplateMatchingDiagnosticCodes.MatchDuplicateOverlap,
             TemplateMatchingDiagnosticCodes.MatchTimeout,
+            TemplateMatchingDiagnosticCodes.MatchCountMismatch,
             TemplateMatchingDiagnosticCodes.MatchCandidateLimitReached,
             TemplateMatchingDiagnosticCodes.MatchOperatorFailed
         ];

@@ -133,6 +133,58 @@ internal sealed class HalconContourSamples
     public IReadOnlyList<double> Columns { get; }
 }
 
+internal sealed record HalconNativeCandidate(
+    double Row,
+    double Column,
+    double AngleRadians,
+    double Scale,
+    double Score);
+
+internal sealed class HalconShapeModelFindResult
+{
+    public HalconShapeModelFindResult(IReadOnlyList<HalconNativeCandidate> candidates)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        if (candidates.Any(candidate => candidate is null))
+        {
+            throw new ArgumentException("HALCON native candidate collections cannot contain null.", nameof(candidates));
+        }
+
+        Candidates = Array.AsReadOnly(candidates.ToArray());
+    }
+
+    public IReadOnlyList<HalconNativeCandidate> Candidates { get; }
+}
+
+internal sealed class HalconShapeModelFindRequest
+{
+    public HalconShapeModelFindRequest(
+        TightGray8Image searchImage,
+        HalconModelDomain searchDomain,
+        HalconTemplateMatchingParameters parameters)
+    {
+        ArgumentNullException.ThrowIfNull(searchImage);
+        ArgumentNullException.ThrowIfNull(searchDomain);
+        ArgumentNullException.ThrowIfNull(parameters);
+        if (searchImage.Width != searchDomain.Width || searchImage.Height != searchDomain.Height)
+        {
+            throw new ArgumentException(
+                "The HALCON search domain must use the crop-local image coordinate system.",
+                nameof(searchDomain));
+        }
+
+        SearchImage = searchImage;
+        SearchDomain = searchDomain;
+        Parameters = parameters with { };
+    }
+
+    public TightGray8Image SearchImage { get; }
+
+    public HalconModelDomain SearchDomain { get; }
+
+    public HalconTemplateMatchingParameters Parameters { get; }
+}
+
 internal static class HalconModelHealthValidator
 {
     public static void Validate(IReadOnlyList<HalconContourSamples> contours)
@@ -173,6 +225,11 @@ internal interface IHalconOperatorBackend
         string stagingModelPath);
 
     IHalconRawModelHandle LoadShapeModelAndValidate(string modelPath);
+
+    HalconShapeModelFindResult FindScaledShapeModel(
+        IHalconModelBorrow model,
+        HalconShapeModelFindRequest request) =>
+        throw new NotSupportedException("This HALCON operator backend does not implement shape-model search.");
 
     void VerifyMatchingLicense();
 }

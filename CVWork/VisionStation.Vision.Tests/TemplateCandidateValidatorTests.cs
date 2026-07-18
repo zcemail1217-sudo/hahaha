@@ -9,6 +9,40 @@ public sealed class TemplateCandidateValidatorTests
     private readonly TemplateCandidateValidator _validator = new();
 
     [Fact]
+    public void PreCancelledValidationPropagatesCancellationInsteadOfReturningDecisions()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        OperationCanceledException exception = Assert.ThrowsAny<OperationCanceledException>(() =>
+            _validator.ValidateAndDeduplicate(
+                [Evidence()],
+                Metadata(),
+                Parameters(),
+                cancellation.Token));
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
+    }
+
+    [Fact]
+    public void FilledSupportIouScanObservesCancellationDuringTallMaskTraversal()
+    {
+        const int height = 8_000_000;
+        var pixels = new byte[height];
+        Array.Fill(pixels, (byte)1);
+        var first = new FilledSupportMask(0, 0, 1, height, pixels);
+        var second = new FilledSupportMask(0, 0, 1, height, pixels);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.CancelAfter(TimeSpan.FromMilliseconds(10));
+        Assert.False(cancellation.IsCancellationRequested);
+
+        OperationCanceledException exception = Assert.ThrowsAny<OperationCanceledException>(() =>
+            FilledSupportMask.ComputeIoU(first, second, cancellation.Token));
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
+    }
+
+    [Fact]
     public void NonFinitePoseOrScoreFailsFirstGate()
     {
         TemplateCandidateEvidence evidence = Evidence(

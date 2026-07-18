@@ -23,19 +23,24 @@ public sealed class TemplateModelResourceManagerTests
     }
 
     [Fact]
-    public void ResourceManagerRequiresApplicationLogForCleanupDiagnostics()
+    public void ResourceManagerSupportsLegacyApplicationLogAndNeutralDiagnosticSink()
     {
-        var parameters = typeof(TemplateModelResourceManager)
+        Type[][] signatures = typeof(TemplateModelResourceManager)
             .GetConstructors(System.Reflection.BindingFlags.Instance |
                              System.Reflection.BindingFlags.NonPublic)
-            .Single()
-            .GetParameters()
-            .Select(parameter => parameter.ParameterType)
+            .Where(constructor => constructor.IsAssembly)
+            .Select(constructor => constructor
+                .GetParameters()
+                .Select(parameter => parameter.ParameterType)
+                .ToArray())
             .ToArray();
 
-        Assert.Equal(
+        Assert.Contains(
             [typeof(ITemplateModelStore), typeof(ITemplateModelRetirementSink), typeof(IAppLogService)],
-            parameters);
+            signatures);
+        Assert.Contains(
+            [typeof(ITemplateModelStore), typeof(ITemplateModelRetirementSink), typeof(ITemplateMatchingDiagnosticSink)],
+            signatures);
     }
 
     [Fact]

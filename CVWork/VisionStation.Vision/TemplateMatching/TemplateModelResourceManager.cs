@@ -10,18 +10,47 @@ internal sealed class TemplateModelResourceManager : ITemplateModelResourceManag
 
     private readonly ITemplateModelStore _store;
     private readonly ITemplateModelRetirementSink _retirementSink;
-    private readonly IAppLogService _log;
+    private readonly Action<string, string> _warning;
     private readonly RecipeReservations _reservations;
 
     internal TemplateModelResourceManager(
         ITemplateModelStore store,
         ITemplateModelRetirementSink retirementSink,
         IAppLogService log)
+        : this(store, retirementSink, GetWarning(log))
+    {
+    }
+
+    internal TemplateModelResourceManager(
+        ITemplateModelStore store,
+        ITemplateModelRetirementSink retirementSink,
+        ITemplateMatchingDiagnosticSink diagnostics)
+        : this(store, retirementSink, GetWarning(diagnostics))
+    {
+    }
+
+    private TemplateModelResourceManager(
+        ITemplateModelStore store,
+        ITemplateModelRetirementSink retirementSink,
+        Action<string, string> warning)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _retirementSink = retirementSink ?? throw new ArgumentNullException(nameof(retirementSink));
-        _log = log ?? throw new ArgumentNullException(nameof(log));
+        _warning = warning;
         _reservations = Reservations.GetValue(_store, static _ => new RecipeReservations());
+    }
+
+    private static Action<string, string> GetWarning(IAppLogService log)
+    {
+        ArgumentNullException.ThrowIfNull(log);
+        return log.Warning;
+    }
+
+    private static Action<string, string> GetWarning(
+        ITemplateMatchingDiagnosticSink diagnostics)
+    {
+        ArgumentNullException.ThrowIfNull(diagnostics);
+        return diagnostics.Warning;
     }
 
     public async Task<TemplateRecipeCopySession> PrepareRecipeCopyAsync(
@@ -404,7 +433,7 @@ internal sealed class TemplateModelResourceManager : ITemplateModelResourceManag
             var owner = cleanupFailure.Owner;
             try
             {
-                _log.Warning(
+                _warning(
                     "TemplateModel",
                     $"Template recipe copy cancellation left target generation " +
                     $"'{cleanupFailure.Generation}' for owner " +

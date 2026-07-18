@@ -46,15 +46,18 @@ internal sealed class TemplateCandidateValidator
     public TemplateCandidateValidationResult ValidateAndDeduplicate(
         IReadOnlyList<TemplateCandidateEvidence> evidence,
         HalconTemplateModelMetadata metadata,
-        HalconTemplateMatchingParameters parameters)
+        HalconTemplateMatchingParameters parameters,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(evidence);
         ArgumentNullException.ThrowIfNull(metadata);
         ArgumentNullException.ThrowIfNull(parameters);
+        cancellationToken.ThrowIfCancellationRequested();
         var decisions = new TemplateCandidateDecision?[evidence.Count];
         var eligible = new List<IndexedEvidence>(evidence.Count);
         for (var index = 0; index < evidence.Count; index++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             TemplateCandidateEvidence current = evidence[index] ?? throw new ArgumentException(
                 "Evidence collections cannot contain null entries.",
                 nameof(evidence));
@@ -77,16 +80,20 @@ internal sealed class TemplateCandidateValidator
             .ThenBy(item => item.Evidence.Candidate.SourceIndex)
             .ThenBy(item => item.InputIndex)
             .ToArray();
+        cancellationToken.ThrowIfCancellationRequested();
         var accepted = new List<TemplateCandidateEvidence>(ordered.Length);
         foreach (IndexedEvidence item in ordered)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             TemplateCandidateEvidence? conflictingAccepted = null;
             double conflictingIoU = 0;
             foreach (TemplateCandidateEvidence existing in accepted)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 double iou = FilledSupportMask.ComputeIoU(
                     existing.SupportMask,
-                    item.Evidence.SupportMask);
+                    item.Evidence.SupportMask,
+                    cancellationToken);
                 if (iou <= parameters.MaxOverlap)
                 {
                     continue;
@@ -118,6 +125,7 @@ internal sealed class TemplateCandidateValidator
                 diagnostic: null);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         TemplateCandidateDecision[] completeDecisions = decisions
             .Select(decision => decision ?? throw new InvalidOperationException(
                 "Every candidate must receive a validation decision."))

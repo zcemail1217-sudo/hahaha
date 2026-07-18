@@ -35,6 +35,82 @@ internal sealed class HalconDotNetOperatorBackend : IHalconOperatorBackend
         }
     }
 
+    public HalconShapeModelFindResult FindScaledShapeModel(
+        IHalconModelBorrow model,
+        HalconShapeModelFindRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(request);
+        if (model is not HalconDotNetModelHandle ownedModel)
+        {
+            throw new ArgumentException(
+                "The borrowed HALCON model was not created by this operator backend.",
+                nameof(model));
+        }
+
+        HShapeModel shapeModel = ownedModel.BorrowModel();
+        HalconTemplateMatchingParameters parameters = request.Parameters;
+        TemplateModelGenerationParameters generation =
+            TemplateModelGenerationParameters.From(parameters);
+        HalconNativeAngleInterval angles = HalconAngleConvention.ToNativeInterval(generation);
+        using HImage source = CreateCopiedImage(request.SearchImage);
+        using HRegion domain = CreateRegion(request.SearchDomain);
+        using HImage searchImage = source.ReduceDomain(domain);
+        using var timeoutName = new HTuple("timeout");
+        using var timeoutValue = new HTuple(parameters.OperatorTimeoutMs);
+        shapeModel.SetShapeModelParam(timeoutName, timeoutValue);
+        shapeModel.FindScaledShapeModel(
+            searchImage,
+            angles.StartRadians,
+            angles.ExtentRadians,
+            parameters.ScaleMin,
+            parameters.ScaleMax,
+            parameters.CandidateMinScore,
+            parameters.CandidateLimit,
+            parameters.CandidateMaxOverlap,
+            parameters.SubPixel,
+            parameters.NumLevels,
+            parameters.Greediness,
+            out HTuple rows,
+            out HTuple columns,
+            out HTuple foundAngles,
+            out HTuple scales,
+            out HTuple scores);
+        using (rows)
+        using (columns)
+        using (foundAngles)
+        using (scales)
+        using (scores)
+        {
+            double[] rowValues = rows.ToDArr();
+            double[] columnValues = columns.ToDArr();
+            double[] angleValues = foundAngles.ToDArr();
+            double[] scaleValues = scales.ToDArr();
+            double[] scoreValues = scores.ToDArr();
+            if (columnValues.Length != rowValues.Length ||
+                angleValues.Length != rowValues.Length ||
+                scaleValues.Length != rowValues.Length ||
+                scoreValues.Length != rowValues.Length)
+            {
+                throw new InvalidDataException(
+                    "HALCON FindScaledShapeModel returned tuple arrays with different lengths.");
+            }
+
+            var candidates = new HalconNativeCandidate[rowValues.Length];
+            for (var index = 0; index < candidates.Length; index++)
+            {
+                candidates[index] = new HalconNativeCandidate(
+                    rowValues[index],
+                    columnValues[index],
+                    angleValues[index],
+                    scaleValues[index],
+                    scoreValues[index]);
+            }
+
+            return new HalconShapeModelFindResult(candidates);
+        }
+    }
+
     public void VerifyMatchingLicense()
     {
         const int width = 64;
@@ -176,6 +252,12 @@ internal sealed class HalconDotNetOperatorBackend : IHalconOperatorBackend
     private sealed class HalconDotNetModelHandle(HShapeModel model) : IHalconRawModelHandle
     {
         private HShapeModel? _model = model ?? throw new ArgumentNullException(nameof(model));
+
+        public HShapeModel BorrowModel()
+        {
+            return Volatile.Read(ref _model)
+                ?? throw new ObjectDisposedException(nameof(HalconDotNetModelHandle));
+        }
 
         public void Dispose()
         {

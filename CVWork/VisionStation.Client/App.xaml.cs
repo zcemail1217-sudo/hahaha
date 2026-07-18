@@ -83,9 +83,15 @@ public partial class App : PrismApplication
         containerRegistry.RegisterSingleton<VisionDebugViewModel>();
         containerRegistry.RegisterSingleton<OpenCvCalibrationService>();
 
-        var templateMatchingService = TemplateMatchingService.CreateLegacyOnly();
+        var templateMatching = new TemplateMatchingComposition(
+            runtimePaths,
+            deviceConfiguration.SystemSettings.Halcon,
+            appLogService);
+        var templateMatchingService = templateMatching.Service;
         _templateMatchingService = templateMatchingService;
         containerRegistry.RegisterInstance<ITemplateMatchingService>(templateMatchingService);
+        containerRegistry.RegisterInstance<ITemplateModelStore>(templateMatching.Store);
+        containerRegistry.RegisterInstance<ITemplateModelResourceManager>(templateMatching.Resources);
 
         var camera = new HikvisionMvsCameraDevice();
         containerRegistry.RegisterInstance<ICameraDevice>(camera);

@@ -27,6 +27,7 @@ public static class TemplateMatchingDiagnosticCodes
     public const string MatchInnerFeaturesWeak = "MATCH_INNER_FEATURES_WEAK";
     public const string MatchDuplicateOverlap = "MATCH_DUPLICATE_OVERLAP";
     public const string MatchTimeout = "MATCH_TIMEOUT";
+    public const string MatchCountMismatch = "MATCH_COUNT_MISMATCH";
     public const string MatchCandidateLimitReached = "MATCH_CANDIDATE_LIMIT_REACHED";
     public const string MatchOperatorFailed = "MATCH_OPERATOR_FAILED";
 }
@@ -85,6 +86,7 @@ public static class TemplateMatchingDiagnostics
             TemplateMatchingDiagnosticCodes.MatchInnerFeaturesWeak => "候选目标内部特征覆盖不足。",
             TemplateMatchingDiagnosticCodes.MatchDuplicateOverlap => "候选目标与已有结果重复。",
             TemplateMatchingDiagnosticCodes.MatchTimeout => "模板匹配搜索超时。",
+            TemplateMatchingDiagnosticCodes.MatchCountMismatch => "匹配数量与期望数量不一致。",
             TemplateMatchingDiagnosticCodes.MatchCandidateLimitReached => "候选数量达到安全上限，无法确认结果。",
             TemplateMatchingDiagnosticCodes.MatchOperatorFailed => "模板匹配算子执行失败。",
             _ => "模板匹配失败。"

@@ -47,44 +47,8 @@ internal static class HalconImageFactory
 {
     public static TightGray8Image CreateTightGray8(ImageFrame frame)
     {
-        ArgumentNullException.ThrowIfNull(frame);
-        int bytesPerPixel = frame.Format switch
-        {
-            PixelFormatKind.Gray8 => 1,
-            PixelFormatKind.Bgr24 => 3,
-            PixelFormatKind.Bgra32 => 4,
-            _ => throw new ArgumentException("The image pixel format is unsupported.", nameof(frame))
-        };
-        if (frame.Width <= 0 || frame.Height <= 0 || frame.Pixels is null)
-        {
-            throw new ArgumentException("The image dimensions and pixel buffer must be valid.", nameof(frame));
-        }
-
-        long minimumStride;
-        long requiredBytes;
-        try
-        {
-            minimumStride = checked((long)frame.Width * bytesPerPixel);
-            requiredBytes = checked((long)frame.Stride * frame.Height);
-        }
-        catch (OverflowException exception)
-        {
-            throw new ArgumentException("The image layout exceeds supported buffer limits.", nameof(frame), exception);
-        }
-        if (frame.Stride < minimumStride || requiredBytes < 0 || frame.Pixels.LongLength < requiredBytes)
-        {
-            throw new ArgumentException("The image stride or pixel buffer length is invalid.", nameof(frame));
-        }
-
-        byte[] gray;
-        try
-        {
-            gray = new byte[checked(frame.Width * frame.Height)];
-        }
-        catch (OverflowException exception)
-        {
-            throw new ArgumentException("The image dimensions exceed supported buffer limits.", nameof(frame), exception);
-        }
+        int bytesPerPixel = ValidateFrameLayout(frame);
+        byte[] gray = new byte[checked(frame.Width * frame.Height)];
         for (var row = 0; row < frame.Height; row++)
         {
             int sourceRow = checked(row * frame.Stride);
@@ -107,6 +71,41 @@ internal static class HalconImageFactory
         }
 
         return new TightGray8Image(frame.Width, frame.Height, gray);
+    }
+
+    internal static int ValidateFrameLayout(ImageFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        int bytesPerPixel = frame.Format switch
+        {
+            PixelFormatKind.Gray8 => 1,
+            PixelFormatKind.Bgr24 => 3,
+            PixelFormatKind.Bgra32 => 4,
+            _ => throw new ArgumentException("The image pixel format is unsupported.", nameof(frame))
+        };
+        if (frame.Width <= 0 || frame.Height <= 0 || frame.Pixels is null)
+        {
+            throw new ArgumentException("The image dimensions and pixel buffer must be valid.", nameof(frame));
+        }
+
+        long minimumStride;
+        long requiredBytes;
+        try
+        {
+            minimumStride = checked((long)frame.Width * bytesPerPixel);
+            requiredBytes = checked((long)frame.Stride * frame.Height);
+            _ = checked(frame.Width * frame.Height);
+        }
+        catch (OverflowException exception)
+        {
+            throw new ArgumentException("The image layout exceeds supported buffer limits.", nameof(frame), exception);
+        }
+        if (frame.Stride < minimumStride || requiredBytes < 0 || frame.Pixels.LongLength < requiredBytes)
+        {
+            throw new ArgumentException("The image stride or pixel buffer length is invalid.", nameof(frame));
+        }
+
+        return bytesPerPixel;
     }
 
     public static TightGray8Image Crop(
