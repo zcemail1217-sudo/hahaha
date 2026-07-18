@@ -12,9 +12,61 @@ public interface IRecipeRepository
 
     Task<IReadOnlyList<Recipe>> ListAsync(CancellationToken cancellationToken = default);
 
-    Task SaveAsync(Recipe recipe, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Creates a recipe and returns its repository-issued storage revision.
+    /// Replace the caller's old recipe instance with the returned value.
+    /// </summary>
+    Task<Recipe> CreateAsync(Recipe recipe, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Saves a recipe and returns its new repository-issued storage revision.
+    /// Replace the caller's old recipe instance with the returned value.
+    /// </summary>
+    Task<Recipe> SaveAsync(Recipe recipe, CancellationToken cancellationToken = default);
 
     Task DeleteAsync(string recipeId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Acquires the catalog-wide recipe mutation lease.
+    /// </summary>
+    /// <remarks>
+    /// Always use the returned session with <c>await using</c>, and never nest recipe mutation sessions.
+    /// </remarks>
+    Task<RecipeMutationSession> BeginMutationAsync(
+        string recipeId,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Holds a catalog-wide mutation lease for one recipe until asynchronously disposed.
+/// </summary>
+public abstract class RecipeMutationSession : IAsyncDisposable
+{
+    public abstract string RecipeId { get; }
+
+    public abstract Task<Recipe?> GetAsync(CancellationToken cancellationToken = default);
+
+    public abstract Task<Recipe> CreateAsync(
+        Recipe recipe,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Replaces the session recipe when <paramref name="recipe"/> carries the current
+    /// repository-issued storage revision, and returns the newly issued revision.
+    /// </summary>
+    public abstract Task<Recipe> UpdateAsync(
+        Recipe recipe,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes the session recipe only when <paramref name="expected"/> carries the current
+    /// repository-issued storage revision.
+    /// </summary>
+    public abstract Task DeleteAsync(
+        Recipe expected,
+        CancellationToken cancellationToken = default);
+
+    public abstract ValueTask DisposeAsync();
 }
 
 public interface IDeviceConfigurationRepository

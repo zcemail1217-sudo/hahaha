@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -84,9 +85,12 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
                 modelStagingPath,
                 metadataStagingPath,
                 generation,
-                () => _coordinator.ReleaseSession(
+                CleanupWriteSessionFiles,
+                cleanupEmptyHierarchy => _coordinator.ReleaseSession(
                     ownerDirectory,
-                    () => _pathGuard.DeleteEmptyOwnerHierarchy(owner)));
+                    cleanupEmptyHierarchy
+                        ? () => _pathGuard.DeleteEmptyOwnerHierarchy(owner)
+                        : null));
         }
     }
 
@@ -189,11 +193,14 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
             throw new IOException("A template model generation with the same identifier already exists.");
         }
 
-        // No cancellation is observed after the first irreversible move. A crash can leave an
-        // unreferenced generation, but the caller never receives a reference to a partial pair.
+        // No cancellation is observed after the first irreversible move. The session records
+        // each move that actually succeeds so DisposeAsync can converge an unpublished pair.
         cancellationToken.ThrowIfCancellationRequested();
+        controlledSession.PreparePublication(finalModelPath, finalMetadataPath);
         File.Move(controlledSession.StagingModelPath, finalModelPath, overwrite: false);
+        controlledSession.MarkModelPublished();
         File.Move(controlledSession.MetadataStagingPath, finalMetadataPath, overwrite: false);
+        controlledSession.MarkMetadataPublished();
 
         _ = await ResolveAsync(
             controlledSession.Owner,
@@ -201,6 +208,92 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
             CancellationToken.None).ConfigureAwait(false);
         controlledSession.MarkCommitted();
         return reference;
+    }
+
+    private void CleanupWriteSessionFiles(StoreWriteSession session)
+    {
+        DeleteStagingFileIfExists(
+            session,
+            session.StagingModelPath,
+            ModelStagingSuffix);
+        DeleteStagingFileIfExists(
+            session,
+            session.MetadataStagingPath,
+            MetadataStagingSuffix);
+
+        if (session.PublishedModelPath is not null)
+        {
+            var expectedModelPath = _pathGuard.ResolveModelPath(
+                session.Owner,
+                _pathGuard.GetRelativeModelPath(session.Owner, session.Generation),
+                session.Generation,
+                requireExisting: false);
+            DeletePublishedFileIfExists(session.PublishedModelPath, expectedModelPath);
+        }
+
+        if (session.PublishedMetadataPath is not null)
+        {
+            var expectedMetadataPath = _pathGuard.ResolveMetadataPath(
+                session.Owner,
+                _pathGuard.GetRelativeMetadataPath(session.Owner, session.Generation),
+                session.Generation,
+                requireExisting: false);
+            DeletePublishedFileIfExists(session.PublishedMetadataPath, expectedMetadataPath);
+        }
+    }
+
+    private void DeleteStagingFileIfExists(
+        StoreWriteSession session,
+        string path,
+        string expectedSuffix)
+    {
+        if (!File.Exists(path))
+        {
+            if (Directory.Exists(path))
+            {
+                throw new TemplateModelStoreException(
+                    TemplateMatchingDiagnosticCodes.ModelPathInvalid,
+                    "A template model staging path was replaced by a directory.");
+            }
+
+            return;
+        }
+
+        _pathGuard.ValidateStoreIssuedStagingPath(
+            session.Owner,
+            session.OwnerDirectory,
+            path,
+            expectedSuffix,
+            requireExisting: true);
+        File.Delete(path);
+    }
+
+    private void DeletePublishedFileIfExists(string trackedPath, string expectedPath)
+    {
+        if (!string.Equals(
+                Path.GetFullPath(trackedPath),
+                Path.GetFullPath(expectedPath),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new TemplateModelStoreException(
+                TemplateMatchingDiagnosticCodes.ModelPathInvalid,
+                "A tracked template generation path no longer matches its controlled destination.");
+        }
+
+        if (!File.Exists(expectedPath))
+        {
+            if (Directory.Exists(expectedPath))
+            {
+                throw new TemplateModelStoreException(
+                    TemplateMatchingDiagnosticCodes.ModelPathInvalid,
+                    "A published template generation path was replaced by a directory.");
+            }
+
+            return;
+        }
+
+        _pathGuard.ValidateExistingFile(expectedPath);
+        File.Delete(expectedPath);
     }
 
     public async Task<ResolvedTemplateModel> ResolveAsync(
@@ -258,35 +351,155 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
             sourceOwner,
             sourceReference,
             cancellationToken).ConfigureAwait(false);
-        await using var session = await BeginWriteAsync(targetOwner, cancellationToken).ConfigureAwait(false);
-
-        await CopyModelAsync(
-            source.ModelPath,
-            session.StagingModelPath,
-            cancellationToken).ConfigureAwait(false);
-        var modelChecksum = await ComputeFileHashAsync(
-            session.StagingModelPath,
-            cancellationToken).ConfigureAwait(false);
-        if (!FixedTimeEquals(modelChecksum, sourceReference.ModelChecksum))
+        var session = await BeginWriteAsync(targetOwner, cancellationToken).ConfigureAwait(false);
+        TemplateModelReference copiedReference;
+        try
         {
-            throw ChecksumMismatch(
-                "The source template model changed between validation and generation copy.");
+            await CopyModelAsync(
+                source.ModelPath,
+                session.StagingModelPath,
+                cancellationToken).ConfigureAwait(false);
+            var modelChecksum = await ComputeFileHashAsync(
+                session.StagingModelPath,
+                cancellationToken).ConfigureAwait(false);
+            if (!FixedTimeEquals(modelChecksum, sourceReference.ModelChecksum))
+            {
+                throw ChecksumMismatch(
+                    "The source template model changed between validation and generation copy.");
+            }
+
+            var metadata = JsonNode.Parse(Encoding.UTF8.GetString(source.MetadataJson.Span)) as JsonObject
+                           ?? throw MetadataInvalid("Template model metadata root must be an object.");
+            metadata["owner"] = new JsonObject
+            {
+                ["recipeId"] = targetOwner.RecipeId,
+                ["flowId"] = targetOwner.FlowId,
+                ["toolId"] = targetOwner.ToolId
+            };
+            metadata["generation"] = session.Generation;
+            metadata["modelFileName"] = $"model-{session.Generation}.shm";
+            metadata["modelChecksum"] = modelChecksum;
+            var rewrittenMetadata = JsonSerializer.SerializeToUtf8Bytes(metadata, MetadataWriteOptions);
+
+            copiedReference = await CommitAsync(
+                session,
+                rewrittenMetadata,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception primaryException)
+        {
+            try
+            {
+                await session.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception cleanupException)
+            {
+                throw new TemplateModelGenerationCleanupException(
+                    "Template generation copy failed and its exact target generation could not be cleaned.",
+                    [
+                        new TemplateModelGenerationCleanupFailure(
+                            targetOwner,
+                            session.Generation,
+                            cleanupException)
+                    ],
+                    primaryException);
+            }
+
+            throw;
         }
 
-        var metadata = JsonNode.Parse(Encoding.UTF8.GetString(source.MetadataJson.Span)) as JsonObject
-                       ?? throw MetadataInvalid("Template model metadata root must be an object.");
-        metadata["owner"] = new JsonObject
-        {
-            ["recipeId"] = targetOwner.RecipeId,
-            ["flowId"] = targetOwner.FlowId,
-            ["toolId"] = targetOwner.ToolId
-        };
-        metadata["generation"] = session.Generation;
-        metadata["modelFileName"] = $"model-{session.Generation}.shm";
-        metadata["modelChecksum"] = modelChecksum;
-        var rewrittenMetadata = JsonSerializer.SerializeToUtf8Bytes(metadata, MetadataWriteOptions);
+        await session.DisposeAsync().ConfigureAwait(false);
+        return copiedReference;
+    }
 
-        return await CommitAsync(session, rewrittenMetadata, cancellationToken).ConfigureAwait(false);
+    public async Task DeleteGenerationAsync(
+        TemplateModelOwner owner,
+        TemplateModelReference reference,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(reference);
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateReference(reference);
+
+        var ownerDirectory = _pathGuard.GetOwnerDirectory(owner, requireExisting: false);
+        _coordinator.BeginDelete(ownerDirectory);
+        try
+        {
+            var modelPath = _pathGuard.ResolveModelPath(
+                owner,
+                reference.ModelPath,
+                reference.Generation,
+                requireExisting: false);
+            var metadataPath = _pathGuard.ResolveMetadataPath(
+                owner,
+                reference.MetadataPath,
+                reference.Generation,
+                requireExisting: false);
+            var modelExists = File.Exists(modelPath);
+            var metadataExists = File.Exists(metadataPath);
+            if (!modelExists && !metadataExists)
+            {
+                return;
+            }
+
+            if (modelExists && metadataExists)
+            {
+                _ = await ResolveAsync(owner, reference, cancellationToken).ConfigureAwait(false);
+            }
+            else if (modelExists)
+            {
+                var modelChecksum = await ComputeFileHashAsync(
+                    modelPath,
+                    cancellationToken).ConfigureAwait(false);
+                if (!FixedTimeEquals(modelChecksum, reference.ModelChecksum))
+                {
+                    throw ChecksumMismatch(
+                        "The remaining template model does not match the requested generation.");
+                }
+            }
+            else
+            {
+                var metadataJson = await File.ReadAllBytesAsync(
+                    metadataPath,
+                    cancellationToken).ConfigureAwait(false);
+                var metadataChecksum = ComputeHash(metadataJson);
+                if (!FixedTimeEquals(metadataChecksum, reference.MetadataChecksum))
+                {
+                    throw ChecksumMismatch(
+                        "The remaining template metadata does not match the requested generation.");
+                }
+
+                var header = ParseMetadata(metadataJson);
+                ValidateHeaderForReference(
+                    header,
+                    owner,
+                    reference,
+                    Path.GetFileName(modelPath),
+                    reference.ModelChecksum);
+                _pathGuard.ValidateExistingFile(metadataPath);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // The pair is the cleanup unit. Once deletion starts, do not observe late
+            // cancellation and report an ambiguous partially completed rollback.
+            if (modelExists)
+            {
+                File.Delete(modelPath);
+            }
+
+            if (metadataExists)
+            {
+                File.Delete(metadataPath);
+            }
+
+            _pathGuard.DeleteEmptyOwnerHierarchy(owner);
+        }
+        finally
+        {
+            _coordinator.EndDelete(ownerDirectory);
+        }
     }
 
     public async Task DeleteOwnerResourcesAsync(
@@ -356,9 +569,28 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
                     header.ModelVersion,
                     header.NativeRuntimeVersion,
                     header.GenerationParameterFingerprint);
-                var resolved = await ResolveAsync(owner, reference, cancellationToken).ConfigureAwait(false);
-                referencedModels.Add(Path.GetFullPath(resolved.ModelPath));
-                verifiedPairs.Add((resolved.ModelPath, Path.GetFullPath(metadataPath)));
+                var modelPath = _pathGuard.ResolveModelPath(
+                    owner,
+                    modelRelativePath,
+                    metadataGeneration,
+                    requireExisting: false);
+                if (File.Exists(modelPath))
+                {
+                    var resolved = await ResolveAsync(owner, reference, cancellationToken).ConfigureAwait(false);
+                    referencedModels.Add(Path.GetFullPath(resolved.ModelPath));
+                    modelPath = resolved.ModelPath;
+                }
+                else
+                {
+                    ValidateHeaderForReference(
+                        header,
+                        owner,
+                        reference,
+                        Path.GetFileName(modelPath),
+                        header.ModelChecksum);
+                }
+
+                verifiedPairs.Add((Path.GetFullPath(modelPath), Path.GetFullPath(metadataPath)));
             }
 
             var modelFiles = entries
@@ -374,10 +606,14 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
             cancellationToken.ThrowIfCancellationRequested();
             foreach (var pair in verifiedPairs)
             {
-                _pathGuard.ValidateExistingFile(pair.ModelPath);
+                if (File.Exists(pair.ModelPath))
+                {
+                    _pathGuard.ValidateExistingFile(pair.ModelPath);
+                    File.Delete(pair.ModelPath);
+                }
+
                 _pathGuard.ValidateExistingFile(pair.MetadataPath);
                 File.Delete(pair.MetadataPath);
-                File.Delete(pair.ModelPath);
             }
 
             _pathGuard.DeleteEmptyOwnerHierarchy(owner);
@@ -776,7 +1012,7 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
             }
         }
 
-        public void ReleaseSession(string ownerDirectory, Action cleanupEmptyHierarchy)
+        public void ReleaseSession(string ownerDirectory, Action? cleanupEmptyHierarchy)
         {
             lock (_gate)
             {
@@ -790,7 +1026,7 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
                 if (state.ActiveSessionCount == 0 && !state.DeleteInProgress)
                 {
                     _owners.Remove(ownerDirectory);
-                    cleanupEmptyHierarchy();
+                    cleanupEmptyHierarchy?.Invoke();
                 }
             }
         }
@@ -848,11 +1084,16 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
 
     private sealed class StoreWriteSession : TemplateModelWriteSession
     {
-        private readonly Action _releaseSession;
+        private readonly Action<StoreWriteSession> _cleanupFiles;
+        private readonly Action<bool> _releaseSession;
         private readonly SemaphoreSlim _operationGate = new(1, 1);
         private bool _commitStarted;
         private bool _committed;
-        private bool _disposed;
+        private bool _cleanupStarted;
+        private bool _cleanupComplete;
+        private bool _releaseAttempted;
+        private string? _modelPublicationCandidate;
+        private string? _metadataPublicationCandidate;
 
         public StoreWriteSession(
             Guid storeId,
@@ -861,7 +1102,8 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
             string modelStagingPath,
             string metadataStagingPath,
             string generation,
-            Action releaseSession)
+            Action<StoreWriteSession> cleanupFiles,
+            Action<bool> releaseSession)
         {
             StoreId = storeId;
             Owner = owner;
@@ -869,6 +1111,7 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
             StagingModelPath = modelStagingPath;
             MetadataStagingPath = metadataStagingPath;
             Generation = generation;
+            _cleanupFiles = cleanupFiles;
             _releaseSession = releaseSession;
         }
 
@@ -884,10 +1127,14 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
 
         public override string Generation { get; }
 
+        public string? PublishedModelPath { get; private set; }
+
+        public string? PublishedMetadataPath { get; private set; }
+
         public async Task BeginCommitAsync(CancellationToken cancellationToken)
         {
             await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-            if (_disposed || _commitStarted)
+            if (_cleanupStarted || _commitStarted)
             {
                 _operationGate.Release();
                 throw new InvalidOperationException("Template model write sessions can be committed only once.");
@@ -903,7 +1150,38 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
 
         public void MarkCommitted()
         {
+            if (PublishedModelPath is null || PublishedMetadataPath is null)
+            {
+                throw new InvalidOperationException(
+                    "A template model generation cannot be committed before both files are published.");
+            }
+
             _committed = true;
+        }
+
+        public void PreparePublication(string modelPath, string metadataPath)
+        {
+            if (_modelPublicationCandidate is not null || _metadataPublicationCandidate is not null)
+            {
+                throw new InvalidOperationException("Template model publication was already prepared.");
+            }
+
+            _modelPublicationCandidate = modelPath;
+            _metadataPublicationCandidate = metadataPath;
+        }
+
+        public void MarkModelPublished()
+        {
+            PublishedModelPath = _modelPublicationCandidate
+                                 ?? throw new InvalidOperationException(
+                                     "Template model publication was not prepared.");
+        }
+
+        public void MarkMetadataPublished()
+        {
+            PublishedMetadataPath = _metadataPublicationCandidate
+                                    ?? throw new InvalidOperationException(
+                                        "Template metadata publication was not prepared.");
         }
 
         public override async ValueTask DisposeAsync()
@@ -911,31 +1189,69 @@ public sealed class FileTemplateModelStore : ITemplateModelStore
             await _operationGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                if (_disposed)
+                if (_cleanupComplete && _releaseAttempted)
                 {
                     return;
                 }
 
-                _disposed = true;
-                if (!_committed)
+                Exception? cleanupFailure = null;
+                if (!_cleanupComplete)
                 {
-                    DeleteIfExists(StagingModelPath);
-                    DeleteIfExists(MetadataStagingPath);
+                    _cleanupStarted = true;
+                    try
+                    {
+                        if (!_committed)
+                        {
+                            _cleanupFiles(this);
+                        }
+
+                        _cleanupComplete = true;
+                    }
+                    catch (Exception exception)
+                    {
+                        cleanupFailure = exception;
+                    }
                 }
 
-                _releaseSession();
+                Exception? releaseFailure = null;
+                if (!_releaseAttempted)
+                {
+                    _releaseAttempted = true;
+                    try
+                    {
+                        // A committed generation keeps its non-empty owner hierarchy. Skipping
+                        // hierarchy cleanup also makes publication return independent of a
+                        // redundant post-commit path probe; the coordinator lease itself cannot
+                        // fail before it is released.
+                        _releaseSession(!_committed);
+                    }
+                    catch (Exception exception)
+                    {
+                        releaseFailure = exception;
+                    }
+                }
+
+                if (cleanupFailure is not null && releaseFailure is not null)
+                {
+                    throw new AggregateException(
+                        "Template model session cleanup and owner lease release both failed.",
+                        cleanupFailure,
+                        releaseFailure);
+                }
+
+                if (cleanupFailure is not null)
+                {
+                    ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
+                }
+
+                if (releaseFailure is not null)
+                {
+                    ExceptionDispatchInfo.Capture(releaseFailure).Throw();
+                }
             }
             finally
             {
                 _operationGate.Release();
-            }
-        }
-
-        private static void DeleteIfExists(string path)
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
             }
         }
     }

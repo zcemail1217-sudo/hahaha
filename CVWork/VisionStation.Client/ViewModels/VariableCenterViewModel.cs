@@ -306,9 +306,9 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
                 Variables = Variables.Select(variable => variable.ToDefinition()).ToArray(),
                 UpdatedAt = DateTimeOffset.Now
             };
-            await _recipes.SaveAsync(recipe);
-            _events.GetEvent<RecipeChangedEvent>().Publish(recipe.Id);
-            await LoadAsync(recipe.Id);
+            var saved = await _recipes.SaveAsync(recipe);
+            _events.GetEvent<RecipeChangedEvent>().Publish(saved.Id);
+            await LoadAsync(saved.Id);
             StatusText = $"{recipe.Name} 的变量配置已保存。";
         }
         finally
@@ -332,11 +332,11 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
                 DefaultValue = "0",
                 CurrentValue = "0",
                 Source = "手动输入",
-            Target = "配方/运行流程",
-            Editable = true,
-            Enabled = true,
-            Description = "新建参数，可在配方中使用 ${Key} 调用。"
-        };
+                Target = "配方/运行流程",
+                Editable = true,
+                Enabled = true,
+                Description = "新建参数，可在配方中使用 ${Key} 调用。"
+            };
 
             ConfigureVariableSourceOptions(parameter);
             Variables.Add(parameter);

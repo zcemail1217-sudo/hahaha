@@ -690,8 +690,8 @@ public sealed class CalibrationViewModel : BindableBase
         {
             Camera = recipe.Camera with { PlaneCalibration = result }
         };
-        await _recipes.SaveAsync(updated);
-        _currentRecipe = updated;
+        var saved = await _recipes.SaveAsync(updated);
+        _currentRecipe = saved;
     }
 
     private void ClearCameraImages()
@@ -722,8 +722,8 @@ public sealed class CalibrationViewModel : BindableBase
         {
             Camera = recipe.Camera with { CameraCalibration = _cameraResult }
         };
-        await _recipes.SaveAsync(updated);
-        _currentRecipe = updated;
+        var saved = await _recipes.SaveAsync(updated);
+        _currentRecipe = saved;
         CameraStatusText = "相机内参已保存到当前配方";
     }
 

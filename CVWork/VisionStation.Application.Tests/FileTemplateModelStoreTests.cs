@@ -116,6 +116,99 @@ public sealed class FileTemplateModelStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task DeleteGenerationRemovesOnlyRequestedPairForSameOwner()
+    {
+        var first = await StoreGenerationAsync(Owner, Encoding.UTF8.GetBytes("first-generation"));
+        var second = await StoreGenerationAsync(Owner, Encoding.UTF8.GetBytes("second-generation"));
+
+        await _store.DeleteGenerationAsync(Owner, first, default);
+
+        Assert.False(File.Exists(ToFullPath(first.ModelPath)));
+        Assert.False(File.Exists(ToFullPath(first.MetadataPath)));
+        _ = await _store.ResolveAsync(Owner, second, default);
+    }
+
+    [Fact]
+    public async Task DeleteGenerationCanResumeAfterModelWasDeletedButMetadataWasTemporarilyLocked()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var target = await StoreGenerationAsync(Owner, Encoding.UTF8.GetBytes("target-generation"));
+        var sibling = await StoreGenerationAsync(Owner, Encoding.UTF8.GetBytes("sibling-generation"));
+        var modelPath = ToFullPath(target.ModelPath);
+        var metadataPath = ToFullPath(target.MetadataPath);
+
+        await using (var blocker = new FileStream(
+                         metadataPath,
+                         FileMode.Open,
+                         FileAccess.Read,
+                         FileShare.Read))
+        {
+            await Assert.ThrowsAnyAsync<IOException>(() =>
+                _store.DeleteGenerationAsync(Owner, target, default));
+            Assert.False(File.Exists(modelPath));
+            Assert.True(File.Exists(metadataPath));
+        }
+
+        await _store.DeleteGenerationAsync(Owner, target, default);
+
+        Assert.False(File.Exists(modelPath));
+        Assert.False(File.Exists(metadataPath));
+        _ = await _store.ResolveAsync(Owner, sibling, default);
+    }
+
+    [Fact]
+    public async Task AbandonedRecipeCopyKeepsPreexistingGenerationForSameTargetOwner()
+    {
+        var sourceReference = await StoreGenerationAsync(
+            Owner,
+            Encoding.UTF8.GetBytes("source-generation"));
+        var targetOwner = new TemplateModelOwner("recipe-copy", Owner.FlowId, Owner.ToolId);
+        var siblingReference = await StoreGenerationAsync(
+            targetOwner,
+            Encoding.UTF8.GetBytes("preexisting-sibling"));
+        var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        TemplateModelParameterCodec.WriteHalcon(
+            parameters,
+            new HalconTemplateModelState(
+                sourceReference,
+                new TemplateLearnedGeometry(new Pose2D(1, 2, 3) { Scale = 1 }, 20, 30)));
+        var source = new Recipe
+        {
+            Id = Owner.RecipeId,
+            CurrentFlowId = Owner.FlowId,
+            Flows =
+            [
+                new VisionFlowDefinition
+                {
+                    Id = Owner.FlowId,
+                    Tools = [new VisionToolDefinition { Id = Owner.ToolId, Parameters = parameters }]
+                }
+            ]
+        }.WithNormalizedFlows();
+        var events = new List<string>();
+        var manager = new TemplateModelResourceManager(
+            _store,
+            new RecordingRetirementSink(events),
+            new RecordingLog());
+        var copy = await manager.PrepareRecipeCopyAsync(source, "recipe-copy", default);
+        var copiedReference = TemplateModelParameterCodec.ReadHalcon(
+            copy.Recipe.EffectiveFlows[0].Tools[0].Parameters)!.Reference;
+
+        await copy.DisposeAsync();
+
+        Assert.False(File.Exists(ToFullPath(copiedReference.ModelPath)));
+        Assert.False(File.Exists(ToFullPath(copiedReference.MetadataPath)));
+        var sibling = await _store.ResolveAsync(targetOwner, siblingReference, default);
+        Assert.Equal(
+            "preexisting-sibling",
+            Encoding.UTF8.GetString(await File.ReadAllBytesAsync(sibling.ModelPath)));
+    }
+
+    [Fact]
     public async Task DisposingSessionFromOneStoreDoesNotBreakAnotherStoreSession()
     {
         var otherStore = new FileTemplateModelStore(_paths);
@@ -343,6 +436,48 @@ public sealed class FileTemplateModelStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedStagingCleanupReleasesOwnerLeaseAndRetriesOnlyItsExactFiles()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var sibling = await StoreGenerationAsync(
+            Owner,
+            Encoding.UTF8.GetBytes("preexisting-sibling"));
+        var failedSession = await _store.BeginWriteAsync(Owner, default);
+        await File.WriteAllTextAsync(failedSession.StagingModelPath, "failed-session");
+        var failedStagingPath = failedSession.StagingModelPath;
+
+        await using (var blocker = new FileStream(
+                         failedStagingPath,
+                         FileMode.Open,
+                         FileAccess.Read,
+                         FileShare.Read))
+        {
+            await Assert.ThrowsAnyAsync<IOException>(() =>
+                failedSession.DisposeAsync().AsTask());
+        }
+
+        var replacement = await _store.BeginWriteAsync(Owner, default);
+        await File.WriteAllTextAsync(replacement.StagingModelPath, "replacement-session");
+        var replacementStagingPath = replacement.StagingModelPath;
+
+        await failedSession.DisposeAsync();
+
+        Assert.False(File.Exists(failedStagingPath));
+        Assert.True(File.Exists(replacementStagingPath));
+        _ = await _store.ResolveAsync(Owner, sibling, default);
+
+        await replacement.DisposeAsync();
+        await _store.DeleteOwnerResourcesAsync(Owner, default);
+
+        Assert.False(File.Exists(ToFullPath(sibling.ModelPath)));
+        Assert.False(File.Exists(ToFullPath(sibling.MetadataPath)));
+    }
+
+    [Fact]
     public async Task SessionCannotBeCommittedTwice()
     {
         await using var session = await _store.BeginWriteAsync(Owner, default);
@@ -402,20 +537,51 @@ public sealed class FileTemplateModelStoreTests : IDisposable
     public async Task FailedNewCommitLeavesOldReferenceResolvable()
     {
         var oldReference = await StoreGenerationAsync(Owner, Encoding.UTF8.GetBytes("old-model"));
-        await using var session = await _store.BeginWriteAsync(Owner, default);
+        var session = await _store.BeginWriteAsync(Owner, default);
         var newModel = Encoding.UTF8.GetBytes("new-model");
         await File.WriteAllBytesAsync(session.StagingModelPath, newModel);
         var metadata = CreateMetadata(Owner, session.Generation, $"model-{session.Generation}.shm", Hash(newModel));
         var ownerDirectory = Path.GetDirectoryName(ToFullPath(oldReference.ModelPath))!;
+        var unpublishedModelPath = Path.Combine(ownerDirectory, $"model-{session.Generation}.shm");
         var blockedMetadataPath = Path.Combine(ownerDirectory, $"model-{session.Generation}.json");
         Directory.CreateDirectory(blockedMetadataPath);
 
         await Assert.ThrowsAsync<IOException>(() => _store.CommitAsync(session, metadata, default));
+        await session.DisposeAsync();
 
-        Assert.True(File.Exists(Path.Combine(ownerDirectory, $"model-{session.Generation}.shm")));
+        Assert.False(File.Exists(unpublishedModelPath));
         Assert.True(Directory.Exists(blockedMetadataPath));
+        Assert.DoesNotContain(
+            Directory.EnumerateFiles(ownerDirectory),
+            path => Path.GetFileName(path).Contains(session.Generation, StringComparison.Ordinal));
         var resolved = await _store.ResolveAsync(Owner, oldReference, default);
         Assert.Equal("old-model", Encoding.UTF8.GetString(await File.ReadAllBytesAsync(resolved.ModelPath)));
+    }
+
+    [Fact]
+    public void GenerationCleanupExceptionPreservesPrimaryIdentityAndExactTargetContext()
+    {
+        var primary = new OperationCanceledException("copy cancelled");
+        var cleanup = new IOException("staging file is locked");
+        var owner = new TemplateModelOwner("target-recipe", "target-flow", "target-tool");
+
+        var failure = new TemplateModelGenerationCleanupException(
+            "Template generation copy and rollback both failed.",
+            [new TemplateModelGenerationCleanupFailure(owner, "generation-42", cleanup)],
+            primary);
+
+        Assert.Same(primary, failure.PrimaryException);
+        var exactFailure = Assert.Single(failure.Failures);
+        Assert.Equal(owner, exactFailure.Owner);
+        Assert.Equal("generation-42", exactFailure.Generation);
+        Assert.Same(cleanup, exactFailure.CleanupException);
+        var exposedFailures = Assert.IsAssignableFrom<IList<TemplateModelGenerationCleanupFailure>>(
+            failure.Failures);
+        Assert.Throws<NotSupportedException>(() =>
+            exposedFailures[0] = new TemplateModelGenerationCleanupFailure(
+                owner,
+                "replacement",
+                new IOException("replacement")));
     }
 
     [Fact]
@@ -451,6 +617,76 @@ public sealed class FileTemplateModelStoreTests : IDisposable
         Assert.False(File.Exists(ToFullPath(first.ModelPath)));
         Assert.False(File.Exists(ToFullPath(first.MetadataPath)));
         _ = await _store.ResolveAsync(otherOwner, other, default);
+    }
+
+    [Fact]
+    public async Task DeleteOwnerResourcesCanResumeAfterModelWasDeletedButMetadataWasTemporarilyLocked()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var target = await StoreGenerationAsync(Owner, Encoding.UTF8.GetBytes("target-generation"));
+        var siblingOwner = new TemplateModelOwner(Owner.RecipeId, Owner.FlowId, "SiblingTool");
+        var sibling = await StoreGenerationAsync(
+            siblingOwner,
+            Encoding.UTF8.GetBytes("sibling-generation"));
+        var modelPath = ToFullPath(target.ModelPath);
+        var metadataPath = ToFullPath(target.MetadataPath);
+        var externalDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"visionstation-owner-delete-external-{Guid.NewGuid():N}");
+        var externalSentinel = Path.Combine(externalDirectory, "keep.txt");
+        Directory.CreateDirectory(externalDirectory);
+        await File.WriteAllTextAsync(externalSentinel, "keep");
+
+        try
+        {
+            await using (var blocker = new FileStream(
+                             metadataPath,
+                             FileMode.Open,
+                             FileAccess.Read,
+                             FileShare.Read))
+            {
+                await Assert.ThrowsAnyAsync<IOException>(() =>
+                    _store.DeleteOwnerResourcesAsync(Owner, default));
+
+                Assert.False(File.Exists(modelPath));
+                Assert.True(File.Exists(metadataPath));
+                _ = await _store.ResolveAsync(siblingOwner, sibling, default);
+                Assert.True(File.Exists(externalSentinel));
+            }
+
+            await _store.DeleteOwnerResourcesAsync(Owner, default);
+
+            Assert.False(File.Exists(modelPath));
+            Assert.False(File.Exists(metadataPath));
+            _ = await _store.ResolveAsync(siblingOwner, sibling, default);
+            Assert.True(File.Exists(externalSentinel));
+        }
+        finally
+        {
+            if (Directory.Exists(externalDirectory))
+            {
+                Directory.Delete(externalDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DeleteOwnerResourcesRefusesModelOnlyGeneration()
+    {
+        var target = await StoreGenerationAsync(Owner, Encoding.UTF8.GetBytes("model-only-generation"));
+        var modelPath = ToFullPath(target.ModelPath);
+        var metadataPath = ToFullPath(target.MetadataPath);
+        File.Delete(metadataPath);
+
+        var error = await Assert.ThrowsAsync<TemplateModelStoreException>(
+            () => _store.DeleteOwnerResourcesAsync(Owner, default));
+
+        Assert.Equal(TemplateMatchingDiagnosticCodes.ModelMetadataInvalid, error.Code);
+        Assert.True(File.Exists(modelPath));
     }
 
     [Fact]

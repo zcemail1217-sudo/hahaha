@@ -439,6 +439,17 @@ public sealed record VisionFlowDefinition
 
 public sealed record Recipe
 {
+    /// <summary>
+    /// Gets the opaque compare-and-swap token issued by the recipe repository.
+    /// </summary>
+    /// <remarks>
+    /// This value is transient and is not written to recipe JSON. After create or save,
+    /// replace the caller's old <see cref="Recipe"/> instance with the repository result;
+    /// update and delete reject missing or stale tokens.
+    /// </remarks>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string StorageRevision { get; init; } = string.Empty;
+
     public string Id { get; init; } = "default";
 
     public string Name { get; init; } = "默认配方";

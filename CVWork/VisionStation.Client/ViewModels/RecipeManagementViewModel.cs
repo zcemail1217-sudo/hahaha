@@ -788,7 +788,11 @@ public sealed class RecipeManagementViewModel : BindableBase
                                      ?? RecipeVariables.FirstOrDefault();
             if (_loadedRecipe is not null && string.Equals(_loadedRecipe.Id, recipe.Id, StringComparison.OrdinalIgnoreCase))
             {
-                _loadedRecipe = _loadedRecipe with { Variables = recipe.Variables };
+                _loadedRecipe = _loadedRecipe with
+                {
+                    StorageRevision = recipe.StorageRevision,
+                    Variables = recipe.Variables
+                };
             }
 
             RaisePropertyChanged(nameof(RecipeVariableCount));
@@ -1093,8 +1097,8 @@ public sealed class RecipeManagementViewModel : BindableBase
             UpdatedAt = DateTimeOffset.Now
         };
 
-        await _recipes.SaveAsync(recipe);
-        await LoadAsync(recipe.Id);
+        var created = await _recipes.CreateAsync(recipe);
+        await LoadAsync(created.Id);
         StatusText = $"已创建新配方 {recipe.Name}";
     }
 
@@ -1114,8 +1118,8 @@ public sealed class RecipeManagementViewModel : BindableBase
             UpdatedAt = DateTimeOffset.Now
         };
 
-        await _recipes.SaveAsync(copy);
-        await LoadAsync(copy.Id);
+        var created = await _recipes.CreateAsync(copy);
+        await LoadAsync(created.Id);
         StatusText = $"已复制配方 {copy.Name}";
     }
 
@@ -1188,23 +1192,25 @@ public sealed class RecipeManagementViewModel : BindableBase
         }
 
         var recipe = BuildRecipe();
-        await _recipes.SaveAsync(recipe);
-        _events.GetEvent<RecipeChangedEvent>().Publish(recipe.Id);
+        var persistedRecipe = await _recipes.SaveAsync(recipe);
+        _events.GetEvent<RecipeChangedEvent>().Publish(persistedRecipe.Id);
         if (setCurrentRecipe)
         {
-            await _recipes.SetCurrentRecipeAsync(recipe.Id);
+            await _recipes.SetCurrentRecipeAsync(persistedRecipe.Id);
         }
 
-        _loadedRecipe = recipe.WithNormalizedFlows();
+        _loadedRecipe = persistedRecipe.WithNormalizedFlows();
         HasUnsavedChanges = false;
 
         if (refreshList)
         {
-            await LoadAsync(recipe.Id);
+            await LoadAsync(persistedRecipe.Id);
         }
         else
         {
-            var currentRecipeId = setCurrentRecipe ? recipe.Id : await _recipes.GetCurrentRecipeIdAsync();
+            var currentRecipeId = setCurrentRecipe
+                ? persistedRecipe.Id
+                : await _recipes.GetCurrentRecipeIdAsync();
             ApplyRecipe(_loadedRecipe, currentRecipeId);
         }
 

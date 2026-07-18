@@ -896,13 +896,13 @@ public sealed class VisionDebugViewModel : BindableBase
 
         var recipe = BuildWorkingRecipe();
 
-        await _recipes.SaveAsync(recipe);
-        _currentRecipe = recipe;
-        RefreshVisionFlowList(recipe, recipe.CurrentFlowId);
+        var saved = await _recipes.SaveAsync(recipe);
+        _currentRecipe = saved;
+        RefreshVisionFlowList(saved, saved.CurrentFlowId);
         HasUnsavedChanges = false;
         StatusText = $"Saved {FlowName}: {_rois.Count} ROI items and {Tools.Count} tools";
         AddDebugLog("提示", StatusText);
-        _log.Info("Recipe", $"Vision recipe saved for {recipe.Name}/{FlowName}, roi {_rois.Count}, tools {Tools.Count}");
+        _log.Info("Recipe", $"Vision recipe saved for {saved.Name}/{FlowName}, roi {_rois.Count}, tools {Tools.Count}");
     }
 
     private Recipe BuildWorkingRecipe()
