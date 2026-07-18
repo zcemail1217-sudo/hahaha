@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-
 namespace VisionStation.Vision;
 
 /// <summary>
@@ -118,14 +116,13 @@ internal sealed class HalconTemplateModelCache : ITemplateModelRetirementSink, I
     /// </summary>
     public Task<HalconTemplateModelLease> AcquireAsync(
         TemplateModelOwner owner,
-        HalconTemplateModelCacheKey key,
-        ResolvedTemplateModel resolvedModel,
+        ValidatedHalconModelDescriptor descriptor,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         TemplateModelOwner ownerSnapshot = SnapshotOwner(owner);
-        HalconTemplateModelCacheKey keySnapshot = SnapshotKey(key);
-        ResolvedTemplateModel resolvedSnapshot = SnapshotResolvedModel(keySnapshot, resolvedModel);
+        ValidateDescriptorOwner(ownerSnapshot, descriptor);
+        HalconTemplateModelCacheKey key = descriptor.CacheKey;
         Entry entry;
         var startLoad = false;
         long ownerRetirementEpoch;
@@ -135,20 +132,20 @@ internal sealed class HalconTemplateModelCache : ITemplateModelRetirementSink, I
         {
             ThrowIfDisposing();
             OwnerState ownerState = GetOrCreateOwnerStateLocked(ownerSnapshot);
-            if (IsGenerationRetiring(ownerState, keySnapshot))
+            if (IsGenerationRetiring(ownerState, key))
             {
-                throw CreateRetiredGenerationException(ownerSnapshot, keySnapshot);
+                throw CreateRetiredGenerationException(ownerSnapshot, key);
             }
 
             ownerRetirementEpoch = ownerState.RetirementEpoch;
             ownerAcquireSequence = unchecked(
                 ownerState.NextAcquireSequence + 1);
             ownerState.NextAcquireSequence = ownerAcquireSequence;
-            if (!_entries.TryGetValue(keySnapshot, out entry!))
+            if (!_entries.TryGetValue(key, out entry!))
             {
                 IHalconOperationGate operationGate = _operationGateFactory()
                     ?? throw new InvalidOperationException("The HALCON operation gate factory returned null.");
-                entry = new Entry(keySnapshot, resolvedSnapshot, operationGate);
+                entry = new Entry(key, descriptor, operationGate);
                 _entries.Add(entry.Key, entry);
                 _liveEntries.Add(entry);
                 _liveEntryCount++;
@@ -347,7 +344,7 @@ internal sealed class HalconTemplateModelCache : ITemplateModelRetirementSink, I
         try
         {
             handle = await _loader
-                .LoadAsync(entry.Key, entry.ResolvedModel, CancellationToken.None)
+                .LoadAsync(entry.Descriptor, CancellationToken.None)
                 .ConfigureAwait(false);
             if (handle is null)
             {
@@ -710,40 +707,19 @@ internal sealed class HalconTemplateModelCache : ITemplateModelRetirementSink, I
         return new TemplateModelOwner(owner.RecipeId, owner.FlowId, owner.ToolId);
     }
 
-    private static HalconTemplateModelCacheKey SnapshotKey(HalconTemplateModelCacheKey key)
+    private static void ValidateDescriptorOwner(
+        TemplateModelOwner owner,
+        ValidatedHalconModelDescriptor descriptor)
     {
-        ArgumentNullException.ThrowIfNull(key);
-        return new HalconTemplateModelCacheKey(
-            key.AbsoluteModelPath,
-            key.ModelSha256,
-            key.MetadataSha256);
-    }
-
-    private static ResolvedTemplateModel SnapshotResolvedModel(
-        HalconTemplateModelCacheKey key,
-        ResolvedTemplateModel resolvedModel)
-    {
-        ArgumentNullException.ThrowIfNull(resolvedModel);
-        string modelPath = HalconTemplateModelCacheKey.NormalizeAbsolutePath(
-            resolvedModel.ModelPath,
-            nameof(resolvedModel));
-        if (!string.Equals(modelPath, key.AbsoluteModelPath, StringComparison.OrdinalIgnoreCase))
+        ArgumentNullException.ThrowIfNull(descriptor);
+        if (!string.Equals(owner.RecipeId, descriptor.Owner.RecipeId, StringComparison.Ordinal) ||
+            !string.Equals(owner.FlowId, descriptor.Owner.FlowId, StringComparison.Ordinal) ||
+            !string.Equals(owner.ToolId, descriptor.Owner.ToolId, StringComparison.Ordinal))
         {
             throw new ArgumentException(
-                "The resolved HALCON model path does not match its cache key.",
-                nameof(resolvedModel));
+                "The validated HALCON descriptor owner does not match the requested cache owner.",
+                nameof(descriptor));
         }
-
-        byte[] metadata = resolvedModel.MetadataJson.ToArray();
-        string metadataSha256 = Convert.ToHexString(SHA256.HashData(metadata));
-        if (!string.Equals(metadataSha256, key.MetadataSha256, StringComparison.Ordinal))
-        {
-            throw new ArgumentException(
-                "The resolved HALCON metadata checksum does not match its cache key.",
-                nameof(resolvedModel));
-        }
-
-        return new ResolvedTemplateModel(modelPath, metadata);
     }
 
     private static void AddDisposal(ref List<Entry>? entries, Entry? entry)
@@ -761,17 +737,17 @@ internal sealed class HalconTemplateModelCache : ITemplateModelRetirementSink, I
     {
         internal Entry(
             HalconTemplateModelCacheKey key,
-            ResolvedTemplateModel resolvedModel,
+            ValidatedHalconModelDescriptor descriptor,
             IHalconOperationGate operationGate)
         {
             Key = key;
-            ResolvedModel = resolvedModel;
+            Descriptor = descriptor;
             OperationGate = operationGate;
         }
 
         internal HalconTemplateModelCacheKey Key { get; }
 
-        internal ResolvedTemplateModel ResolvedModel { get; }
+        internal ValidatedHalconModelDescriptor Descriptor { get; }
 
         internal IHalconOperationGate OperationGate { get; }
 

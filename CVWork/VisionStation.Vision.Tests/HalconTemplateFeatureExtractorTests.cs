@@ -93,6 +93,12 @@ public sealed class HalconTemplateFeatureExtractorTests
             features.MinimumValidInnerGroupCount);
         Assert.True(features.FilledSupport.Area > 0);
         Assert.NotEmpty(features.FilledSupport.Runs);
+        Assert.Equal(features.TemplateWidth, features.ModelDomain.Width);
+        Assert.Equal(features.TemplateHeight, features.ModelDomain.Height);
+        Assert.True(features.ModelDomain.Area > features.FilledSupport.Area);
+        Assert.NotEqual(features.FilledSupport.Runs, features.ModelDomain.Runs);
+        Assert.Equal(features.ModelDomain.CentroidRow, features.ModelDomainCentroidRow);
+        Assert.Equal(features.ModelDomain.CentroidColumn, features.ModelDomainCentroidColumn);
         Assert.All(
             features.InnerFeatureGroups.SelectMany(group => group),
             point => Assert.True(
@@ -149,7 +155,7 @@ public sealed class HalconTemplateFeatureExtractorTests
             RoiShapeKind.Circle => new RoiDefinition
             {
                 Shape = shape,
-                X = 126,
+                X = 128,
                 Y = 90,
                 Radius = 90
             },
@@ -167,7 +173,10 @@ public sealed class HalconTemplateFeatureExtractorTests
             _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, null)
         };
 
-        HalconTemplateFeatureExtractionResult result = _extractor.Extract(SyntheticTemplate(), roi);
+        ImageFrame frame = shape == RoiShapeKind.Circle
+            ? SyntheticTemplate(horizontalProductInset: 6)
+            : SyntheticTemplate();
+        HalconTemplateFeatureExtractionResult result = _extractor.Extract(frame, roi);
 
         Assert.True(result.Success, result.Diagnostic?.TechnicalDetails);
         Assert.True(Assert.IsType<HalconTemplateFeatureSet>(result.Features).FilledSupport.Area > 0);
@@ -230,6 +239,7 @@ public sealed class HalconTemplateFeatureExtractorTests
             centroids);
 
         Assert.Equal(first.FilledSupport.Runs, second.FilledSupport.Runs);
+        Assert.Equal(first.ModelDomain.Runs, second.ModelDomain.Runs);
     }
 
     [Fact]
@@ -244,6 +254,20 @@ public sealed class HalconTemplateFeatureExtractorTests
         Assert.Equal(
             TemplateMatchingDiagnosticCodes.ModelTemplateIncomplete,
             Assert.IsType<TemplateMatchingDiagnostic>(result.Diagnostic).Code);
+    }
+
+    [Fact]
+    public void LearningRejectsTemplateInsideLegacyBoundaryProbeButOutsideFivePixelSafeRoi()
+    {
+        HalconTemplateFeatureExtractionResult result = _extractor.Extract(
+            SyntheticTemplate(nearBoundary: true),
+            TemplateRoi);
+
+        Assert.False(result.Success);
+        Assert.Equal(
+            TemplateMatchingDiagnosticCodes.ModelTemplateIncomplete,
+            Assert.IsType<TemplateMatchingDiagnostic>(result.Diagnostic).Code);
+        Assert.Contains("five-pixel", result.Diagnostic.TechnicalDetails);
     }
 
     [Fact]
@@ -338,27 +362,38 @@ public sealed class HalconTemplateFeatureExtractorTests
         var groups = new List<IReadOnlyList<Point2D>> { innerGroup };
         var runs = new List<HalconSupportRun> { new(0, 0, 2) };
         var support = new HalconFilledSupportRegion(-1, -2, runs);
+        var domainRuns = new List<HalconSupportRun>
+        {
+            new(0, 0, 4),
+            new(1, 0, 4)
+        };
+        var domain = new HalconModelDomain(20, 10, domainRuns);
 
         var features = new HalconTemplateFeatureSet(
             20,
             10,
+            2,
+            3,
             5,
             10,
-            5.5,
-            10.5,
             true,
             outer,
             groups,
             1,
-            support);
+            support,
+            domain);
         outer[0] = new Point2D(100, 200);
         innerGroup[0] = new Point2D(300, 400);
         groups.Clear();
         runs[0] = new HalconSupportRun(8, 8, 8);
+        domainRuns[0] = new HalconSupportRun(8, 8, 8);
 
         Assert.Equal(new Point2D(1, 2), features.OuterContour[0]);
         Assert.Equal(new Point2D(5.25, 6.5), Assert.Single(Assert.Single(features.InnerFeatureGroups)));
         Assert.Equal(new HalconSupportRun(0, 0, 2), Assert.Single(features.FilledSupport.Runs));
+        Assert.Equal(new HalconSupportRun(0, 0, 4), features.ModelDomain.Runs[0]);
+        Assert.Equal(2, features.CropOriginX);
+        Assert.Equal(3, features.CropOriginY);
     }
 
     [Fact]
@@ -764,9 +799,11 @@ public sealed class HalconTemplateFeatureExtractorTests
 
     private static ImageFrame SyntheticTemplate(
         bool touchesBoundary = false,
+        bool nearBoundary = false,
         bool weakContrast = false,
         int internalFeatureCount = 4,
-        IReadOnlyList<Point>? featureCenters = null)
+        IReadOnlyList<Point>? featureCenters = null,
+        int horizontalProductInset = 0)
     {
         const int width = 260;
         const int height = 180;
@@ -774,15 +811,15 @@ public sealed class HalconTemplateFeatureExtractorTests
         byte foreground = weakContrast ? (byte)122 : (byte)35;
         byte internalValue = weakContrast ? (byte)130 : (byte)220;
         using var image = new Mat(height, width, MatType.CV_8UC1, new Scalar(background));
-        int left = touchesBoundary ? 20 : 45;
+        int left = touchesBoundary ? 20 : nearBoundary ? 24 : 45 + horizontalProductInset;
         Point[] product =
         [
             new(left, 57),
             new(178, 50),
-            new(213, 77),
+            new(213 - horizontalProductInset, 77),
             new(190, 124),
             new(72, 129),
-            new(43, 100)
+            new(43 + horizontalProductInset, 100)
         ];
         Cv2.FillPoly(image, [product], new Scalar(foreground));
 

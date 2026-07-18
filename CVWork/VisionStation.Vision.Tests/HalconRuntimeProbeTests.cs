@@ -389,6 +389,39 @@ public sealed class HalconRuntimeProbeTests
         Assert.True((await probe.EnsureReadyAsync(default)).IsReady);
     }
 
+    [Fact]
+    public async Task BoundNativePhaseRunsAsOneUncancelledSchedulerOperation()
+    {
+        var runtime = new FakeRuntimeNativeApi();
+        var scheduler = new RecordingRuntimeScheduler();
+        var probe = new HalconRuntimeProbe(
+            new HalconRuntimeConfiguration { RuntimeRoot = RuntimeRoot },
+            new StubRuntimeLocator(HalconRuntimeLocationResult.Found(Location())),
+            new StubBootstrapper(HalconNativeLibraryBootstrapResult.Bound()),
+            runtime,
+            scheduler);
+
+        HalconRuntimeProbeResult result = await probe.EnsureReadyAsync(default);
+
+        Assert.True(result.IsReady);
+        Assert.Equal(1, scheduler.RunCount);
+        Assert.False(scheduler.LastCancellationToken.CanBeCanceled);
+        Assert.Equal(
+            ["disable-license-termination", "system-version", "matching-license-smoke"],
+            runtime.Operations);
+    }
+
+    [Fact]
+    public void RuntimeNativeApiDelegatesLicenseSmokeToSharedOperatorSeam()
+    {
+        var operators = new RecordingRuntimeOperatorBackend();
+        var native = new HalconRuntimeNativeApi(operators);
+
+        native.VerifyMatchingLicense();
+
+        Assert.Equal(1, operators.LicenseSmokeCount);
+    }
+
     private static HalconRuntimeProbe CreateProbe(FakeRuntimeNativeApi runtime)
     {
         return new HalconRuntimeProbe(
@@ -583,6 +616,39 @@ public sealed class HalconRuntimeProbeTests
             {
                 throw SmokeException;
             }
+        }
+    }
+
+    private sealed class RecordingRuntimeScheduler : IHalconOperationScheduler
+    {
+        public int RunCount { get; private set; }
+
+        public CancellationToken LastCancellationToken { get; private set; }
+
+        public Task<T> RunAsync<T>(Func<T> operation, CancellationToken cancellationToken)
+        {
+            RunCount++;
+            LastCancellationToken = cancellationToken;
+            return Task.FromResult(operation());
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class RecordingRuntimeOperatorBackend : IHalconOperatorBackend
+    {
+        public int LicenseSmokeCount { get; private set; }
+
+        public void CreateAndWriteShapeModel(
+            HalconShapeModelCreationRequest request,
+            string stagingModelPath) => throw new NotSupportedException();
+
+        public IHalconRawModelHandle LoadShapeModelAndValidate(string modelPath) =>
+            throw new NotSupportedException();
+
+        public void VerifyMatchingLicense()
+        {
+            LicenseSmokeCount++;
         }
     }
 }

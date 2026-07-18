@@ -87,11 +87,16 @@ internal sealed record HalconRuntimeProbeResult
 
 internal sealed class HalconRuntimeProbe : IHalconRuntimeProbe
 {
+    private static readonly Lazy<IHalconOperationScheduler> DefaultOperationScheduler = new(
+        static () => new HalconOperationScheduler(),
+        LazyThreadSafetyMode.ExecutionAndPublication);
+
     private readonly object _syncRoot = new();
     private readonly HalconRuntimeConfiguration _configuration;
     private readonly IHalconRuntimeLocator _locator;
     private readonly IHalconNativeLibraryBootstrapper _bootstrapper;
     private readonly IHalconRuntimeNativeApi _nativeApi;
+    private readonly IHalconOperationScheduler _operationScheduler;
     private Task<HalconRuntimeProbeResult>? _sharedProbe;
 
     internal HalconRuntimeProbe(HalconRuntimeConfiguration configuration)
@@ -99,7 +104,8 @@ internal sealed class HalconRuntimeProbe : IHalconRuntimeProbe
             configuration,
             new HalconRuntimeLocator(),
             new HalconNativeLibraryBootstrapper(),
-            new HalconRuntimeNativeApi())
+            new HalconRuntimeNativeApi(),
+            DefaultOperationScheduler.Value)
     {
     }
 
@@ -108,11 +114,28 @@ internal sealed class HalconRuntimeProbe : IHalconRuntimeProbe
         IHalconRuntimeLocator locator,
         IHalconNativeLibraryBootstrapper bootstrapper,
         IHalconRuntimeNativeApi nativeApi)
+        : this(
+            configuration,
+            locator,
+            bootstrapper,
+            nativeApi,
+            DefaultOperationScheduler.Value)
+    {
+    }
+
+    internal HalconRuntimeProbe(
+        HalconRuntimeConfiguration configuration,
+        IHalconRuntimeLocator locator,
+        IHalconNativeLibraryBootstrapper bootstrapper,
+        IHalconRuntimeNativeApi nativeApi,
+        IHalconOperationScheduler operationScheduler)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _bootstrapper = bootstrapper ?? throw new ArgumentNullException(nameof(bootstrapper));
         _nativeApi = nativeApi ?? throw new ArgumentNullException(nameof(nativeApi));
+        _operationScheduler = operationScheduler
+            ?? throw new ArgumentNullException(nameof(operationScheduler));
     }
 
     public Task<HalconRuntimeProbeResult> EnsureReadyAsync(CancellationToken cancellationToken)
@@ -177,33 +200,40 @@ internal sealed class HalconRuntimeProbe : IHalconRuntimeProbe
         var operation = "disable-license-termination";
         try
         {
-            _nativeApi.DisableLicenseTermination();
-            operation = "get-system-file-version";
-            var systemVersion = _nativeApi.GetSystemFileVersion();
-            if (!string.Equals(
-                    systemVersion,
-                    HalconRuntimeLocator.ExpectedNativeVersion,
-                    StringComparison.Ordinal))
-            {
-                return HalconRuntimeProbeResult.Failed(
-                    TemplateMatchingDiagnostics.Create(
-                        TemplateMatchingDiagnosticCodes.RuntimeVersionMismatch,
-                        $"HALCON system file version mismatch; expected={HalconRuntimeLocator.ExpectedNativeVersion}; actual={NormalizeVersion(systemVersion)}."),
-                    rejections);
-            }
+            return _operationScheduler.RunAsync(
+                    () =>
+                    {
+                        _nativeApi.DisableLicenseTermination();
+                        operation = "get-system-file-version";
+                        string systemVersion = _nativeApi.GetSystemFileVersion();
+                        if (!string.Equals(
+                                systemVersion,
+                                HalconRuntimeLocator.ExpectedNativeVersion,
+                                StringComparison.Ordinal))
+                        {
+                            return HalconRuntimeProbeResult.Failed(
+                                TemplateMatchingDiagnostics.Create(
+                                    TemplateMatchingDiagnosticCodes.RuntimeVersionMismatch,
+                                    $"HALCON system file version mismatch; expected={HalconRuntimeLocator.ExpectedNativeVersion}; actual={NormalizeVersion(systemVersion)}."),
+                                rejections);
+                        }
 
-            operation = "matching-license-smoke";
-            _nativeApi.VerifyMatchingLicense();
-            return HalconRuntimeProbeResult.Ready(
-                new HalconRuntimeDescriptor(
-                    location.RuntimeRoot,
-                    location.Source,
-                    location.Architecture,
-                    _nativeApi.ManagedPackageVersion,
-                    _nativeApi.ManagedAssemblyVersion,
-                    HalconRuntimeLocator.ExpectedNativeVersion,
-                    systemVersion),
-                rejections);
+                        operation = "matching-license-smoke";
+                        _nativeApi.VerifyMatchingLicense();
+                        return HalconRuntimeProbeResult.Ready(
+                            new HalconRuntimeDescriptor(
+                                location.RuntimeRoot,
+                                location.Source,
+                                location.Architecture,
+                                _nativeApi.ManagedPackageVersion,
+                                _nativeApi.ManagedAssemblyVersion,
+                                HalconRuntimeLocator.ExpectedNativeVersion,
+                                systemVersion),
+                            rejections);
+                    },
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
         }
         catch (OperationCanceledException)
         {
@@ -247,6 +277,17 @@ internal sealed class HalconRuntimeProbe : IHalconRuntimeProbe
 internal sealed class HalconRuntimeNativeApi : IHalconRuntimeNativeApi
 {
     private static readonly Assembly HalconAssembly = typeof(HSystem).Assembly;
+    private readonly IHalconOperatorBackend _operators;
+
+    internal HalconRuntimeNativeApi()
+        : this(new HalconDotNetOperatorBackend())
+    {
+    }
+
+    internal HalconRuntimeNativeApi(IHalconOperatorBackend operators)
+    {
+        _operators = operators ?? throw new ArgumentNullException(nameof(operators));
+    }
 
     public string ManagedPackageVersion
     {
@@ -274,21 +315,6 @@ internal sealed class HalconRuntimeNativeApi : IHalconRuntimeNativeApi
 
     public void VerifyMatchingLicense()
     {
-        using var vertical = new HRegion(8.0, 16.0, 55.0, 23.0);
-        using var horizontal = new HRegion(48.0, 16.0, 55.0, 47.0);
-        using var shape = vertical.Union2(horizontal);
-        using var image = shape.RegionToBin(255, 0, 64, 64);
-        using var model = image.CreateScaledShapeModel(
-            0,
-            -0.1,
-            0.2,
-            0.01,
-            0.95,
-            1.05,
-            0.01,
-            "none",
-            "use_polarity",
-            20,
-            10);
+        _operators.VerifyMatchingLicense();
     }
 }

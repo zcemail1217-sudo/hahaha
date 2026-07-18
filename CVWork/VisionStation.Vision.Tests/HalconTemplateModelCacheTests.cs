@@ -48,15 +48,31 @@ public sealed class HalconTemplateModelCacheTests
         };
 
         await Assert.ThrowsAsync<ArgumentException>(
-            () => cache.AcquireAsync(owner, input.Key, wrongPath, default));
+            () => cache.AcquireAsync(owner, input.DescriptorFor(owner, wrongPath), default));
         await Assert.ThrowsAsync<ArgumentException>(
-            () => cache.AcquireAsync(owner, input.Key, wrongMetadata, default));
+            () => cache.AcquireAsync(owner, input.DescriptorFor(owner, wrongMetadata), default));
 
         Assert.Equal(0, loader.CallCount);
     }
 
     [Fact]
-    public async Task ConcurrentSameKeyLoadsOnceAndReturnsInputSnapshots()
+    public async Task AcquireRejectsDescriptorOwnedByDifferentToolBeforeLoading()
+    {
+        var loader = new RecordingModelLoader(
+            (_, _, _) => Task.FromResult<IHalconModelHandle>(new SentinelModelHandle()));
+        await using TimeoutCacheScope cacheScope = CreateCacheScope(loader);
+        ModelInput input = Input("wrong-owner");
+        TemplateModelOwner requestedOwner = Owner("requested");
+        ValidatedHalconModelDescriptor descriptor = input.DescriptorFor(Owner("descriptor"));
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => cacheScope.Cache.AcquireAsync(requestedOwner, descriptor, default));
+
+        Assert.Equal(0, loader.CallCount);
+    }
+
+    [Fact]
+    public async Task ConcurrentSameDescriptorLoadsOnceWithoutHotPathResnapshot()
     {
         ModelInput input = Input("shared");
         byte[] expectedMetadata = input.MetadataBytes.ToArray();
@@ -66,18 +82,16 @@ public sealed class HalconTemplateModelCacheTests
         var loader = new RecordingModelLoader((_, _, _) => releaseLoad.Task);
         await using TimeoutCacheScope cacheScope = CreateCacheScope(loader);
         HalconTemplateModelCache cache = cacheScope.Cache;
-        var firstOwner = Owner("first");
-        var secondOwner = Owner("second");
+        var owner = Owner("shared");
+        ValidatedHalconModelDescriptor descriptor = input.DescriptorFor(owner);
 
         Task<HalconTemplateModelLease> firstTask = cache.AcquireAsync(
-            firstOwner,
-            input.Key,
-            input.ResolvedModel,
+            owner,
+            descriptor,
             default);
         Task<HalconTemplateModelLease> secondTask = cache.AcquireAsync(
-            secondOwner,
-            input.Key,
-            input.ResolvedModel,
+            owner,
+            descriptor,
             default);
         await loader.WaitForCallsAsync(1);
         input.MetadataBytes[0] ^= 0x1;
@@ -85,7 +99,7 @@ public sealed class HalconTemplateModelCacheTests
         try
         {
             Assert.Equal(1, loader.CallCount);
-            Assert.Equal(expectedMetadata, loader.Requests.Single().ResolvedModel.MetadataJson.ToArray());
+            Assert.Same(descriptor, loader.Requests.Single().Descriptor);
         }
         finally
         {
@@ -94,11 +108,15 @@ public sealed class HalconTemplateModelCacheTests
         await using HalconTemplateModelLease first = await firstTask.WaitAsync(TestTimeout);
         await using HalconTemplateModelLease second = await secondTask.WaitAsync(TestTimeout);
 
-        Assert.NotSame(firstOwner, first.Owner);
-        Assert.NotSame(input.Key, first.Key);
-        Assert.NotSame(input.ResolvedModel, first.ResolvedModel);
-        Assert.Equal(expectedMetadata, first.ResolvedModel.MetadataJson.ToArray());
-        Assert.Equal(first.Key, second.Key);
+        Assert.NotSame(owner, first.Owner);
+        Assert.Same(descriptor.CacheKey, first.Key);
+        Assert.Same(descriptor, first.Descriptor);
+        Assert.Same(descriptor, second.Descriptor);
+        Assert.Equal(expectedMetadata, descriptor.MetadataJson.ToArray());
+        Assert.Null(
+            typeof(HalconTemplateModelLease).GetProperty(
+                "ResolvedModel",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
         Assert.Null(
             typeof(HalconTemplateModelLease).GetProperty(
                 "Handle",
@@ -119,13 +137,11 @@ public sealed class HalconTemplateModelCacheTests
 
         Task<HalconTemplateModelLease> canceled = cache.AcquireAsync(
             Owner("canceled"),
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(Owner("canceled")),
             cancellation.Token);
         Task<HalconTemplateModelLease> survivor = cache.AcquireAsync(
             Owner("survivor"),
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(Owner("survivor")),
             default);
         await loader.WaitForCallsAsync(1);
         cancellation.Cancel();
@@ -170,14 +186,12 @@ public sealed class HalconTemplateModelCacheTests
         TemplateModelOwner owner = Owner("replace");
         HalconTemplateModelLease oldLease = await cache.AcquireAsync(
             owner,
-            oldInput.Key,
-            oldInput.ResolvedModel,
+            oldInput.DescriptorFor(owner),
             default);
 
         Task<HalconTemplateModelLease> newLeaseTask = cache.AcquireAsync(
             owner,
-            newInput.Key,
-            newInput.ResolvedModel,
+            newInput.DescriptorFor(owner),
             default);
         await newLoadStarted.Task.WaitAsync(TestTimeout);
         try
@@ -213,8 +227,7 @@ public sealed class HalconTemplateModelCacheTests
 
         Task<HalconTemplateModelLease> oldLeaseTask = cache.AcquireAsync(
             owner,
-            oldInput.Key,
-            oldInput.ResolvedModel,
+            oldInput.DescriptorFor(owner),
             default);
         await loader.WaitForCallsAsync(1);
         HalconTemplateModelLease newLeaseValue;
@@ -222,8 +235,7 @@ public sealed class HalconTemplateModelCacheTests
         {
             newLeaseValue = await cache.AcquireAsync(
                 owner,
-                newInput.Key,
-                newInput.ResolvedModel,
+                newInput.DescriptorFor(owner),
                 default);
         }
         finally
@@ -242,8 +254,7 @@ public sealed class HalconTemplateModelCacheTests
         Assert.Equal(0, newHandle.DisposeCount);
         await using HalconTemplateModelLease reacquired = await cache.AcquireAsync(
             owner,
-            newInput.Key,
-            newInput.ResolvedModel,
+            newInput.DescriptorFor(owner),
             default);
         Assert.Equal(2, loader.CallCount);
     }
@@ -276,14 +287,12 @@ public sealed class HalconTemplateModelCacheTests
         TemplateModelOwner owner = Owner("activation-failure");
         HalconTemplateModelLease activeLease = await cache.AcquireAsync(
             owner,
-            activeInput.Key,
-            activeInput.ResolvedModel,
+            activeInput.DescriptorFor(owner),
             default);
         await activeLease.DisposeAsync();
         Task<HalconTemplateModelLease> earlierLeaseTask = cache.AcquireAsync(
             owner,
-            earlierInput.Key,
-            earlierInput.ResolvedModel,
+            earlierInput.DescriptorFor(owner),
             default);
         await loader.WaitForCallsAsync(2);
 
@@ -295,8 +304,7 @@ public sealed class HalconTemplateModelCacheTests
                 {
                     await using HalconTemplateModelLease unexpected = await cache.AcquireAsync(
                         owner,
-                        laterInput.Key,
-                        laterInput.ResolvedModel,
+                        laterInput.DescriptorFor(owner),
                         default);
                 });
         }
@@ -327,18 +335,20 @@ public sealed class HalconTemplateModelCacheTests
         HalconTemplateModelCache cache = cacheScope.Cache;
 
         await Assert.ThrowsAsync<IOException>(
-            () => cache.AcquireAsync(Owner("retry"), input.Key, input.ResolvedModel, default));
+            () => cache.AcquireAsync(
+                Owner("retry"),
+                input.DescriptorFor(Owner("retry")),
+                default));
         await using HalconTemplateModelLease lease = await cache.AcquireAsync(
             Owner("retry"),
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(Owner("retry")),
             default);
 
         Assert.Equal(2, loader.CallCount);
     }
 
     [Fact]
-    public async Task SameModelOperationGateSerializesCallersAndOnlyOperationLeaseExposesHandle()
+    public async Task SameModelOperationGateSerializesCallersAndOperationLeaseBorrowsLoadedHandle()
     {
         ModelInput input = Input("same-gate");
         var handle = new SentinelModelHandle();
@@ -347,24 +357,26 @@ public sealed class HalconTemplateModelCacheTests
         HalconTemplateModelCache cache = cacheScope.Cache;
         await using HalconTemplateModelLease first = await cache.AcquireAsync(
             Owner("gate-first"),
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(Owner("gate-first")),
             default);
         await using HalconTemplateModelLease second = await cache.AcquireAsync(
             Owner("gate-second"),
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(Owner("gate-second")),
             default);
 
         HalconTemplateModelOperationLease firstOperation = await first.EnterOperationAsync(default);
         Task<HalconTemplateModelOperationLease> secondOperationTask = second.EnterOperationAsync(default);
 
-        Assert.Same(handle, firstOperation.Handle);
+        Assert.True(await firstOperation.InvokeAsync(
+            borrow => ReferenceEquals(handle, borrow),
+            default));
         Assert.False(secondOperationTask.IsCompleted);
         await firstOperation.DisposeAsync();
         await using HalconTemplateModelOperationLease secondOperation =
             await secondOperationTask.WaitAsync(TestTimeout);
-        Assert.Same(handle, secondOperation.Handle);
+        Assert.True(await secondOperation.InvokeAsync(
+            borrow => ReferenceEquals(handle, borrow),
+            default));
     }
 
     [Fact]
@@ -384,13 +396,11 @@ public sealed class HalconTemplateModelCacheTests
         HalconTemplateModelCache cache = cacheScope.Cache;
         await using HalconTemplateModelLease first = await cache.AcquireAsync(
             Owner("parallel-first"),
-            firstInput.Key,
-            firstInput.ResolvedModel,
+            firstInput.DescriptorFor(Owner("parallel-first")),
             default);
         await using HalconTemplateModelLease second = await cache.AcquireAsync(
             Owner("parallel-second"),
-            secondInput.Key,
-            secondInput.ResolvedModel,
+            secondInput.DescriptorFor(Owner("parallel-second")),
             default);
 
         await using HalconTemplateModelOperationLease firstOperation = await first.EnterOperationAsync(default);
@@ -399,8 +409,12 @@ public sealed class HalconTemplateModelCacheTests
         Assert.True(secondOperationTask.IsCompletedSuccessfully);
         await using HalconTemplateModelOperationLease secondOperation =
             await secondOperationTask.WaitAsync(TestTimeout);
-        Assert.Same(firstHandle, firstOperation.Handle);
-        Assert.Same(secondHandle, secondOperation.Handle);
+        Assert.True(await firstOperation.InvokeAsync(
+            borrow => ReferenceEquals(firstHandle, borrow),
+            default));
+        Assert.True(await secondOperation.InvokeAsync(
+            borrow => ReferenceEquals(secondHandle, borrow),
+            default));
     }
 
     [Fact]
@@ -413,13 +427,11 @@ public sealed class HalconTemplateModelCacheTests
         HalconTemplateModelCache cache = cacheScope.Cache;
         await using HalconTemplateModelLease first = await cache.AcquireAsync(
             Owner("cancel-first"),
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(Owner("cancel-first")),
             default);
         await using HalconTemplateModelLease second = await cache.AcquireAsync(
             Owner("cancel-second"),
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(Owner("cancel-second")),
             default);
         HalconTemplateModelOperationLease held = await first.EnterOperationAsync(default);
         using var cancellation = new CancellationTokenSource();
@@ -430,7 +442,9 @@ public sealed class HalconTemplateModelCacheTests
             () => canceled.WaitAsync(TestTimeout));
         await held.DisposeAsync();
         await using HalconTemplateModelOperationLease retry = await second.EnterOperationAsync(default);
-        Assert.Same(handle, retry.Handle);
+        Assert.True(await retry.InvokeAsync(
+            borrow => ReferenceEquals(handle, borrow),
+            default));
     }
 
     [Fact]
@@ -445,8 +459,7 @@ public sealed class HalconTemplateModelCacheTests
         TemplateModelOwner owner = Owner("retired");
         HalconTemplateModelLease lease = await cache.AcquireAsync(
             owner,
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(owner),
             default);
 
         ITemplateModelRetirementSink retirementSink = cache;
@@ -472,8 +485,7 @@ public sealed class HalconTemplateModelCacheTests
         TemplateModelOwner owner = Owner("retire-disposal-failures");
         HalconTemplateModelLease lease = await cache.AcquireAsync(
             owner,
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(owner),
             default);
         await lease.DisposeAsync();
 
@@ -500,8 +512,7 @@ public sealed class HalconTemplateModelCacheTests
         TemplateModelOwner owner = Owner("lease-disposal-failure");
         HalconTemplateModelLease lease = await cache.AcquireAsync(
             owner,
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(owner),
             default);
         await cache.RetireAsync(owner, default);
 
@@ -527,13 +538,11 @@ public sealed class HalconTemplateModelCacheTests
         TemplateModelOwner secondOwner = Owner("shared-second");
         HalconTemplateModelLease first = await cache.AcquireAsync(
             firstOwner,
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(firstOwner),
             default);
         HalconTemplateModelLease second = await cache.AcquireAsync(
             secondOwner,
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(secondOwner),
             default);
 
         ITemplateModelRetirementSink retirementSink = cache;
@@ -544,8 +553,7 @@ public sealed class HalconTemplateModelCacheTests
         await using HalconTemplateModelOperationLease operation = await second.EnterOperationAsync(default);
         HalconTemplateModelLease secondAgain = await cache.AcquireAsync(
             secondOwner,
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(secondOwner),
             default);
         Assert.Equal(1, loader.CallCount);
 
@@ -575,13 +583,11 @@ public sealed class HalconTemplateModelCacheTests
         TemplateModelOwner owner = Owner("all-generations");
         HalconTemplateModelLease oldLease = await cache.AcquireAsync(
             owner,
-            oldInput.Key,
-            oldInput.ResolvedModel,
+            oldInput.DescriptorFor(owner),
             default);
         HalconTemplateModelLease activeLease = await cache.AcquireAsync(
             owner,
-            activeInput.Key,
-            activeInput.ResolvedModel,
+            activeInput.DescriptorFor(owner),
             default);
 
         await cache.RetireAsync(owner, default);
@@ -614,8 +620,7 @@ public sealed class HalconTemplateModelCacheTests
         TemplateModelOwner owner = Owner("retire-during-load");
         Task<HalconTemplateModelLease> staleAcquire = cache.AcquireAsync(
             owner,
-            staleInput.Key,
-            staleInput.ResolvedModel,
+            staleInput.DescriptorFor(owner),
             default);
         await loader.WaitForCallsAsync(1);
 
@@ -637,8 +642,7 @@ public sealed class HalconTemplateModelCacheTests
         Assert.Equal(1, staleHandle.DisposeCount);
         HalconTemplateModelLease freshLease = await cache.AcquireAsync(
             owner,
-            freshInput.Key,
-            freshInput.ResolvedModel,
+            freshInput.DescriptorFor(owner),
             default);
         Assert.Equal(2, loader.CallCount);
 
@@ -659,8 +663,7 @@ public sealed class HalconTemplateModelCacheTests
         TemplateModelOwner owner = Owner("retire-fence");
         HalconTemplateModelLease oldLease = await cache.AcquireAsync(
             owner,
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(owner),
             default);
 
         await cache.RetireAsync(owner, default);
@@ -672,8 +675,7 @@ public sealed class HalconTemplateModelCacheTests
                 {
                     await using HalconTemplateModelLease unexpected = await cache.AcquireAsync(
                         owner,
-                        input.Key,
-                        input.ResolvedModel,
+                        input.DescriptorFor(owner),
                         default);
                 });
         }
@@ -703,8 +705,7 @@ public sealed class HalconTemplateModelCacheTests
         TemplateModelOwner owner = Owner("retire-fence-reload");
         HalconTemplateModelLease firstLease = await cache.AcquireAsync(
             owner,
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(owner),
             default);
 
         await cache.RetireAsync(owner, default);
@@ -713,8 +714,7 @@ public sealed class HalconTemplateModelCacheTests
 
         HalconTemplateModelLease secondLease = await cache.AcquireAsync(
             owner,
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(owner),
             default);
         Assert.Equal(2, loader.CallCount);
         await cache.RetireAsync(owner, default);
@@ -734,14 +734,16 @@ public sealed class HalconTemplateModelCacheTests
         HalconTemplateModelCache cache = cacheScope.Cache;
         HalconTemplateModelLease lease = await cache.AcquireAsync(
             Owner("shutdown"),
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(Owner("shutdown")),
             default);
         HalconTemplateModelOperationLease operation = await lease.EnterOperationAsync(default);
 
         Task disposeTask = cache.DisposeAsync().AsTask();
         await Assert.ThrowsAsync<ObjectDisposedException>(
-            () => cache.AcquireAsync(Owner("late"), input.Key, input.ResolvedModel, default));
+            () => cache.AcquireAsync(
+                Owner("late"),
+                input.DescriptorFor(Owner("late")),
+                default));
         await lease.DisposeAsync();
         Assert.False(disposeTask.IsCompleted);
         Assert.Equal(0, handle.DisposeCount);
@@ -767,8 +769,7 @@ public sealed class HalconTemplateModelCacheTests
         using var cancellation = new CancellationTokenSource();
         Task<HalconTemplateModelLease> canceledAcquire = cache.AcquireAsync(
             Owner("shutdown-loading"),
-            input.Key,
-            input.ResolvedModel,
+            input.DescriptorFor(Owner("shutdown-loading")),
             cancellation.Token);
         await loader.WaitForCallsAsync(1);
         cancellation.Cancel();
@@ -822,7 +823,45 @@ public sealed class HalconTemplateModelCacheTests
         return new ModelInput(
             key,
             new ResolvedTemplateModel(key.AbsoluteModelPath, metadata),
-            metadata);
+            metadata,
+            TestMetadata(name, key.ModelSha256));
+    }
+
+    private static HalconTemplateModelMetadata TestMetadata(string generation, string modelChecksum)
+    {
+        HalconTemplateMatchingParameters parameters = TemplateMatchingParameterCatalog.ParseHalcon(
+            TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.Single),
+            TemplateMatchCardinality.Single);
+        TemplateModelGenerationParameters generationParameters =
+            TemplateModelGenerationParameters.From(parameters);
+        return new HalconTemplateModelMetadata(
+            Owner(generation),
+            generation,
+            $"model-{generation}.shm",
+            modelChecksum,
+            new TemplateLearnedGeometry(new Pose2D(5, 5, 0), 10, 10),
+            5,
+            5,
+            4.5,
+            4.5,
+            true,
+            Enumerable.Range(0, 100)
+                .Select(index =>
+                {
+                    double angle = index * 2 * Math.PI / 100;
+                    return new Point2D(4 * Math.Cos(angle), 4 * Math.Sin(angle));
+                })
+                .ToArray(),
+            [
+                [new Point2D(-1, -1)],
+                [new Point2D(1, -1)],
+                [new Point2D(0, 1)]
+            ],
+            3,
+            new HalconFilledSupportRegion(-5, -5, [new HalconSupportRun(4, 3, 4)]),
+            generationParameters,
+            TemplateModelGenerationFingerprint.Compute(generationParameters),
+            HalconTemplateValidationDefaults.From(parameters));
     }
 
     private static TemplateModelOwner Owner(string suffix)
@@ -844,11 +883,23 @@ public sealed class HalconTemplateModelCacheTests
     private sealed record ModelInput(
         HalconTemplateModelCacheKey Key,
         ResolvedTemplateModel ResolvedModel,
-        byte[] MetadataBytes);
+        byte[] MetadataBytes,
+        HalconTemplateModelMetadata Metadata)
+    {
+        public ValidatedHalconModelDescriptor DescriptorFor(
+            TemplateModelOwner owner,
+            ResolvedTemplateModel? resolvedModel = null)
+        {
+            return new ValidatedHalconModelDescriptor(
+                owner,
+                resolvedModel ?? ResolvedModel,
+                Metadata,
+                Key);
+        }
+    }
 
     private sealed record LoadRequest(
-        HalconTemplateModelCacheKey Key,
-        ResolvedTemplateModel ResolvedModel,
+        ValidatedHalconModelDescriptor Descriptor,
         CancellationToken CancellationToken);
 
     private sealed class TimeoutCacheScope(HalconTemplateModelCache cache) : IAsyncDisposable
@@ -876,14 +927,16 @@ public sealed class HalconTemplateModelCacheTests
         public ConcurrentQueue<LoadRequest> Requests { get; } = new();
 
         public Task<IHalconModelHandle> LoadAsync(
-            HalconTemplateModelCacheKey key,
-            ResolvedTemplateModel resolvedModel,
+            ValidatedHalconModelDescriptor descriptor,
             CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _callCount);
-            Requests.Enqueue(new LoadRequest(key, resolvedModel, cancellationToken));
+            var resolvedModel = new ResolvedTemplateModel(
+                descriptor.ModelPath,
+                descriptor.MetadataJson);
+            Requests.Enqueue(new LoadRequest(descriptor, cancellationToken));
             _callSignal.Release();
-            return load(key, resolvedModel, cancellationToken);
+            return load(descriptor.CacheKey, resolvedModel, cancellationToken);
         }
 
         public async Task WaitForCallsAsync(int expected)
@@ -896,11 +949,21 @@ public sealed class HalconTemplateModelCacheTests
         }
     }
 
-    private sealed class SentinelModelHandle(Exception? disposeFailure = null) : IHalconModelHandle
+    private sealed class SentinelModelHandle(Exception? disposeFailure = null) :
+        IHalconModelHandle,
+        IHalconRawModelHandle
     {
         private int _disposeCount;
 
         public int DisposeCount => Volatile.Read(ref _disposeCount);
+
+        public Task<T> InvokeAsync<T>(
+            Func<IHalconModelBorrow, T> invocation,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(invocation(this));
+        }
 
         public void Dispose()
         {

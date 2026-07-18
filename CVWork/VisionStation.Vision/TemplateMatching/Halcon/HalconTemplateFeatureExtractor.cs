@@ -4,20 +4,48 @@ using VisionStation.Domain;
 
 namespace VisionStation.Vision;
 
+internal interface IHalconTemplateFeatureExtractor
+{
+    HalconTemplateInputValidationResult ValidateInput(
+        ImageFrame frame,
+        RoiDefinition roi,
+        CancellationToken cancellationToken = default);
+
+    HalconTemplateFeatureExtractionResult Extract(
+        ImageFrame frame,
+        RoiDefinition roi,
+        CancellationToken cancellationToken = default);
+}
+
+internal sealed record HalconTemplateInputValidationResult(
+    bool Success,
+    TemplateMatchingDiagnostic? Diagnostic)
+{
+    public static HalconTemplateInputValidationResult Valid { get; } = new(true, null);
+
+    public static HalconTemplateInputValidationResult Invalid(string details) =>
+        new(
+            false,
+            TemplateMatchingDiagnostics.Create(
+                TemplateMatchingDiagnosticCodes.ConfigInvalidParameter,
+                details));
+}
+
 internal sealed class HalconTemplateFeatureSet
 {
     public HalconTemplateFeatureSet(
         int templateWidth,
         int templateHeight,
+        int cropOriginX,
+        int cropOriginY,
         double referenceRow,
         double referenceColumn,
-        double modelDomainCentroidRow,
-        double modelDomainCentroidColumn,
         bool isDarkForeground,
         IReadOnlyList<Point2D> outerContour,
         IReadOnlyList<IReadOnlyList<Point2D>> innerFeatureGroups,
         int minimumValidInnerGroupCount,
-        HalconFilledSupportRegion filledSupport)
+        HalconFilledSupportRegion filledSupport,
+        HalconModelDomain modelDomain)
     {
         if (templateWidth <= 0 || templateHeight <= 0)
         {
@@ -25,9 +53,7 @@ internal sealed class HalconTemplateFeatureSet
         }
 
         if (!double.IsFinite(referenceRow) ||
-            !double.IsFinite(referenceColumn) ||
-            !double.IsFinite(modelDomainCentroidRow) ||
-            !double.IsFinite(modelDomainCentroidColumn))
+            !double.IsFinite(referenceColumn))
         {
             throw new ArgumentOutOfRangeException(nameof(referenceRow));
         }
@@ -57,12 +83,18 @@ internal sealed class HalconTemplateFeatureSet
         }
 
         ArgumentNullException.ThrowIfNull(filledSupport);
+        ArgumentNullException.ThrowIfNull(modelDomain);
+        if (modelDomain.Width != templateWidth || modelDomain.Height != templateHeight)
+        {
+            throw new ArgumentException("The model domain must use the template crop dimensions.", nameof(modelDomain));
+        }
+
         TemplateWidth = templateWidth;
         TemplateHeight = templateHeight;
+        CropOriginX = cropOriginX;
+        CropOriginY = cropOriginY;
         ReferenceRow = referenceRow;
         ReferenceColumn = referenceColumn;
-        ModelDomainCentroidRow = modelDomainCentroidRow;
-        ModelDomainCentroidColumn = modelDomainCentroidColumn;
         IsDarkForeground = true;
         OuterContour = outerSnapshot;
         InnerFeatureGroups = innerSnapshot;
@@ -71,19 +103,27 @@ internal sealed class HalconTemplateFeatureSet
             filledSupport.OriginX,
             filledSupport.OriginY,
             filledSupport.Runs);
+        ModelDomain = new HalconModelDomain(
+            modelDomain.Width,
+            modelDomain.Height,
+            modelDomain.Runs);
     }
 
     public int TemplateWidth { get; }
 
     public int TemplateHeight { get; }
 
+    public int CropOriginX { get; }
+
+    public int CropOriginY { get; }
+
     public double ReferenceRow { get; }
 
     public double ReferenceColumn { get; }
 
-    public double ModelDomainCentroidRow { get; }
+    public double ModelDomainCentroidRow => ModelDomain.CentroidRow;
 
-    public double ModelDomainCentroidColumn { get; }
+    public double ModelDomainCentroidColumn => ModelDomain.CentroidColumn;
 
     public bool IsDarkForeground { get; }
 
@@ -94,6 +134,8 @@ internal sealed class HalconTemplateFeatureSet
     public int MinimumValidInnerGroupCount { get; }
 
     public HalconFilledSupportRegion FilledSupport { get; }
+
+    public HalconModelDomain ModelDomain { get; }
 }
 
 internal sealed class HalconTemplateFeatureExtractionResult
@@ -209,12 +251,23 @@ internal sealed class Gray8Histogram
     }
 }
 
-internal sealed class HalconTemplateFeatureExtractor
+internal sealed class HalconTemplateFeatureExtractor : IHalconTemplateFeatureExtractor
 {
     private const double MinimumContrast = 20;
     private const int MinimumOuterRawPoints = 20;
     private const int MinimumOuterSampleCount = 100;
     private const int MinimumInnerGroupPointCount = 6;
+
+    public HalconTemplateInputValidationResult ValidateInput(
+        ImageFrame frame,
+        RoiDefinition roi,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return TryValidateInput(frame, roi, out _, out string failure)
+            ? HalconTemplateInputValidationResult.Valid
+            : HalconTemplateInputValidationResult.Invalid(failure);
+    }
 
     public HalconTemplateFeatureExtractionResult Extract(
         ImageFrame frame,
@@ -222,14 +275,9 @@ internal sealed class HalconTemplateFeatureExtractor
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!TryValidateFrame(frame, out string frameFailure))
+        if (!TryValidateInput(frame, roi, out RoiGeometry geometry, out string inputFailure))
         {
-            return ConfigurationFailure(frameFailure);
-        }
-
-        if (!TryCreateRoiGeometry(roi, frame.Width, frame.Height, out RoiGeometry geometry, out string roiFailure))
-        {
-            return ConfigurationFailure(roiFailure);
+            return ConfigurationFailure(inputFailure);
         }
 
         using Mat gray = ImageFrameMatFactory.ToGrayMat(frame);
@@ -315,10 +363,59 @@ internal sealed class HalconTemplateFeatureExtractor
                 "The complete filled template support is empty.");
         }
 
+        using Mat modelKernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new Size(11, 11));
+        using var safeRoi = new Mat();
+        Cv2.Erode(
+            roiMask,
+            safeRoi,
+            modelKernel,
+            anchor: null,
+            iterations: 1,
+            borderType: BorderTypes.Constant,
+            borderValue: Scalar.Black);
+        using var unsafeSupport = new Mat();
+        Cv2.Subtract(filledSupport, safeRoi, unsafeSupport);
+        if (Cv2.CountNonZero(unsafeSupport) != 0)
+        {
+            return Failure(
+                TemplateMatchingDiagnosticCodes.ModelTemplateIncomplete,
+                "The learned product is less than the required five-pixel margin from the template ROI boundary.");
+        }
+
+        using var innerSupport = new Mat();
+        Cv2.Erode(
+            filledSupport,
+            innerSupport,
+            modelKernel,
+            anchor: null,
+            iterations: 1,
+            borderType: BorderTypes.Constant,
+            borderValue: Scalar.Black);
+        using var expandedSupport = new Mat();
+        Cv2.Dilate(
+            filledSupport,
+            expandedSupport,
+            modelKernel,
+            anchor: null,
+            iterations: 1,
+            borderType: BorderTypes.Constant,
+            borderValue: Scalar.Black);
+        using var outerBand = new Mat();
+        Cv2.Subtract(expandedSupport, innerSupport, outerBand);
+        using var modelDomainMask = new Mat();
+        Cv2.BitwiseOr(outerBand, innerSupport, modelDomainMask);
+        Cv2.BitwiseAnd(modelDomainMask, roiMask, modelDomainMask);
+        if (Cv2.CountNonZero(modelDomainMask) == 0)
+        {
+            return Failure(
+                TemplateMatchingDiagnosticCodes.ModelTemplateIncomplete,
+                "The controlled HALCON model domain is empty.");
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
         IReadOnlyList<IReadOnlyList<Point2D>> innerGroups = ExtractInnerGroups(
             crop,
-            filledSupport,
+            innerSupport,
             geometry.ReferenceColumn,
             geometry.ReferenceRow,
             cancellationToken);
@@ -329,33 +426,25 @@ internal sealed class HalconTemplateFeatureExtractor
                 $"Only {innerGroups.Count} distributed inner feature groups were retained; required >= 3.");
         }
 
-        Moments moments = Cv2.Moments(filledSupport, true);
-        if (moments.M00 <= 0)
-        {
-            return Failure(
-                TemplateMatchingDiagnosticCodes.ModelTemplateIncomplete,
-                "The filled template support has no finite centroid.");
-        }
-
-        double centroidColumn = moments.M10 / moments.M00;
-        double centroidRow = moments.M01 / moments.M00;
         HalconFilledSupportRegion support = EncodeSupport(
             filledSupport,
             geometry.ReferenceColumn,
             geometry.ReferenceRow);
+        HalconModelDomain modelDomain = EncodeModelDomain(modelDomainMask);
         int minimumValidGroups = Math.Max(2, (int)Math.Ceiling(innerGroups.Count * 0.67));
         var features = new HalconTemplateFeatureSet(
             crop.Width,
             crop.Height,
+            geometry.CropBounds.X,
+            geometry.CropBounds.Y,
             geometry.ReferenceRow,
             geometry.ReferenceColumn,
-            centroidRow,
-            centroidColumn,
             isDarkForeground: true,
             outerContour,
             innerGroups,
             minimumValidGroups,
-            support);
+            support,
+            modelDomain);
         return HalconTemplateFeatureExtractionResult.FromFeatures(features);
     }
 
@@ -390,6 +479,26 @@ internal sealed class HalconTemplateFeatureExtractor
         }
 
         return true;
+    }
+
+    private static bool TryValidateInput(
+        ImageFrame? frame,
+        RoiDefinition? roi,
+        out RoiGeometry geometry,
+        out string failure)
+    {
+        geometry = default;
+        if (!TryValidateFrame(frame, out failure))
+        {
+            return false;
+        }
+
+        return TryCreateRoiGeometry(
+            roi,
+            frame!.Width,
+            frame.Height,
+            out geometry,
+            out failure);
     }
 
     private static bool TryCreateRoiGeometry(
@@ -746,14 +855,11 @@ internal sealed class HalconTemplateFeatureExtractor
 
     private static IReadOnlyList<IReadOnlyList<Point2D>> ExtractInnerGroups(
         Mat gray,
-        Mat filledSupport,
+        Mat innerSupport,
         double referenceColumn,
         double referenceRow,
         CancellationToken cancellationToken)
     {
-        using Mat innerKernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new Size(11, 11));
-        using var innerSupport = new Mat();
-        Cv2.Erode(filledSupport, innerSupport, innerKernel);
         if (Cv2.CountNonZero(innerSupport) == 0)
         {
             return Array.Empty<IReadOnlyList<Point2D>>();
@@ -972,6 +1078,35 @@ internal sealed class HalconTemplateFeatureExtractor
         }
 
         return new HalconFilledSupportRegion(-referenceColumn, -referenceRow, runs);
+    }
+
+    private static HalconModelDomain EncodeModelDomain(Mat domain)
+    {
+        var runs = new List<HalconSupportRun>();
+        for (var row = 0; row < domain.Height; row++)
+        {
+            var column = 0;
+            while (column < domain.Width)
+            {
+                while (column < domain.Width && domain.At<byte>(row, column) == 0)
+                {
+                    column++;
+                }
+
+                int start = column;
+                while (column < domain.Width && domain.At<byte>(row, column) != 0)
+                {
+                    column++;
+                }
+
+                if (column > start)
+                {
+                    runs.Add(new HalconSupportRun(row, start, column - start));
+                }
+            }
+        }
+
+        return new HalconModelDomain(domain.Width, domain.Height, runs);
     }
 
     private static MaskedGray8Statistics CalculateMaskedStatistics(

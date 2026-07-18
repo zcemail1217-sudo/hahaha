@@ -102,6 +102,40 @@ public sealed record TemplateLearningResult
     public TemplateMatchingDiagnostic? Diagnostic { get; }
 
     public TemplateLearnedGeometry? Geometry { get; init; }
+
+    /// <summary>
+    /// Neutral, managed-only geometry for rendering the just-learned template. It is not a
+    /// runtime model input and is intentionally not persisted into tool parameters.
+    /// </summary>
+    public TemplateLearningPreview? Preview { get; init; }
+}
+
+public sealed record TemplateLearningPreview
+{
+    public TemplateLearningPreview(
+        Point2D origin,
+        IReadOnlyList<Point2D> outerContour,
+        IReadOnlyList<IReadOnlyList<Point2D>> innerFeatureGroups)
+    {
+        ArgumentNullException.ThrowIfNull(origin);
+        if (!double.IsFinite(origin.X) || !double.IsFinite(origin.Y))
+        {
+            throw new ArgumentException("The learning-preview origin must be finite.", nameof(origin));
+        }
+
+        Origin = new Point2D(origin.X, origin.Y);
+        OuterContour = TemplateMatchingSnapshots.Points(outerContour, nameof(outerContour));
+        InnerFeatureGroups = TemplateMatchingSnapshots.Contours(innerFeatureGroups);
+    }
+
+    /// <summary>
+    /// Full-image template reference point. Contour points are relative to this origin.
+    /// </summary>
+    public Point2D Origin { get; }
+
+    public IReadOnlyList<Point2D> OuterContour { get; }
+
+    public IReadOnlyList<IReadOnlyList<Point2D>> InnerFeatureGroups { get; }
 }
 
 public sealed record TemplateMatchBatchCandidate
@@ -193,6 +227,24 @@ public sealed record TemplateMatchBatchResult
 
 internal static class TemplateMatchingSnapshots
 {
+    public static IReadOnlyList<Point2D> Points(
+        IReadOnlyList<Point2D> source,
+        string parameterName)
+    {
+        ArgumentNullException.ThrowIfNull(source, parameterName);
+        var copy = source.ToArray();
+        foreach (Point2D point in copy)
+        {
+            ArgumentNullException.ThrowIfNull(point);
+            if (!double.IsFinite(point.X) || !double.IsFinite(point.Y))
+            {
+                throw new ArgumentException("Point coordinates must be finite.", parameterName);
+            }
+        }
+
+        return new ReadOnlyCollection<Point2D>(copy);
+    }
+
     public static IReadOnlyDictionary<string, string> Parameters(
         IReadOnlyDictionary<string, string> source)
     {
