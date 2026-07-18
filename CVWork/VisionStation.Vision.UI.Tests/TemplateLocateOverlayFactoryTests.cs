@@ -9,6 +9,194 @@ namespace VisionStation.Vision.UI.Tests;
 public sealed class TemplateLocateOverlayFactoryTests
 {
     [Fact]
+    public void CreateLearningPreviewSeparatesOuterInnerAndFullImageOrigin()
+    {
+        var preview = new TemplateLearningPreview(
+            new Point2D(100, 200),
+            [new Point2D(-10, -20), new Point2D(10, -20), new Point2D(10, 20)],
+            [
+                [new Point2D(-2, -3), new Point2D(2, -3)],
+                [new Point2D(-1, 4)]
+            ]);
+        var method = typeof(TemplateLocateOverlayFactory).GetMethod(
+            "CreateLearningPreview",
+            [typeof(TemplateLearningPreview)]);
+
+        Assert.NotNull(method);
+        var overlays = Assert.IsAssignableFrom<IReadOnlyList<VisionOverlayItem>>(
+            method.Invoke(null, [preview]));
+
+        var outer = Assert.Single(overlays, item =>
+            item.Kind == VisionOverlayKind.Polyline && item.Label == "学习外轮廓");
+        Assert.Equal(
+            [new Point2D(90, 180), new Point2D(110, 180), new Point2D(110, 220), new Point2D(90, 180)],
+            outer.Points);
+        Assert.Equal(VisionOverlayState.Info, outer.State);
+        var inner = overlays.Where(item =>
+            item.Kind == VisionOverlayKind.PointCloud && item.Label.StartsWith("学习内部特征", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(2, inner.Length);
+        Assert.All(inner, item => Assert.Equal(VisionOverlayState.Warning, item.State));
+        Assert.Equal([new Point2D(98, 197), new Point2D(102, 197)], inner[0].Points);
+        Assert.Equal([new Point2D(99, 204)], inner[1].Points);
+        var origin = Assert.Single(overlays, item =>
+            item.Kind == VisionOverlayKind.Cross && item.Label == "模型原点");
+        Assert.Equal((100d, 200d), (origin.X, origin.Y));
+        Assert.Equal(VisionOverlayState.Neutral, origin.State);
+    }
+
+    [Fact]
+    public void CreateLearningPreviewRejectsCoordinateOverflow()
+    {
+        var preview = new TemplateLearningPreview(
+            new Point2D(double.MaxValue, 10),
+            [new Point2D(double.MaxValue, 0), new Point2D(0, 1)],
+            Array.Empty<IReadOnlyList<Point2D>>());
+        var method = typeof(TemplateLocateOverlayFactory).GetMethod(
+            "CreateLearningPreview",
+            [typeof(TemplateLearningPreview)]);
+
+        Assert.NotNull(method);
+        var overlays = Assert.IsAssignableFrom<IReadOnlyList<VisionOverlayItem>>(
+            method.Invoke(null, [preview]));
+
+        Assert.Empty(overlays);
+    }
+
+    [Fact]
+    public void CreateStructuredHalconCandidateShowsAllHardGateMetrics()
+    {
+        var result = new TemplateMatchResult(
+            true,
+            InspectionOutcome.Ok,
+            0.923,
+            new Pose2D(100, 120, 5),
+            0,
+            0,
+            30,
+            20,
+            new TemplateSearchRegion(0, 0, 200, 200),
+            "OK",
+            false)
+        {
+            Engine = TemplateMatchingEngine.Halcon,
+            OuterCoverage = 0.91,
+            InnerCoverage = 0.82,
+            EdgeDistanceP95Px = 1.75,
+            PolarityAgreement = 0.88
+        };
+
+        var cross = Assert.Single(
+            TemplateLocateOverlayFactory.Create(result),
+            item => item.Kind == VisionOverlayKind.Cross);
+
+        Assert.Contains("S=0.923", cross.Label);
+        Assert.Contains("O=0.910", cross.Label);
+        Assert.Contains("I=0.820", cross.Label);
+        Assert.Contains("P95=1.750", cross.Label);
+        Assert.Contains("P=0.880", cross.Label);
+    }
+
+    [Fact]
+    public void CreateMultiTargetHalconCandidateShowsIndexAndAllHardGateMetrics()
+    {
+        var candidate = new MultiTargetMatchCandidate(100, 120, 5, 0.923, 30, 20)
+        {
+            Scale = 1.1,
+            OuterCoverage = 0.91,
+            InnerCoverage = 0.82,
+            EdgeDistanceP95Px = 1.75,
+            PolarityAgreement = 0.88
+        };
+
+        var cross = Assert.Single(
+            TemplateLocateOverlayFactory.Create(
+                candidate,
+                TemplateMatchingEngine.Halcon,
+                InspectionOutcome.Ok,
+                3),
+            item => item.Kind == VisionOverlayKind.Cross);
+
+        Assert.Contains("#3", cross.Label);
+        Assert.Contains("S=0.923", cross.Label);
+        Assert.Contains("O=0.910", cross.Label);
+        Assert.Contains("I=0.820", cross.Label);
+        Assert.Contains("P95=1.750", cross.Label);
+        Assert.Contains("P=0.880", cross.Label);
+    }
+
+    [Fact]
+    public void RejectedHalconCandidateUsesRejectedPrefixForAllGateMetrics()
+    {
+        var result = new ToolResult
+        {
+            ToolId = "locate",
+            Kind = VisionToolKind.TemplateLocate,
+            Outcome = InspectionOutcome.Ng,
+            Data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["engine"] = "Halcon",
+                ["hasMatch"] = "False",
+                ["rejectedCandidate.x"] = "100",
+                ["rejectedCandidate.y"] = "120",
+                ["rejectedCandidate.angle"] = "5",
+                ["rejectedCandidate.scale"] = "1.1",
+                ["rejectedCandidate.score"] = "0.7",
+                ["rejectedCandidate.outerCoverage"] = "0.61",
+                ["rejectedCandidate.innerCoverage"] = "0.52",
+                ["rejectedCandidate.edgeDistanceP95Px"] = "2.75",
+                ["rejectedCandidate.polarityAgreement"] = "0.83",
+                ["templateWidth"] = "30",
+                ["templateHeight"] = "20"
+            }
+        };
+
+        var cross = Assert.Single(
+            TemplateLocateOverlayFactory.Create(result),
+            item => item.Kind == VisionOverlayKind.Cross);
+
+        Assert.Contains("O=0.610", cross.Label);
+        Assert.Contains("I=0.520", cross.Label);
+        Assert.Contains("P95=2.750", cross.Label);
+        Assert.Contains("P=0.830", cross.Label);
+    }
+
+    [Fact]
+    public void ToolResultMissingAnyHalconGateMetricOmitsTheEntireMetricSet()
+    {
+        var result = new ToolResult
+        {
+            ToolId = "locate",
+            Kind = VisionToolKind.TemplateLocate,
+            Outcome = InspectionOutcome.Ok,
+            Data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["engine"] = "Halcon",
+                ["hasMatch"] = "True",
+                ["x"] = "100",
+                ["y"] = "120",
+                ["angle"] = "5",
+                ["scale"] = "1.1",
+                ["score"] = "0.9",
+                ["outerCoverage"] = "0.8",
+                ["innerCoverage"] = "0.7",
+                ["edgeDistanceP95Px"] = "1.5",
+                ["templateWidth"] = "30",
+                ["templateHeight"] = "20"
+            }
+        };
+
+        var cross = Assert.Single(
+            TemplateLocateOverlayFactory.Create(result),
+            item => item.Kind == VisionOverlayKind.Cross);
+
+        Assert.DoesNotContain(" O=", cross.Label, StringComparison.Ordinal);
+        Assert.DoesNotContain(" I=", cross.Label, StringComparison.Ordinal);
+        Assert.DoesNotContain(" P95=", cross.Label, StringComparison.Ordinal);
+        Assert.DoesNotContain(" P=", cross.Label, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CreateV2ResultSeparatesScoredEdgesAndTemplateRoi()
     {
         var result = CreateV2ToolResult();

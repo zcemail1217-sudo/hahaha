@@ -192,7 +192,9 @@ public sealed class PositionInputScaleDialogViewModelTests
             new NullAppLogService(),
             new Recipe { Tools = [source] },
             pipeline,
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         var prepared = await viewModel.PrepareToCloseAsync();
         viewModel.ApplyTo(tool);
@@ -536,7 +538,9 @@ public sealed class PositionInputScaleDialogViewModelTests
             new NullAppLogService(),
             new Recipe(),
             new PoseResultPipeline(frame, "unused", new Pose2D(0, 0, 0)),
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         var prepared = await viewModel.PrepareToCloseAsync();
         viewModel.ApplyTo(tool);
@@ -582,7 +586,9 @@ public sealed class PositionInputScaleDialogViewModelTests
             new NullAppLogService(),
             new Recipe { Tools = [source] },
             new PoseResultPipeline(frame, source.Id, new Pose2D(100, 200, 30) { Scale = 1.2 }),
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         var prepared = await viewModel.PrepareToCloseAsync();
         viewModel.ApplyTo(tool);
@@ -673,7 +679,9 @@ public sealed class PositionInputScaleDialogViewModelTests
             new NullAppLogService(),
             new Recipe { Tools = [source] },
             new UnexpectedPipeline(),
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         Assert.True(await viewModel.PrepareToCloseAsync());
         viewModel.ApplyTo(tool);
@@ -766,7 +774,9 @@ public sealed class PositionInputScaleDialogViewModelTests
             new NullAppLogService(),
             recipe,
             pipeline,
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         Assert.True(await lineViewModel.ApplyToAsync(lineTool));
         Assert.True(await circleViewModel.ApplyToAsync(circleTool));
@@ -832,7 +842,9 @@ public sealed class PositionInputScaleDialogViewModelTests
             new NullAppLogService(),
             recipe,
             pipeline,
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         Assert.False(await lineViewModel.ApplyToAsync(lineTool));
         Assert.False(await circleViewModel.ApplyToAsync(circleTool));
@@ -891,7 +903,9 @@ public sealed class PositionInputScaleDialogViewModelTests
             new NullAppLogService(),
             new Recipe { Tools = [source] },
             new PoseResultPipeline(frame, source.Id, new Pose2D(20, 16, 0)),
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         viewModel.RunToolCommand.Execute();
 
@@ -963,7 +977,9 @@ public sealed class PositionInputScaleDialogViewModelTests
             new NullAppLogService(),
             new Recipe { Tools = [source] },
             pipeline,
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         viewModel.RunToolCommand.Execute();
 
@@ -1261,7 +1277,9 @@ public sealed class PositionInputScaleDialogViewModelTests
             new NullAppLogService(),
             new Recipe { Tools = [source] },
             pipeline,
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
         return new MultiTargetRunScenario(viewModel, pipeline, tool);
     }
 

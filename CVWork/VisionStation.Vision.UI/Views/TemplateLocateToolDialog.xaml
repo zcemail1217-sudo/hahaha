@@ -158,7 +158,7 @@
                     <Button Command="{Binding LearnTemplateCommand}" Style="{StaticResource DialogIconButtonStyle}" ToolTip="学习模板">
                         <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8D4;" FontSize="16" />
                     </Button>
-                    <Button Command="{Binding CloseCommand}" Style="{StaticResource DialogIconButtonStyle}" ToolTip="返回流程">
+                    <Button Command="{Binding CancelCommand}" Style="{StaticResource DialogIconButtonStyle}" ToolTip="取消修改并返回流程">
                         <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE72B;" FontSize="16" />
                     </Button>
                 </StackPanel>
@@ -184,8 +184,8 @@
                         <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE922;" FontSize="11" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                     </Button>
                     <Button Style="{StaticResource CloseCaptionButtonStyle}"
-                            Command="{Binding CloseCommand}"
-                            ToolTip="关闭">
+                             Command="{Binding CancelCommand}"
+                             ToolTip="取消修改并关闭">
                         <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE8BB;" FontSize="11" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                     </Button>
                 </StackPanel>
@@ -883,12 +883,14 @@
                     <Button Command="{Binding SetStandardCommand}" Style="{StaticResource ActionButtonStyle}" Content="设置标准" MinWidth="92" ToolTip="将当前匹配位姿设为标准" />
                     <Button Command="{Binding RunToolCommand}" Style="{StaticResource ActionButtonStyle}" Content="运行模板" MinWidth="92" ToolTip="运行当前模板定位工具" />
                     <Button Command="{Binding RunFlowCommand}" Style="{StaticResource ActionButtonStyle}" Content="运行流程" MinWidth="92" ToolTip="保存参数并运行完整流程" />
-                    <Button Command="{Binding CloseCommand}" Style="{StaticResource ActionButtonStyle}" Content="关闭" MinWidth="86" ToolTip="保存参数并返回流程" Margin="0" />
+                    <Button Command="{Binding CancelCommand}" Style="{StaticResource ActionButtonStyle}" Content="取消" MinWidth="86" ToolTip="放弃本次修改并返回流程" />
+                    <Button Command="{Binding CloseCommand}" Style="{StaticResource ActionButtonStyle}" Content="保存并关闭" MinWidth="104" ToolTip="保存参数并返回流程" Margin="0" />
                 </StackPanel>
             </Grid>
         </Border>
 
-        <controls:SimpleLoadingOverlay Grid.RowSpan="3"
+        <controls:SimpleLoadingOverlay Grid.Row="1"
+                                       Grid.RowSpan="2"
                                        Panel.ZIndex="20"
                                        IsActive="{Binding IsBusy}" />
     </Grid>

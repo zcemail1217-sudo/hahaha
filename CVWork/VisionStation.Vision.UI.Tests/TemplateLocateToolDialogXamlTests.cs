@@ -195,6 +195,58 @@ public sealed class TemplateLocateToolDialogXamlTests
         Assert.DoesNotContain("更多模板参数暂未开放", viewModelSource, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void DialogProvidesDistinctSaveAndCancelPathsWithAwaitedLifecycle()
+    {
+        var document = LoadView("TemplateLocateToolDialog.xaml");
+        var buttons = document.Descendants().Where(element => element.Name.LocalName == "Button").ToArray();
+
+        Assert.Contains(buttons, button =>
+            IsBindingTo(button.Attribute("Command"), "CancelCommand") &&
+            string.Equals(button.Attribute("Content")?.Value, "取消", StringComparison.Ordinal));
+        Assert.Contains(buttons, button =>
+            IsBindingTo(button.Attribute("Command"), "CloseCommand") &&
+            string.Equals(button.Attribute("Content")?.Value, "保存并关闭", StringComparison.Ordinal));
+        Assert.Contains(buttons, button =>
+            IsBindingTo(button.Attribute("Command"), "CancelCommand") &&
+            button.Attribute("Style")?.Value.Contains("CloseCaptionButtonStyle", StringComparison.Ordinal) == true);
+
+        var serviceSource = File.ReadAllText(GetDialogServicePath());
+        Assert.Contains("dialog.Loaded += async", serviceSource, StringComparison.Ordinal);
+        Assert.Contains("await viewModel.InitializeAsync()", serviceSource, StringComparison.Ordinal);
+        Assert.Contains("await viewModel.CancelAndRetireAsync()", serviceSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BusyOverlayLeavesTitleBarCancellationReachableAndSaveDrainsBeforeApply()
+    {
+        var document = LoadView("TemplateLocateToolDialog.xaml");
+        var overlay = Assert.Single(
+            document.Descendants(),
+            element => element.Name.LocalName == "SimpleLoadingOverlay");
+
+        Assert.Equal("1", overlay.Attributes().Single(attribute => attribute.Name.LocalName == "Grid.Row").Value);
+        Assert.Contains(
+            document.Descendants().Where(element => element.Name.LocalName == "Button"),
+            button =>
+                IsBindingTo(button.Attribute("Command"), "CancelCommand") &&
+                button.Ancestors().Any(ancestor =>
+                    ancestor.Attributes().Any(attribute =>
+                        attribute.Name.LocalName == "Grid.Row" && attribute.Value == "0")));
+
+        var serviceSource = File.ReadAllText(GetDialogServicePath());
+        var drainIndex = serviceSource.IndexOf(
+            "await viewModel.CancelAndDrainAsync()",
+            StringComparison.Ordinal);
+        var applyIndex = drainIndex < 0
+            ? -1
+            : serviceSource.IndexOf("viewModel.ApplyTo(tool)", drainIndex, StringComparison.Ordinal);
+        Assert.True(drainIndex >= 0, "Accepted close must drain active operations.");
+        Assert.True(applyIndex > drainIndex, "Accepted close must apply only after active operations drain.");
+        Assert.Contains("cancelCloseRequested = true", serviceSource, StringComparison.Ordinal);
+        Assert.Contains("viewModel.CancelPendingOperations()", serviceSource, StringComparison.Ordinal);
+    }
+
     private static void AssertPresetLabel(XDocument document, string englishLabel, string chineseLabel)
     {
         Assert.Contains(
@@ -275,5 +327,18 @@ public sealed class TemplateLocateToolDialogXamlTests
                 "VisionStation.Vision.UI",
                 "ViewModels",
                 "TemplateLocateToolDialogViewModel.cs"));
+    }
+
+    private static string GetDialogServicePath([CallerFilePath] string sourcePath = "")
+    {
+        var testProjectPath = Path.GetDirectoryName(sourcePath)
+            ?? throw new InvalidOperationException("Unable to locate test source path.");
+        return Path.GetFullPath(
+            Path.Combine(
+                testProjectPath,
+                "..",
+                "VisionStation.Vision.UI",
+                "Services",
+                "WpfToolParameterDialogService.cs"));
     }
 }

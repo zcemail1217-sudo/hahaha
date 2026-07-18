@@ -24,6 +24,11 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     private readonly RuntimePaths _paths;
     private readonly IReadOnlyList<RoiDefinition> _availableRois;
     private readonly ITemplateMatchingService _matchingService;
+    private readonly ITemplateModelStore _modelStore;
+    private readonly ITemplateModelResourceManager _modelResources;
+    private readonly CancellationTokenSource _dialogLifetimeCts = new();
+    private readonly object _activeOperationsGate = new();
+    private readonly HashSet<Task> _activeOperations = [];
     private Dictionary<string, string> _parameters;
     private readonly Recipe? _previewRecipe;
     private readonly IVisionPipeline? _pipeline;
@@ -64,6 +69,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     private double _matchAngle;
     private double _matchScale = 1;
     private TemplateMatchResult? _lastTemplateMatch;
+    private TemplateMatchingDiagnostic? _lastRunDiagnostic;
     private IReadOnlyList<MultiTargetMatchCandidate> _multiMatches = Array.Empty<MultiTargetMatchCandidate>();
     private readonly ObservableCollection<MultiTargetMatchPointItem> _multiTargetResultPoints = new();
     private readonly Dictionary<MultiTargetMatchPointItem, MultiTargetMatchCandidate> _multiTargetCandidates =
@@ -83,6 +89,11 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     private bool _requiresRelearn;
     private bool _applyingPreset;
     private bool _halconLearnedSuccessfullyInSession;
+    private bool _hasLearnedTemplateModel;
+    private TemplateModelOwner? _validatedHalconOwner;
+    private TemplateModelReference? _validatedHalconReference;
+    private IReadOnlyList<VisionOverlayItem> _learningPreviewOverlays = Array.Empty<VisionOverlayItem>();
+    private TemplateMatchingEngine? _learningPreviewEngine;
     private bool _rejectLoadedHalconMode;
     private string _openCvMatchModeState = "Shape";
     private string _openCvMultiMatchModeState = "Shape";
@@ -114,11 +125,15 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         IAppLogService log,
         Recipe? previewRecipe,
         IVisionPipeline? pipeline,
-        ITemplateMatchingService matchingService)
+        ITemplateMatchingService matchingService,
+        ITemplateModelStore modelStore,
+        ITemplateModelResourceManager modelResources)
     {
         _log = log;
         _paths = paths;
         _matchingService = matchingService ?? throw new ArgumentNullException(nameof(matchingService));
+        _modelStore = modelStore ?? throw new ArgumentNullException(nameof(modelStore));
+        _modelResources = modelResources ?? throw new ArgumentNullException(nameof(modelResources));
         _previewRecipe = previewRecipe;
         _pipeline = pipeline;
         _enabled = tool.Enabled;
@@ -180,7 +195,9 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             GetMaxMatchCount());
         _selectedTemplateShape = GetString(parameters, "templateShape", "矩形");
         _showTemplateRegion = GetBool(parameters, "showTemplateRegion", false);
-        if (HasLearnedTemplateModel(parameters))
+        _hasLearnedTemplateModel = _selectedEngine != TemplateMatchingEngine.Halcon &&
+                                   HasOpenCvLearnedTemplateModel(parameters);
+        if (_hasLearnedTemplateModel)
         {
             _showTemplateRegion = false;
         }
@@ -262,22 +279,33 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         CreateTemplateRoiCommand = new DelegateCommand(CreateTemplateRoi, () => !IsMissingInputImage);
         CreateTemplateMaskRoiCommand = new DelegateCommand(CreateTemplateMaskRoi, () => !IsMissingInputImage);
         PlaceRoiCommand = new DelegateCommand<Point2D>(PlacePendingRoi);
-        LearnTemplateCommand = new AsyncDelegateCommand(LearnTemplateAsync, () => !IsBusy && !IsMissingInputImage)
+        LearnTemplateCommand = new AsyncDelegateCommand(
+                cancellationToken => ExecuteTrackedOperationAsync(LearnTemplateAsync, cancellationToken),
+                () => !IsBusy && !IsMissingInputImage)
             .ObservesProperty(() => IsBusy);
-        ResetTemplateCommand = new DelegateCommand(ResetTemplate, () => !IsBusy)
+        ResetTemplateCommand = new AsyncDelegateCommand(
+                cancellationToken => ExecuteTrackedOperationAsync(ResetTemplateAsync, cancellationToken),
+                () => !IsBusy)
             .ObservesProperty(() => IsBusy);
         SetStandardCommand = new DelegateCommand(SetStandard);
-        RunToolCommand = new AsyncDelegateCommand(RunToolAsync, () => !IsBusy && !IsMissingInputImage)
+        RunToolCommand = new AsyncDelegateCommand(
+                cancellationToken => ExecuteTrackedOperationAsync(RunToolAsync, cancellationToken),
+                () => !IsBusy && !IsMissingInputImage)
             .ObservesProperty(() => IsBusy);
-        RunFlowCommand = new AsyncDelegateCommand(RunFlowAsync, () => !IsBusy && !IsMissingInputImage)
+        RunFlowCommand = new AsyncDelegateCommand(
+                cancellationToken => ExecuteTrackedOperationAsync(RunFlowAsync, cancellationToken),
+                () => !IsBusy && !IsMissingInputImage)
             .ObservesProperty(() => IsBusy);
         ConfirmCommand = new DelegateCommand(() => CloseRequested?.Invoke(this, true));
         CancelCommand = new DelegateCommand(() => CloseRequested?.Invoke(this, false));
         CloseCommand = new DelegateCommand(() => CloseRequested?.Invoke(this, true));
 
         LoadSearchRoiEditor();
-        LoadTemplateRoiEditor();
-        LoadTemplateMaskEditors();
+        if (_selectedEngine != TemplateMatchingEngine.Halcon)
+        {
+            LoadTemplateRoiEditor();
+            LoadTemplateMaskEditors();
+        }
         RefreshPreviewOverlays();
     }
 
@@ -297,6 +325,12 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         new ReadOnlyDictionary<string, string>(
             new Dictionary<string, string>(_parameters, StringComparer.OrdinalIgnoreCase));
 
+    public bool HasLearnedTemplateModel
+    {
+        get => _hasLearnedTemplateModel;
+        private set => SetProperty(ref _hasLearnedTemplateModel, value);
+    }
+
     public IReadOnlyList<TemplateMatchingEngine> EngineOptions { get; }
 
     public IReadOnlyList<TemplateMatchingPreset> PresetOptions { get; }
@@ -309,9 +343,15 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             if (SetProperty(ref _selectedEngine, value))
             {
                 _rejectLoadedHalconMode = false;
+                _validatedHalconOwner = null;
+                _validatedHalconReference = null;
+                _lastRunDiagnostic = null;
+                HasLearnedTemplateModel = value != TemplateMatchingEngine.Halcon &&
+                                          HasOpenCvLearnedTemplateModel(_parameters);
                 RaisePropertyChanged(nameof(IsHalconEngine));
                 _selectedPreset = DetectPreset();
                 RaisePropertyChanged(nameof(SelectedPreset));
+                RefreshPreviewOverlays();
             }
         }
     }
@@ -515,7 +555,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
     public AsyncDelegateCommand LearnTemplateCommand { get; }
 
-    public DelegateCommand ResetTemplateCommand { get; }
+    public AsyncDelegateCommand ResetTemplateCommand { get; }
 
     public DelegateCommand SetStandardCommand { get; }
 
@@ -809,6 +849,119 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         private set => SetProperty(ref _statusText, value);
     }
 
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        return ExecuteTrackedOperationAsync(InitializeCoreAsync, cancellationToken);
+    }
+
+    public void CancelPendingOperations()
+    {
+        StatusText = "已请求取消，等待当前算子安全返回；搜索受超时限制，清理阶段可能延长实际返回时间。";
+        if (!_dialogLifetimeCts.IsCancellationRequested)
+        {
+            _dialogLifetimeCts.Cancel();
+        }
+    }
+
+    public async Task CancelAndDrainAsync()
+    {
+        CancelPendingOperations();
+        Task[] activeOperations;
+        lock (_activeOperationsGate)
+        {
+            activeOperations = _activeOperations.ToArray();
+        }
+
+        try
+        {
+            await Task.WhenAll(activeOperations);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _log.Warning("VisionDebug", $"{Name} cancelling template dialog operation failed: {exception.Message}");
+        }
+    }
+
+    public async Task CancelAndRetireAsync()
+    {
+        await CancelAndDrainAsync();
+
+        if (TryCreateStableOwner(out var owner))
+        {
+            try
+            {
+                await _modelResources.RetireToolAsync(owner, CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                _log.Warning("VisionDebug", $"{Name} retiring template cache on dialog close failed: {exception.Message}");
+            }
+        }
+    }
+
+    private async Task ExecuteTrackedOperationAsync(
+        Func<CancellationToken, Task> operation,
+        CancellationToken cancellationToken)
+    {
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _dialogLifetimeCts.Token);
+        var operationTask = operation(linkedCancellation.Token);
+        lock (_activeOperationsGate)
+        {
+            _activeOperations.Add(operationTask);
+        }
+
+        try
+        {
+            await operationTask;
+        }
+        finally
+        {
+            lock (_activeOperationsGate)
+            {
+                _activeOperations.Remove(operationTask);
+            }
+        }
+    }
+
+    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
+    {
+        if (SelectedEngine != TemplateMatchingEngine.Halcon)
+        {
+            HasLearnedTemplateModel = HasOpenCvLearnedTemplateModel(_parameters);
+            return;
+        }
+
+        Dictionary<string, string> parameters;
+        try
+        {
+            parameters = BuildCurrentParameters();
+        }
+        catch (TemplateMatchingConfigurationException exception)
+        {
+            HasLearnedTemplateModel = false;
+            StatusText = FormatDiagnostic(exception);
+            return;
+        }
+
+        var state = await ValidateHalconModelAsync(parameters, cancellationToken);
+        if (state == HalconModelValidationState.Valid)
+        {
+            HideTemplateRoiEditor();
+            return;
+        }
+
+        if (SelectedEngine == TemplateMatchingEngine.Halcon)
+        {
+            LoadTemplateRoiEditor();
+            LoadTemplateMaskEditors();
+        }
+    }
+
     public bool ApplyTo(VisionToolItem tool)
     {
         SyncEditorRois();
@@ -833,10 +986,16 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         return true;
     }
 
-    public async Task<bool> PrepareToCloseAsync()
+    public async Task<bool> PrepareToCloseAsync(CancellationToken cancellationToken = default)
     {
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _dialogLifetimeCts.Token);
+        var operationCancellation = linkedCancellation.Token;
+        operationCancellation.ThrowIfCancellationRequested();
         SyncEditorRois();
-        var capture = await CaptureRoiReferencePoseIfNeededAsync();
+        var capture = await CaptureRoiReferencePoseIfNeededAsync(operationCancellation);
+        operationCancellation.ThrowIfCancellationRequested();
         if (!capture.IsSuccess)
         {
             return false;
@@ -1159,10 +1318,15 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
             var persisted = BuildCurrentParameters();
             var requestParameters = BuildActiveRequestParameters(persisted, out _);
+            var requestedEngine = SelectedEngine;
+            var requestedOwner = CreateModelOwner();
+            var requestedHalconParameters = requestedEngine == TemplateMatchingEngine.Halcon
+                ? TemplateMatchingParameterCatalog.ParseHalcon(requestParameters, GetCardinality())
+                : null;
             EnsureStableOwnerForHalcon();
             var result = await _matchingService.LearnAsync(
                 new TemplateLearningRequest(
-                    CreateModelOwner(),
+                    requestedOwner,
                     CurrentFrame,
                     templateRoi,
                     FindSelectedRoi(),
@@ -1177,16 +1341,86 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                 return false;
             }
 
+            if (result.Engine != requestedEngine || SelectedEngine != requestedEngine)
+            {
+                StatusText = FormatDiagnostic(
+                    TemplateMatchingDiagnostics.Create(
+                        TemplateMatchingDiagnosticCodes.ModelRelearnRequired,
+                        $"Template learning engine changed from {requestedEngine} to {SelectedEngine}; " +
+                        $"the backend returned {result.Engine}."));
+                return false;
+            }
+
+            if (requestedHalconParameters is not null)
+            {
+                var currentParameters = BuildActiveRequestParameters(BuildCurrentParameters(), out _);
+                var currentHalconParameters = TemplateMatchingParameterCatalog.ParseHalcon(
+                    currentParameters,
+                    GetCardinality());
+                if (!HasSameHalconGeneration(requestedHalconParameters, currentHalconParameters))
+                {
+                    StatusText = FormatDiagnostic(
+                        TemplateMatchingDiagnostics.Create(
+                            TemplateMatchingDiagnosticCodes.ModelRelearnRequired,
+                            "HALCON model-generation parameters changed while learning was in flight."));
+                    return false;
+                }
+            }
+
             var merged = new Dictionary<string, string>(persisted, StringComparer.OrdinalIgnoreCase);
             foreach (var parameter in result.Parameters)
             {
                 merged[parameter.Key] = parameter.Value;
             }
 
+            HalconTemplateModelState? learnedHalconState = null;
+            TemplateModelOwner? learnedHalconOwner = null;
+            if (result.Engine == TemplateMatchingEngine.Halcon)
+            {
+                try
+                {
+                    learnedHalconState = TemplateModelParameterCodec.ReadHalcon(merged);
+                }
+                catch (TemplateMatchingConfigurationException exception)
+                {
+                    StatusText = FormatDiagnostic(
+                        TemplateMatchingDiagnostics.Create(
+                            TemplateMatchingDiagnosticCodes.ModelMetadataInvalid,
+                            exception.Message));
+                    _log.Warning(
+                        "VisionDebug",
+                        $"{Name} HALCON learning returned invalid model metadata: {exception.Message}");
+                    return false;
+                }
+
+                if (learnedHalconState is null)
+                {
+                    StatusText = FormatDiagnostic(
+                        TemplateMatchingDiagnostics.Create(
+                            TemplateMatchingDiagnosticCodes.ModelMetadataInvalid,
+                            "HALCON learning succeeded without a complete model reference and learned geometry."));
+                    _log.Warning("VisionDebug", $"{Name} HALCON learning returned no model metadata");
+                    return false;
+                }
+
+                if (!TryCreateStableOwner(out learnedHalconOwner) ||
+                    !Equals(learnedHalconOwner, requestedOwner))
+                {
+                    StatusText = FormatDiagnostic(
+                        TemplateMatchingDiagnostics.Create(
+                            TemplateMatchingDiagnosticCodes.ConfigInvalidParameter,
+                            "Recipe, flow, or tool identity changed while HALCON learning was in flight."));
+                    return false;
+                }
+            }
+
             var standardCreated = result.Engine != TemplateMatchingEngine.Halcon &&
                                   SetLearnedStandardPose(merged, result.Parameters);
             var previewImage = GetString(merged, "templateImagePng", string.Empty);
             var previewEdges = GetString(merged, "templateEdgeOverlayPng", string.Empty);
+            var learningPreviewOverlays = result.Preview is null
+                ? Array.Empty<VisionOverlayItem>()
+                : TemplateLocateOverlayFactory.CreateLearningPreview(result.Preview).ToArray();
 
             // Save template pixels to a resource file for persistent model storage
             if (result.Engine != TemplateMatchingEngine.Halcon &&
@@ -1201,30 +1435,48 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                         _paths.TemplateResourceDirectory,
                         RuntimePaths.SanitizePathSegment(_toolId));
                     Directory.CreateDirectory(resourceDir);
-                    var filePath = Path.Combine(resourceDir, "template.bin");
-                    File.WriteAllBytes(filePath, Convert.FromBase64String(pixelsBase64));
+                    var filePath = Path.Combine(resourceDir, $"template-{Guid.NewGuid():N}.bin");
+                    var pixels = Convert.FromBase64String(pixelsBase64);
+                    using (var stream = new FileStream(
+                               filePath,
+                               FileMode.CreateNew,
+                               FileAccess.Write,
+                               FileShare.None))
+                    {
+                        stream.Write(pixels);
+                        stream.Flush(flushToDisk: true);
+                    }
+
                     merged["modelPath"] = filePath;
                     merged["modelVersion"] = "1.0";
                 }
                 catch (Exception ex)
                 {
+                    StatusText = $"Template learn failed: model persistence failed: {ex.Message}";
                     _log.Warning("VisionDebug", $"{Name} failed to persist template model file: {ex.Message}");
+                    return false;
                 }
             }
 
-            if (result.Engine != TemplateMatchingEngine.Halcon && !HasLearnedTemplateModel(merged))
+            if (result.Engine != TemplateMatchingEngine.Halcon && !HasOpenCvLearnedTemplateModel(merged))
             {
                 StatusText = "Template learn failed: model data was not generated.";
                 _log.Warning("VisionDebug", $"{Name} template learn failed: model data was not generated");
                 return false;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             _parameters = merged;
             if (result.Engine == TemplateMatchingEngine.Halcon)
             {
                 _halconLearnedSuccessfullyInSession = true;
                 RequiresRelearn = false;
+                _validatedHalconOwner = learnedHalconOwner;
+                _validatedHalconReference = learnedHalconState!.Reference;
             }
+            HasLearnedTemplateModel = true;
+            _learningPreviewOverlays = learningPreviewOverlays;
+            _learningPreviewEngine = result.Preview is null ? null : result.Engine;
             TemplatePreviewImagePng = previewImage;
             TemplatePreviewEdgeOverlayPng = previewEdges;
             RaisePropertyChanged(nameof(PendingParameters));
@@ -1233,6 +1485,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                 : result.Message;
             _log.Info("VisionDebug", $"{Name} {result.Message}");
             HideTemplateRoiEditor();
+            RefreshPreviewOverlays();
             return true;
         }
         catch (OperationCanceledException)
@@ -1253,24 +1506,79 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         }
     }
 
-    private void ResetTemplate()
+    private async Task ResetTemplateAsync(CancellationToken cancellationToken)
     {
-        ScoreText = "-";
-        PoseText = "-";
-        DurationText = "0ms";
-        _hasMatchResult = false;
-        _lastTemplateMatch = null;
-        _multiMatches = Array.Empty<MultiTargetMatchCandidate>();
-        ClearMultiTargetResults();
-        TemplatePreviewImagePng = string.Empty;
-        TemplatePreviewEdgeOverlayPng = string.Empty;
-        RemoveTemplateModelParameters();
-        RemoveEditor(_templateRoiEditor);
-        _templateRoiEditor = null;
-        RemoveTemplateMaskEditors();
-        SelectedEditableRoi = _searchRoiEditor;
-        RefreshPreviewOverlays();
-        StatusText = "模板数据已清除";
+        IsBusy = true;
+        try
+        {
+            var parameters = new Dictionary<string, string>(_parameters, StringComparer.OrdinalIgnoreCase);
+            if (SelectedEngine == TemplateMatchingEngine.Halcon)
+            {
+                TemplateModelParameterCodec.RemoveHalcon(parameters);
+                _halconLearnedSuccessfullyInSession = false;
+                _validatedHalconOwner = null;
+                _validatedHalconReference = null;
+            }
+            else
+            {
+                RemoveOpenCvTemplateModelParameters(parameters);
+            }
+
+            _parameters = parameters;
+            HasLearnedTemplateModel = false;
+            _learningPreviewOverlays = Array.Empty<VisionOverlayItem>();
+            _learningPreviewEngine = null;
+            RaisePropertyChanged(nameof(PendingParameters));
+
+            ScoreText = "-";
+            PoseText = "-";
+            DurationText = "0ms";
+            _hasMatchResult = false;
+            _lastTemplateMatch = null;
+            _lastRunDiagnostic = null;
+            _multiMatches = Array.Empty<MultiTargetMatchCandidate>();
+            ClearMultiTargetResults();
+            if (SelectedEngine != TemplateMatchingEngine.Halcon)
+            {
+                TemplatePreviewImagePng = string.Empty;
+                TemplatePreviewEdgeOverlayPng = string.Empty;
+            }
+
+            RemoveEditor(_templateRoiEditor);
+            _templateRoiEditor = null;
+            RemoveTemplateMaskEditors();
+            if (SelectedEngine == TemplateMatchingEngine.Halcon)
+            {
+                LoadTemplateRoiEditor();
+                LoadTemplateMaskEditors();
+            }
+
+            SelectedEditableRoi = _searchRoiEditor;
+            RefreshPreviewOverlays();
+
+            if (!TryCreateStableOwner(out var owner))
+            {
+                StatusText = $"{TemplateMatchingDiagnosticCodes.ConfigInvalidParameter}: " +
+                             "模板数据已清除；工具缺少稳定 RecipeId/FlowId/ToolId，未执行缓存退休。";
+                return;
+            }
+
+            await _modelResources.RetireToolAsync(owner, cancellationToken);
+            StatusText = "模板数据已清除";
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            StatusText = $"模板数据已清除；缓存退休失败：{exception.Message}";
+            _log.Warning("VisionDebug", $"{Name} retiring reset template cache failed: {exception.Message}");
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     private void SetStandard()
@@ -1325,6 +1633,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         {
             cancellationToken.ThrowIfCancellationRequested();
             _lastTemplateMatch = null;
+            _lastRunDiagnostic = null;
             ClearMultiTargetResults();
             _mappedSearchRoi = null;
             RefreshPreviewOverlays();
@@ -1339,7 +1648,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                 return;
             }
 
-            var capture = await CaptureRoiReferencePoseIfNeededAsync();
+            var capture = await CaptureRoiReferencePoseIfNeededAsync(cancellationToken);
             if (!capture.IsSuccess)
             {
                 ClearFailedRunResult(StatusText);
@@ -1354,7 +1663,8 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             var mapping = await GetMappedSearchRoiAsync(
                 FindSelectedRoi(),
                 configuredReference,
-                capture.CurrentPose);
+                capture.CurrentPose,
+                cancellationToken);
             if (!mapping.IsSuccess)
             {
                 ClearFailedRunResult(mapping.ErrorMessage);
@@ -1364,7 +1674,20 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             var roi = mapping.Roi;
             _mappedSearchRoi = roi;
             var currentParameters = BuildCurrentParameters();
-            if (!HasActiveLearnedTemplateModel(currentParameters) &&
+            var shouldLearn = !HasActiveLearnedTemplateModel(currentParameters);
+            if (SelectedEngine == TemplateMatchingEngine.Halcon)
+            {
+                var validation = await ValidateHalconModelAsync(currentParameters, cancellationToken);
+                if (validation is HalconModelValidationState.Invalid or HalconModelValidationState.Stale)
+                {
+                    ClearFailedRunResult(StatusText);
+                    return;
+                }
+
+                shouldLearn = validation == HalconModelValidationState.Missing;
+            }
+
+            if (shouldLearn &&
                 _templateRoiEditor is not null &&
                 !await TryLearnTemplateAsync(cancellationToken))
             {
@@ -1384,6 +1707,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                     expectedCount),
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
+            _lastRunDiagnostic = batch.Diagnostic;
             if (_toolKind == VisionToolKind.MultiTargetMatch)
             {
                 _lastTemplateMatch = null;
@@ -1411,7 +1735,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
                 RefreshPreviewOverlays();
                 SelectTab(Tabs.First(tab => tab.Key == "Result"));
-                StatusText = batch.Diagnostic is null ? batch.Message : FormatDiagnostic(batch.Diagnostic);
+                StatusText = FormatRunStatus(batch);
                 _log.Info("VisionDebug", $"{Name} {batch.Message} best={ScoreText} {PoseText}");
                 return;
             }
@@ -1434,7 +1758,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             RefreshPreviewOverlays();
             SelectTab(Tabs.First(tab => tab.Key == "Result"));
             StatusText = batch.Diagnostic is not null
-                ? FormatDiagnostic(batch.Diagnostic)
+                ? FormatRunStatus(batch)
                 : standardCreated
                     ? $"{match.Message}；已建立标准位姿"
                     : match.Message;
@@ -1579,6 +1903,14 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             _toolId);
     }
 
+    private bool TryCreateStableOwner(out TemplateModelOwner owner)
+    {
+        owner = CreateModelOwner();
+        return !string.IsNullOrWhiteSpace(owner.RecipeId) &&
+               !string.IsNullOrWhiteSpace(owner.FlowId) &&
+               !string.IsNullOrWhiteSpace(owner.ToolId);
+    }
+
     private void EnsureStableOwnerForHalcon()
     {
         if (SelectedEngine != TemplateMatchingEngine.Halcon)
@@ -1586,10 +1918,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             return;
         }
 
-        var owner = CreateModelOwner();
-        if (string.IsNullOrWhiteSpace(owner.RecipeId) ||
-            string.IsNullOrWhiteSpace(owner.FlowId) ||
-            string.IsNullOrWhiteSpace(owner.ToolId))
+        if (!TryCreateStableOwner(out _))
         {
             throw new TemplateMatchingConfigurationException(
                 TemplateMatchingDiagnostics.Create(
@@ -1598,21 +1927,168 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         }
     }
 
-    private bool HasActiveLearnedTemplateModel(IReadOnlyDictionary<string, string> parameters)
+    private async Task<HalconModelValidationState> ValidateHalconModelAsync(
+        IReadOnlyDictionary<string, string> parameters,
+        CancellationToken cancellationToken)
     {
-        if (SelectedEngine != TemplateMatchingEngine.Halcon)
+        HalconTemplateModelState? state;
+        try
         {
-            return HasLearnedTemplateModel(parameters);
+            state = TemplateModelParameterCodec.ReadHalcon(parameters);
+        }
+        catch (TemplateMatchingConfigurationException exception)
+        {
+            ClearValidatedHalconModel();
+            StatusText = FormatDiagnostic(exception);
+            return HalconModelValidationState.Invalid;
         }
 
-        if (_halconLearnedSuccessfullyInSession)
+        if (state is null)
         {
-            return true;
+            ClearValidatedHalconModel();
+            return HalconModelValidationState.Missing;
+        }
+
+        if (!TryCreateStableOwner(out var owner))
+        {
+            ClearValidatedHalconModel();
+            StatusText = FormatDiagnostic(
+                new TemplateMatchingConfigurationException(
+                    TemplateMatchingDiagnostics.Create(
+                        TemplateMatchingDiagnosticCodes.ConfigInvalidParameter,
+                        "HALCON model validation requires stable RecipeId, FlowId, and ToolId values.")));
+            return HalconModelValidationState.Invalid;
+        }
+
+        if (RequiresRelearn)
+        {
+            ClearValidatedHalconModel();
+            StatusText = FormatDiagnostic(
+                TemplateMatchingDiagnostics.Create(
+                    TemplateMatchingDiagnosticCodes.ModelRelearnRequired,
+                    "HALCON model-generation parameters changed after the active model was learned."));
+            return HalconModelValidationState.Invalid;
+        }
+
+        if (_halconLearnedSuccessfullyInSession &&
+            HasLearnedTemplateModel &&
+            Equals(_validatedHalconOwner, owner) &&
+            Equals(_validatedHalconReference, state.Reference))
+        {
+            return HalconModelValidationState.Valid;
+        }
+
+        if (HasLearnedTemplateModel &&
+            Equals(_validatedHalconOwner, owner) &&
+            Equals(_validatedHalconReference, state.Reference))
+        {
+            return HalconModelValidationState.Valid;
+        }
+
+        var capturedEngine = SelectedEngine;
+        try
+        {
+            await _modelStore.ResolveAsync(owner, state.Reference, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (IsHalconValidationStale(capturedEngine, owner, state.Reference))
+            {
+                ReportStaleHalconValidation();
+                return HalconModelValidationState.Stale;
+            }
+
+            _validatedHalconOwner = owner;
+            _validatedHalconReference = state.Reference;
+            HasLearnedTemplateModel = true;
+            return HalconModelValidationState.Valid;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (TemplateModelStoreException exception)
+        {
+            if (IsHalconValidationStale(capturedEngine, owner, state.Reference))
+            {
+                ReportStaleHalconValidation();
+                return HalconModelValidationState.Stale;
+            }
+
+            ClearValidatedHalconModel();
+            StatusText = FormatDiagnostic(
+                TemplateMatchingDiagnostics.Create(exception.Code, exception.Message));
+            return HalconModelValidationState.Invalid;
+        }
+        catch (TemplateMatchingConfigurationException exception)
+        {
+            if (IsHalconValidationStale(capturedEngine, owner, state.Reference))
+            {
+                ReportStaleHalconValidation();
+                return HalconModelValidationState.Stale;
+            }
+
+            ClearValidatedHalconModel();
+            StatusText = FormatDiagnostic(exception);
+            return HalconModelValidationState.Invalid;
+        }
+        catch (Exception exception)
+        {
+            if (IsHalconValidationStale(capturedEngine, owner, state.Reference))
+            {
+                ReportStaleHalconValidation();
+                return HalconModelValidationState.Stale;
+            }
+
+            ClearValidatedHalconModel();
+            StatusText = FormatDiagnostic(
+                TemplateMatchingDiagnostics.Create(
+                    TemplateMatchingDiagnosticCodes.ModelMetadataInvalid,
+                    exception.Message));
+            return HalconModelValidationState.Invalid;
+        }
+    }
+
+    private void ClearValidatedHalconModel()
+    {
+        _validatedHalconOwner = null;
+        _validatedHalconReference = null;
+        HasLearnedTemplateModel = false;
+    }
+
+    private bool IsHalconValidationStale(
+        TemplateMatchingEngine capturedEngine,
+        TemplateModelOwner owner,
+        TemplateModelReference reference)
+    {
+        return capturedEngine != TemplateMatchingEngine.Halcon ||
+               RequiresRelearn ||
+               !IsCurrentHalconReference(owner, reference);
+    }
+
+    private void ReportStaleHalconValidation()
+    {
+        StatusText = SelectedEngine == TemplateMatchingEngine.Halcon && RequiresRelearn
+            ? FormatDiagnostic(
+                TemplateMatchingDiagnostics.Create(
+                    TemplateMatchingDiagnosticCodes.ModelRelearnRequired,
+                    "HALCON model-generation parameters changed while model validation was in flight."))
+            : "HALCON 模型校验期间参数或引擎已变化，请重新运行。";
+    }
+
+    private bool IsCurrentHalconReference(
+        TemplateModelOwner owner,
+        TemplateModelReference reference)
+    {
+        if (SelectedEngine != TemplateMatchingEngine.Halcon ||
+            !TryCreateStableOwner(out var currentOwner) ||
+            !Equals(owner, currentOwner))
+        {
+            return false;
         }
 
         try
         {
-            return TemplateModelParameterCodec.ReadHalcon(parameters) is not null;
+            var currentParameters = BuildCurrentParameters();
+            return Equals(TemplateModelParameterCodec.ReadHalcon(currentParameters)?.Reference, reference);
         }
         catch (TemplateMatchingConfigurationException)
         {
@@ -1620,8 +2096,31 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         }
     }
 
-    private async Task<RoiReferenceCaptureResult> CaptureRoiReferencePoseIfNeededAsync()
+    private bool HasActiveLearnedTemplateModel(IReadOnlyDictionary<string, string> parameters)
     {
+        if (SelectedEngine != TemplateMatchingEngine.Halcon)
+        {
+            return HasOpenCvLearnedTemplateModel(parameters);
+        }
+
+        return HasLearnedTemplateModel;
+    }
+
+    private static bool HasSameHalconGeneration(
+        HalconTemplateMatchingParameters requested,
+        HalconTemplateMatchingParameters current)
+    {
+        return requested.AngleStartDeg.Equals(current.AngleStartDeg) &&
+               requested.AngleExtentDeg.Equals(current.AngleExtentDeg) &&
+               requested.ScaleMin.Equals(current.ScaleMin) &&
+               requested.ScaleMax.Equals(current.ScaleMax) &&
+               requested.NumLevels == current.NumLevels;
+    }
+
+    private async Task<RoiReferenceCaptureResult> CaptureRoiReferencePoseIfNeededAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!_roiReferenceDirty)
         {
             return RoiReferenceCaptureResult.Success();
@@ -1641,7 +2140,8 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             return RoiReferenceCaptureResult.Success();
         }
 
-        var currentPose = await ReadCurrentPositionInputPoseAsync();
+        var currentPose = await ReadCurrentPositionInputPoseAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         if (currentPose.Status == PoseReadStatus.Invalid)
         {
             StatusText = currentPose.ErrorMessage;
@@ -1662,8 +2162,10 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     private async Task<RoiMappingResult> GetMappedSearchRoiAsync(
         RoiDefinition? roi,
         PoseReadResult referencePose,
-        PoseReadResult? capturedCurrentPose)
+        PoseReadResult? capturedCurrentPose,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (_toolKind != VisionToolKind.MultiTargetMatch)
         {
             return RoiMappingResult.Success(roi);
@@ -1680,7 +2182,8 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             return RoiMappingResult.Failure(referencePose.ErrorMessage);
         }
 
-        var currentPose = capturedCurrentPose ?? await ReadCurrentPositionInputPoseAsync();
+        var currentPose = capturedCurrentPose ?? await ReadCurrentPositionInputPoseAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         if (currentPose.Status == PoseReadStatus.Invalid)
         {
             return RoiMappingResult.Failure(currentPose.ErrorMessage);
@@ -1704,8 +2207,10 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         return RoiMappingResult.Success(PoseSimilarityTransform.MapRoi(roi, referencePose.Pose!, currentPose.Pose!));
     }
 
-    private async Task<PoseReadResult> ReadCurrentPositionInputPoseAsync()
+    private async Task<PoseReadResult> ReadCurrentPositionInputPoseAsync(
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (CurrentFrame is null || _pipeline is null)
         {
             return PoseReadResult.Missing();
@@ -1718,7 +2223,8 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             return PoseReadResult.Missing();
         }
 
-        var pipelineResult = await _pipeline.ExecuteAsync(recipe, CurrentFrame);
+        var pipelineResult = await _pipeline.ExecuteAsync(recipe, CurrentFrame, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         var sourceResult = pipelineResult.ToolResults.LastOrDefault(result =>
             string.Equals(result.ToolId, sourceToolId, StringComparison.OrdinalIgnoreCase));
         if (sourceResult?.Outcome != InspectionOutcome.Ok ||
@@ -1744,6 +2250,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     private void ClearFailedRunResult(string errorMessage)
     {
         _lastTemplateMatch = null;
+        _lastRunDiagnostic = null;
         ClearMultiTargetResults();
         RefreshPreviewOverlays();
         StatusText = errorMessage;
@@ -1982,8 +2489,8 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             PreviewOverlays.Add(new VisionOverlayItem
             {
                 Kind = VisionOverlayKind.Rectangle,
-                State = VisionOverlayState.Warning,
-                Label = string.IsNullOrWhiteSpace(RoiId) ? "搜索区域" : "绑定ROI搜索区",
+                State = _lastRunDiagnostic is null ? VisionOverlayState.Warning : VisionOverlayState.Ng,
+                Label = CreateSearchRegionLabel(_lastRunDiagnostic),
                 X = searchRegion.X,
                 Y = searchRegion.Y,
                 Width = searchRegion.Width,
@@ -2000,6 +2507,14 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             }
         }
 
+        if (_learningPreviewEngine == SelectedEngine)
+        {
+            foreach (var learningOverlay in _learningPreviewOverlays)
+            {
+                PreviewOverlays.Add(learningOverlay);
+            }
+        }
+
         if (!_hasMatchResult)
         {
             return;
@@ -2013,49 +2528,16 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                 return;
             }
 
-            if (match.Shape.Equals("Circle", StringComparison.OrdinalIgnoreCase))
+            foreach (var overlay in TemplateLocateOverlayFactory.Create(
+                         match,
+                         SelectedEngine,
+                         _matchState == VisionOverlayState.Ok
+                             ? InspectionOutcome.Ok
+                             : InspectionOutcome.Ng,
+                         selectedPoint.Index))
             {
-                PreviewOverlays.Add(new VisionOverlayItem
-                {
-                    Kind = VisionOverlayKind.Circle,
-                    State = _matchState,
-                    Label = $"#{selectedPoint.Index}",
-                    X = match.X,
-                    Y = match.Y,
-                    Radius = match.Radius > 0 ? match.Radius : Math.Max(match.Width, match.Height) / 2.0
-                });
-                PreviewOverlays.Add(new VisionOverlayItem
-                {
-                    Kind = VisionOverlayKind.Cross,
-                    State = _matchState,
-                    Label = string.Empty,
-                    X = match.X,
-                    Y = match.Y,
-                    Angle = match.Angle
-                });
-                return;
+                PreviewOverlays.Add(overlay);
             }
-
-            PreviewOverlays.Add(new VisionOverlayItem
-            {
-                Kind = VisionOverlayKind.RotatedRectangle,
-                State = _matchState,
-                Label = $"#{selectedPoint.Index}",
-                X = match.X,
-                Y = match.Y,
-                Width = Math.Max(12, match.Width),
-                Height = Math.Max(12, match.Height),
-                Angle = match.Angle
-            });
-            PreviewOverlays.Add(new VisionOverlayItem
-            {
-                Kind = VisionOverlayKind.Cross,
-                State = _matchState,
-                Label = string.Empty,
-                X = match.X,
-                Y = match.Y,
-                Angle = match.Angle
-            });
 
             return;
         }
@@ -2069,6 +2551,19 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         {
             PreviewOverlays.Add(overlay);
         }
+    }
+
+    private string CreateSearchRegionLabel(TemplateMatchingDiagnostic? diagnostic)
+    {
+        if (diagnostic is null)
+        {
+            return string.IsNullOrWhiteSpace(RoiId) ? "搜索区域" : "绑定ROI搜索区";
+        }
+
+        var prefix = diagnostic.Code.StartsWith("MATCH_", StringComparison.OrdinalIgnoreCase)
+            ? "首个拒绝"
+            : "诊断";
+        return $"{prefix}：{diagnostic.Code} {diagnostic.UserMessage}";
     }
 
     private VisionOverlayItem? CreateTemplateRegionOverlay()
@@ -2107,7 +2602,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
     private void LoadTemplateRoiEditor()
     {
-        if (HasLearnedTemplateModel(_parameters))
+        if (HasLearnedTemplateModel)
         {
             return;
         }
@@ -2142,7 +2637,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
     private void LoadTemplateMaskEditors()
     {
-        if (HasLearnedTemplateModel(_parameters))
+        if (HasLearnedTemplateModel)
         {
             return;
         }
@@ -2604,6 +3099,20 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         return $"{exception.Code}: {exception.Message}";
     }
 
+    private static string FormatRunStatus(TemplateMatchBatchResult result)
+    {
+        if (result.Diagnostic is null)
+        {
+            return result.Message;
+        }
+
+        var diagnostic = FormatDiagnostic(result.Diagnostic);
+        return !result.HasMatch &&
+               result.Diagnostic.Code.StartsWith("MATCH_", StringComparison.OrdinalIgnoreCase)
+            ? $"首个拒绝：{diagnostic}"
+            : diagnostic;
+    }
+
     private Dictionary<string, string> BuildCurrentParameters()
     {
         var parameters = new Dictionary<string, string>(_parameters, StringComparer.OrdinalIgnoreCase)
@@ -2822,7 +3331,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         };
     }
 
-    private static bool HasLearnedTemplateModel(IReadOnlyDictionary<string, string> parameters)
+    private static bool HasOpenCvLearnedTemplateModel(IReadOnlyDictionary<string, string> parameters)
     {
         if (parameters.TryGetValue("templateImagePng", out var png) && !string.IsNullOrWhiteSpace(png))
         {
@@ -2855,7 +3364,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                ?? _availableRois.FirstOrDefault(roi => string.Equals(roi.Id, RoiId, StringComparison.OrdinalIgnoreCase));
     }
 
-    private void RemoveTemplateModelParameters()
+    private static void RemoveOpenCvTemplateModelParameters(IDictionary<string, string> parameters)
     {
         foreach (var key in new[]
                  {
@@ -2879,15 +3388,17 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                      "templatePreviewPng",
                      "templateEdgeOverlayPng",
                      "templateMaskRoisJson",
-                     "templateMaskPng",
-                     "templateSourceRoiId",
-                     "standardX",
+                      "templateMaskPng",
+                      "templateSourceRoiId",
+                      "modelPath",
+                      "modelVersion",
+                      "standardX",
                      "standardY",
                      "standardAngle",
                      "standardScale"
                  })
         {
-            _parameters.Remove(key);
+            parameters.Remove(key);
         }
     }
 
@@ -2956,6 +3467,8 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         Missing,
         Success,
         Invalid
+        ,
+        Stale
     }
 
     private sealed record PoseReadResult(PoseReadStatus Status, Pose2D? Pose, string ErrorMessage)
@@ -3003,6 +3516,14 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     }
 
     private sealed record RoiBounds(double X, double Y, double Width, double Height);
+
+    private enum HalconModelValidationState
+    {
+        Missing,
+        Valid,
+        Invalid,
+        Stale
+    }
 }
 
 public sealed class TemplateLocateTabItem : BindableBase

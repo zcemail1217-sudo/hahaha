@@ -17,6 +17,8 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
     private readonly IImageFrameFileService _imageFiles;
     private readonly IVisionPipeline _pipeline;
     private readonly ITemplateMatchingService _templateMatchingService;
+    private readonly ITemplateModelStore _templateModelStore;
+    private readonly ITemplateModelResourceManager _templateModelResources;
     private readonly IDeviceConfigurationRepository _deviceConfigurationRepository;
     private readonly RuntimePaths _paths;
     private readonly IAppLogService _log;
@@ -29,6 +31,8 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
         IImageFrameFileService imageFiles,
         IVisionPipeline pipeline,
         ITemplateMatchingService templateMatchingService,
+        ITemplateModelStore templateModelStore,
+        ITemplateModelResourceManager templateModelResources,
         IDeviceConfigurationRepository deviceConfigurationRepository,
         RuntimePaths paths,
         IAppLogService log)
@@ -40,6 +44,8 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
         _imageFiles = imageFiles;
         _pipeline = pipeline;
         _templateMatchingService = templateMatchingService ?? throw new ArgumentNullException(nameof(templateMatchingService));
+        _templateModelStore = templateModelStore ?? throw new ArgumentNullException(nameof(templateModelStore));
+        _templateModelResources = templateModelResources ?? throw new ArgumentNullException(nameof(templateModelResources));
         _deviceConfigurationRepository = deviceConfigurationRepository;
         _paths = paths;
         _log = log;
@@ -62,7 +68,19 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
 
         if (tool.Kind is VisionToolKind.TemplateLocate or VisionToolKind.MultiTargetMatch)
         {
-            return EditTemplateLocateTool(tool, roiChoices, rois, flowName, currentFrame, previewRecipe, _paths, _pipeline, _log, _templateMatchingService);
+            return EditTemplateLocateTool(
+                tool,
+                roiChoices,
+                rois,
+                flowName,
+                currentFrame,
+                previewRecipe,
+                _paths,
+                _pipeline,
+                _log,
+                _templateMatchingService,
+                _templateModelStore,
+                _templateModelResources);
         }
 
         if (tool.Kind == VisionToolKind.FindLine)
@@ -165,32 +183,152 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
         RuntimePaths paths,
         IVisionPipeline pipeline,
         IAppLogService log,
-        ITemplateMatchingService templateMatchingService)
+        ITemplateMatchingService templateMatchingService,
+        ITemplateModelStore templateModelStore,
+        ITemplateModelResourceManager templateModelResources)
     {
-        var viewModel = new TemplateLocateToolDialogViewModel(tool, roiChoices, rois, flowName, currentFrame, paths, log, previewRecipe, pipeline, templateMatchingService);
+        var viewModel = new TemplateLocateToolDialogViewModel(
+            tool,
+            roiChoices,
+            rois,
+            flowName,
+            currentFrame,
+            paths,
+            log,
+            previewRecipe,
+            pipeline,
+            templateMatchingService,
+            templateModelStore,
+            templateModelResources);
         var dialog = new TemplateLocateToolDialog
         {
             DataContext = viewModel,
             Owner = GetOwner()
         };
+        var allowClose = false;
+        var closeInProgress = false;
+        var cancelCloseRequested = false;
+
+        dialog.Loaded += async (_, _) =>
+        {
+            try
+            {
+                await viewModel.InitializeAsync();
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception exception)
+            {
+                log.Error("VisionDebug", $"{tool.Name} template dialog initialization failed: {exception.Message}");
+            }
+        };
 
         viewModel.CloseRequested += async (_, accepted) =>
         {
-            if (accepted)
+            if (closeInProgress)
             {
-                if (!await viewModel.PrepareToCloseAsync())
+                if (!accepted)
                 {
-                    return;
+                    cancelCloseRequested = true;
+                    viewModel.CancelPendingOperations();
                 }
 
-                if (!viewModel.ApplyTo(tool))
-                {
-                    return;
-                }
+                return;
             }
 
-            dialog.DialogResult = accepted;
-            dialog.Close();
+            closeInProgress = true;
+            cancelCloseRequested = !accepted;
+            try
+            {
+                if (accepted)
+                {
+                    if (!await viewModel.PrepareToCloseAsync())
+                    {
+                        closeInProgress = false;
+                        return;
+                    }
+
+                    await viewModel.CancelAndDrainAsync();
+                    if (cancelCloseRequested)
+                    {
+                        await viewModel.CancelAndRetireAsync();
+                        allowClose = true;
+                        dialog.DialogResult = false;
+                        return;
+                    }
+
+                    if (!viewModel.ApplyTo(tool))
+                    {
+                        closeInProgress = false;
+                        return;
+                    }
+
+                    allowClose = true;
+                }
+                else
+                {
+                    await viewModel.CancelAndRetireAsync();
+                    allowClose = true;
+                }
+
+                dialog.DialogResult = accepted;
+            }
+            catch (OperationCanceledException)
+            {
+                if (!cancelCloseRequested)
+                {
+                    closeInProgress = false;
+                    return;
+                }
+
+                try
+                {
+                    await viewModel.CancelAndRetireAsync();
+                    allowClose = true;
+                    dialog.DialogResult = false;
+                }
+                catch (Exception exception)
+                {
+                    closeInProgress = false;
+                    log.Error("VisionDebug", $"{tool.Name} cancelling template dialog failed: {exception.Message}");
+                }
+            }
+            catch (Exception exception)
+            {
+                closeInProgress = false;
+                log.Error("VisionDebug", $"{tool.Name} closing template dialog failed: {exception.Message}");
+            }
+        };
+
+        dialog.Closing += async (_, args) =>
+        {
+            if (allowClose)
+            {
+                return;
+            }
+
+            args.Cancel = true;
+            if (closeInProgress)
+            {
+                cancelCloseRequested = true;
+                viewModel.CancelPendingOperations();
+                return;
+            }
+
+            closeInProgress = true;
+            cancelCloseRequested = true;
+            try
+            {
+                await viewModel.CancelAndRetireAsync();
+                allowClose = true;
+                dialog.Close();
+            }
+            catch (Exception exception)
+            {
+                closeInProgress = false;
+                log.Error("VisionDebug", $"{tool.Name} cancelling template dialog close failed: {exception.Message}");
+            }
         };
 
         return dialog.ShowDialog() == true

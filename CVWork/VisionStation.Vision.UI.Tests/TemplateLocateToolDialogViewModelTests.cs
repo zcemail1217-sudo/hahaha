@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.IO;
 using System.Reflection;
 using System.Text.Json;
 using Prism.Commands;
@@ -35,6 +36,21 @@ public sealed class TemplateLocateToolDialogViewModelTests
         "HalconCandidateLimit",
         "HalconExpectedCount"
     ];
+
+    [Theory]
+    [InlineData(typeof(TemplateLocateToolDialogViewModel))]
+    [InlineData(typeof(VisionStation.Vision.UI.Services.WpfToolParameterDialogService))]
+    public void TemplateDialogCompositionUsesMatchingStoreAndResourcePorts(Type compositionType)
+    {
+        var parameterTypes = Assert.Single(compositionType.GetConstructors())
+            .GetParameters()
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        Assert.Contains(typeof(ITemplateMatchingService), parameterTypes);
+        Assert.Contains(typeof(ITemplateModelStore), parameterTypes);
+        Assert.Contains(typeof(ITemplateModelResourceManager), parameterTypes);
+    }
 
     [Theory]
     [InlineData(VisionToolKind.TemplateLocate, "ScaleOutput")]
@@ -144,7 +160,9 @@ public sealed class TemplateLocateToolDialogViewModelTests
             new NullAppLogService(),
             null,
             null,
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         viewModel.LearnTemplateCommand.Execute();
 
@@ -194,7 +212,9 @@ public sealed class TemplateLocateToolDialogViewModelTests
             new NullAppLogService(),
             null,
             null,
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         viewModel.CreateTemplateRoiCommand.Execute();
         viewModel.PlaceRoiCommand.Execute(new Point2D(120, 100));
@@ -228,7 +248,9 @@ public sealed class TemplateLocateToolDialogViewModelTests
             new NullAppLogService(),
             null,
             null,
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         viewModel.RunToolCommand.Execute();
 
@@ -267,7 +289,9 @@ public sealed class TemplateLocateToolDialogViewModelTests
             new NullAppLogService(),
             null,
             null,
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         viewModel.RunToolCommand.Execute();
 
@@ -306,7 +330,9 @@ public sealed class TemplateLocateToolDialogViewModelTests
             new NullAppLogService(),
             null,
             null,
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         viewModel.RunToolCommand.Execute();
         Assert.True(
@@ -380,7 +406,9 @@ public sealed class TemplateLocateToolDialogViewModelTests
             new NullAppLogService(),
             null,
             null,
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
 
         viewModel.RunToolCommand.Execute();
         Assert.True(
@@ -499,10 +527,14 @@ public sealed class TemplateLocateToolDialogViewModelTests
             new NullAppLogService(),
             null,
             null,
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
         viewModel.RunToolCommand.Execute();
         Assert.True(
-            SpinWait.SpinUntil(() => !viewModel.IsBusy, TimeSpan.FromSeconds(10)),
+            SpinWait.SpinUntil(
+                () => !viewModel.IsBusy && viewModel.ScoreText != "-",
+                TimeSpan.FromSeconds(10)),
             $"Initial template matching did not finish: {viewModel.StatusText}");
         Assert.Contains(viewModel.PreviewOverlays, item =>
             item.Kind == VisionOverlayKind.Polyline && item.State == VisionOverlayState.Warning);
@@ -780,12 +812,14 @@ public sealed class TemplateLocateToolDialogViewModelTests
         var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
         var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
         var recipe = CreatePreviewRecipe("recipe-1", "flow-2", tool);
+        var learnedParameters = CreateCompleteHalconLearnedState();
+        learnedParameters["halcon.learnedMarker"] = "learned";
         var service = new RecordingTemplateMatchingService
         {
             LearnHandler = (request, _) => Task.FromResult(new TemplateLearningResult(
                 TemplateMatchingEngine.Halcon,
                 true,
-                new Dictionary<string, string> { ["halcon.learnedMarker"] = "learned" },
+                learnedParameters,
                 "learned",
                 null)),
             MatchHandler = (request, _) => Task.FromResult(CreateNoMatchBatch(request, TemplateMatchingEngine.Halcon))
@@ -1223,6 +1257,962 @@ public sealed class TemplateLocateToolDialogViewModelTests
         Assert.Contains("重新学习", viewModel.StatusText);
     }
 
+    [Fact]
+    public async Task HalconInitializeUsesCodecAndStoreResolutionForStableOwner()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        foreach (var parameter in CreateCompleteHalconLearnedState())
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var store = new RecordingTemplateModelStore
+        {
+            ResolveHandler = (_, _, _) => Task.FromResult(
+                new ResolvedTemplateModel("resolved/model.shm", "{}"u8.ToArray()))
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            RecordingTemplateMatchingService.Successful(),
+            CreatePreviewRecipe("recipe-1", "flow-2", tool),
+            CreateFrame(80, 60),
+            store);
+
+        await InvokeTaskMethodAsync(viewModel, "InitializeAsync", CancellationToken.None);
+
+        Assert.True(GetProperty<bool>(viewModel, "HasLearnedTemplateModel"));
+        var resolution = Assert.Single(store.Resolutions);
+        Assert.Equal(new TemplateModelOwner("recipe-1", "flow-2", tool.Id), resolution.Owner);
+        Assert.Equal(
+            TemplateModelParameterCodec.ReadHalcon(parameters)!.Reference,
+            resolution.Reference);
+    }
+
+    [Fact]
+    public async Task HalconInitializeRejectsLegacyOpenCvModelWithoutCallingStore()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        parameters["modelPath"] = Path.Combine(tempDirectory.Path, "template.bin");
+        parameters["modelVersion"] = "1.0";
+        parameters["templateWidth"] = "30";
+        parameters["templateHeight"] = "20";
+        parameters["templatePixels"] = Convert.ToBase64String([1, 2, 3, 4]);
+        Directory.CreateDirectory(tempDirectory.Path);
+        File.WriteAllBytes(parameters["modelPath"], [1, 2, 3, 4]);
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var store = new RecordingTemplateModelStore();
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            RecordingTemplateMatchingService.Successful(),
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60),
+            store);
+
+        await InvokeTaskMethodAsync(viewModel, "InitializeAsync", CancellationToken.None);
+
+        Assert.False(GetProperty<bool>(viewModel, "HasLearnedTemplateModel"));
+        Assert.Empty(store.Resolutions);
+    }
+
+    [Fact]
+    public async Task HalconInitializeWithMissingOwnerFailsBeforeStoreResolution()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        foreach (var parameter in CreateCompleteHalconLearnedState())
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var store = new RecordingTemplateModelStore();
+        var viewModel = new TemplateLocateToolDialogViewModel(
+            tool,
+            Array.Empty<RoiChoiceItem>(),
+            Array.Empty<RoiDefinition>(),
+            "Display flow",
+            CreateFrame(80, 60),
+            new RuntimePaths(tempDirectory.Path),
+            new NullAppLogService(),
+            null,
+            null,
+            RecordingTemplateMatchingService.Successful(),
+            store,
+            NoOpTemplateModelResourceManager.Instance);
+
+        await InvokeTaskMethodAsync(viewModel, "InitializeAsync", CancellationToken.None);
+
+        Assert.False(GetProperty<bool>(viewModel, "HasLearnedTemplateModel"));
+        Assert.Empty(store.Resolutions);
+        Assert.Contains(TemplateMatchingDiagnosticCodes.ConfigInvalidParameter, viewModel.StatusText);
+    }
+
+    [Theory]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    public async Task HalconLearnWithAnyMissingOwnerIdFailsBeforeService(
+        bool missingRecipeId,
+        bool missingFlowId,
+        bool missingToolId)
+    {
+        using var tempDirectory = new TempDirectory();
+        var tool = CreateTool(
+            VisionToolKind.TemplateLocate,
+            CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single));
+        if (missingToolId)
+        {
+            tool.Id = string.Empty;
+        }
+
+        var recipeId = missingRecipeId ? string.Empty : "recipe";
+        var flowId = missingFlowId ? string.Empty : "flow";
+        var service = new RecordingTemplateMatchingService();
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe(recipeId, flowId, tool),
+            CreateFrame(80, 60));
+        var before = viewModel.PendingParameters.ToArray();
+
+        await viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+
+        Assert.Empty(service.LearningRequests);
+        Assert.Equal(before, viewModel.PendingParameters);
+        Assert.Contains(TemplateMatchingDiagnosticCodes.ConfigInvalidParameter, viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task SwitchingFromOpenCvToHalconResolvesStoreBeforeTrialRun()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        foreach (var parameter in CreateCompleteHalconLearnedState())
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        parameters[TemplateMatchingParameterCatalog.Engine] = TemplateMatchingEngine.OpenCv.ToString();
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var store = new RecordingTemplateModelStore
+        {
+            ResolveHandler = (_, _, _) => Task.FromResult(
+                new ResolvedTemplateModel("resolved/model.shm", "{}"u8.ToArray()))
+        };
+        var matchingService = new RecordingTemplateMatchingService();
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            matchingService,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60),
+            store);
+        await InvokeTaskMethodAsync(viewModel, "InitializeAsync", CancellationToken.None);
+        Assert.Empty(store.Resolutions);
+        viewModel.SelectedEngine = TemplateMatchingEngine.Halcon;
+
+        await viewModel.RunToolCommand.Execute(CancellationToken.None);
+
+        Assert.Single(store.Resolutions);
+        Assert.Empty(matchingService.LearningRequests);
+        Assert.Single(matchingService.MatchingRequests);
+    }
+
+    [Fact]
+    public async Task HalconResolveFailureBlocksTrialRunWithoutAutoLearning()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        foreach (var parameter in CreateCompleteHalconLearnedState())
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var store = new RecordingTemplateModelStore
+        {
+            ResolveHandler = (_, _, _) => Task.FromException<ResolvedTemplateModel>(
+                new TemplateModelStoreException(TemplateMatchingDiagnosticCodes.ModelChecksumMismatch))
+        };
+        var matchingService = new RecordingTemplateMatchingService();
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            matchingService,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60),
+            store);
+
+        await viewModel.RunToolCommand.Execute(CancellationToken.None);
+
+        Assert.Single(store.Resolutions);
+        Assert.Empty(matchingService.LearningRequests);
+        Assert.Empty(matchingService.MatchingRequests);
+        Assert.Contains(TemplateMatchingDiagnosticCodes.ModelChecksumMismatch, viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task RejectedHalconTrialShowsExplicitFirstRejectionReason()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        var learned = CreateCompleteHalconLearnedState();
+        foreach (var parameter in learned)
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var store = new RecordingTemplateModelStore
+        {
+            ResolveHandler = (_, _, _) => Task.FromResult(
+                new ResolvedTemplateModel("resolved/model.shm", "{}"u8.ToArray()))
+        };
+        var service = new RecordingTemplateMatchingService
+        {
+            MatchHandler = (request, _) => Task.FromResult(new TemplateMatchBatchResult(
+                TemplateMatchingEngine.Halcon,
+                InspectionOutcome.Ng,
+                false,
+                Array.Empty<TemplateMatchBatchCandidate>(),
+                new TemplateSearchRegion(0, 0, request.Frame.Width, request.Frame.Height),
+                "rejected",
+                false,
+                TemplateMatchingDiagnostics.Create(
+                    TemplateMatchingDiagnosticCodes.MatchOuterContourWeak)))
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60),
+            store);
+
+        await viewModel.RunToolCommand.Execute(CancellationToken.None);
+
+        Assert.Contains("首个拒绝", viewModel.StatusText);
+        Assert.Contains(TemplateMatchingDiagnosticCodes.MatchOuterContourWeak, viewModel.StatusText);
+        var rejectionOverlay = Assert.Single(
+            viewModel.PreviewOverlays,
+            overlay => overlay.Kind == VisionOverlayKind.Rectangle &&
+                       overlay.Label.Contains(
+                           TemplateMatchingDiagnosticCodes.MatchOuterContourWeak,
+                           StringComparison.Ordinal));
+        Assert.Equal(VisionOverlayState.Ng, rejectionOverlay.State);
+        Assert.Contains("首个拒绝", rejectionOverlay.Label);
+    }
+
+    [Fact]
+    public async Task FailedLearningKeepsPendingParametersUnchanged()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        parameters["operatorNote"] = "old";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = (_, _) => Task.FromResult(new TemplateLearningResult(
+                TemplateMatchingEngine.Halcon,
+                false,
+                new Dictionary<string, string> { ["operatorNote"] = "new" },
+                "failed",
+                TemplateMatchingDiagnostics.Create(TemplateMatchingDiagnosticCodes.ModelTemplateIncomplete)))
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+        var before = viewModel.PendingParameters.ToArray();
+
+        await viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+
+        Assert.Equal(before, viewModel.PendingParameters);
+    }
+
+    [Fact]
+    public async Task IncompleteSuccessfulHalconLearningFailsClosedWithoutPublishingOrMatching()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        parameters["operatorNote"] = "old";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = (_, _) => Task.FromResult(new TemplateLearningResult(
+                TemplateMatchingEngine.Halcon,
+                true,
+                new Dictionary<string, string>
+                {
+                    ["operatorNote"] = "new",
+                    ["halcon.modelPath"] = "incomplete/model.shm"
+                },
+                "learned",
+                null))
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+        var before = viewModel.PendingParameters.ToArray();
+
+        await viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+
+        Assert.Equal(before, viewModel.PendingParameters);
+        Assert.False(viewModel.HasLearnedTemplateModel);
+        Assert.Empty(service.MatchingRequests);
+        Assert.Contains(TemplateMatchingDiagnosticCodes.ModelMetadataInvalid, viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task HalconLearningResultAfterEngineSwitchDoesNotPublishOrAutoMatch()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<TemplateLearningResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = async (_, _) =>
+            {
+                entered.TrySetResult();
+                return await release.Task;
+            }
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+        var before = viewModel.PendingParameters.ToArray();
+        var learning = viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        viewModel.SelectedEngine = TemplateMatchingEngine.OpenCv;
+        release.TrySetResult(new TemplateLearningResult(
+            TemplateMatchingEngine.Halcon,
+            true,
+            CreateCompleteHalconLearnedState(),
+            "late",
+            null));
+        await learning.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(before, viewModel.PendingParameters);
+        Assert.False(viewModel.HasLearnedTemplateModel);
+        Assert.Empty(service.MatchingRequests);
+        Assert.Contains(TemplateMatchingDiagnosticCodes.ModelRelearnRequired, viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task HalconLearningResultAfterGenerationEditDoesNotClearRelearnOrPublish()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<TemplateLearningResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = async (_, _) =>
+            {
+                entered.TrySetResult();
+                return await release.Task;
+            }
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+        var before = viewModel.PendingParameters.ToArray();
+        var learning = viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        viewModel.HalconScaleMin = "0.91";
+        release.TrySetResult(new TemplateLearningResult(
+            TemplateMatchingEngine.Halcon,
+            true,
+            CreateCompleteHalconLearnedState(),
+            "late",
+            null));
+        await learning.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(before, viewModel.PendingParameters);
+        Assert.True(viewModel.RequiresRelearn);
+        Assert.Empty(service.MatchingRequests);
+        Assert.Contains(TemplateMatchingDiagnosticCodes.ModelRelearnRequired, viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task DialogCancellationPreventsLateLearningResultFromMerging()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        parameters["operatorNote"] = "old";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<TemplateLearningResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = async (_, _) =>
+            {
+                entered.TrySetResult();
+                return await release.Task;
+            }
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+        var before = viewModel.PendingParameters.ToArray();
+        var execution = viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        try
+        {
+            InvokeVoidMethod(viewModel, "CancelPendingOperations");
+        }
+        finally
+        {
+            release.TrySetResult(new TemplateLearningResult(
+                TemplateMatchingEngine.Halcon,
+                true,
+                new Dictionary<string, string> { ["operatorNote"] = "late" },
+                "late",
+                null));
+        }
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution);
+        Assert.Equal(before, viewModel.PendingParameters);
+    }
+
+    [Fact]
+    public async Task CancelAndDrainWaitsForInFlightNativeOperationAndReportsDeferredCancellation()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<TemplateLearningResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = async (_, _) =>
+            {
+                entered.TrySetResult();
+                return await release.Task;
+            }
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+        var learning = viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var draining = viewModel.CancelAndDrainAsync();
+
+        Assert.False(draining.IsCompleted);
+        Assert.Contains("已请求取消", viewModel.StatusText);
+        Assert.Contains("安全返回", viewModel.StatusText);
+        release.TrySetResult(new TemplateLearningResult(
+            TemplateMatchingEngine.Halcon,
+            true,
+            CreateCompleteHalconLearnedState(),
+            "late",
+            null));
+        await draining.WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => learning);
+    }
+
+    [Fact]
+    public async Task DialogCancellationCancelsBlockedReferenceCaptureDuringSavePreparation()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.ExactCount);
+        parameters["input:PositionInput:toolId"] = "position-source";
+        parameters["input:PositionInput:portKey"] = "PositionOutput";
+        var tool = CreateTool(VisionToolKind.MultiTargetMatch, parameters);
+        var source = new VisionToolDefinition
+        {
+            Id = "position-source",
+            Kind = VisionToolKind.TemplateLocate
+        };
+        var recipe = new Recipe
+        {
+            Id = "recipe",
+            CurrentFlowId = "flow",
+            Flows =
+            [
+                new VisionFlowDefinition
+                {
+                    Id = "flow",
+                    Tools = [source, tool.ToDefinition()]
+                }
+            ]
+        };
+        var pipeline = new BlockingVisionPipeline();
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            RecordingTemplateMatchingService.Successful(),
+            recipe,
+            CreateFrame(80, 60),
+            pipeline: pipeline);
+
+        var preparation = viewModel.PrepareToCloseAsync();
+        await pipeline.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.CancelPendingOperations();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => preparation.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.True(pipeline.LastToken.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task MultiTargetHalconPreviewUsesSharedFactoryAndShowsEveryGateMetric()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.ExactCount);
+        foreach (var parameter in CreateCompleteHalconLearnedState())
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        var tool = CreateTool(VisionToolKind.MultiTargetMatch, parameters);
+        var store = new RecordingTemplateModelStore
+        {
+            ResolveHandler = (_, _, _) => Task.FromResult(
+                new ResolvedTemplateModel("resolved/model.shm", "{}"u8.ToArray()))
+        };
+        var service = new RecordingTemplateMatchingService
+        {
+            MatchHandler = (request, _) => Task.FromResult(new TemplateMatchBatchResult(
+                TemplateMatchingEngine.Halcon,
+                InspectionOutcome.Ok,
+                true,
+                [
+                    new TemplateMatchBatchCandidate(
+                        new Pose2D(40, 30, 15) { Scale = 1.05 },
+                        0.923,
+                        30,
+                        20,
+                        Array.Empty<IReadOnlyList<Point2D>>(),
+                        [
+                            [
+                                new Point2D(25, 20),
+                                new Point2D(55, 20),
+                                new Point2D(55, 40),
+                                new Point2D(25, 40)
+                            ]
+                        ])
+                    {
+                        OuterCoverage = 0.91,
+                        InnerCoverage = 0.82,
+                        EdgeDistanceP95Px = 1.75,
+                        PolarityAgreement = 0.88
+                    }
+                ],
+                new TemplateSearchRegion(0, 0, request.Frame.Width, request.Frame.Height),
+                "matched",
+                false))
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60),
+            store);
+
+        await viewModel.RunToolCommand.Execute(CancellationToken.None);
+
+        var cross = Assert.Single(
+            viewModel.PreviewOverlays,
+            overlay => overlay.Kind == VisionOverlayKind.Cross);
+        Assert.Contains("#1", cross.Label);
+        Assert.Contains("S=0.923", cross.Label);
+        Assert.Contains("O=0.910", cross.Label);
+        Assert.Contains("I=0.820", cross.Label);
+        Assert.Contains("P95=1.750", cross.Label);
+        Assert.Contains("P=0.880", cross.Label);
+    }
+
+    [Fact]
+    public async Task OpenCvLearningPublishesUniqueFileWithoutOverwritingActiveModel()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        parameters[TemplateMatchingParameterCatalog.Engine] = TemplateMatchingEngine.OpenCv.ToString();
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var runtimePaths = new RuntimePaths(tempDirectory.Path);
+        var resourceDirectory = Path.Combine(
+            runtimePaths.TemplateResourceDirectory,
+            RuntimePaths.SanitizePathSegment(tool.Id));
+        Directory.CreateDirectory(resourceDirectory);
+        var activePath = Path.Combine(resourceDirectory, "template.bin");
+        var activeBytes = new byte[] { 1, 2, 3, 4 };
+        File.WriteAllBytes(activePath, activeBytes);
+        parameters["modelPath"] = activePath;
+        parameters["modelVersion"] = "1.0";
+        tool.ParametersText = string.Join("; ", parameters.Select(parameter => $"{parameter.Key}={parameter.Value}"));
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = (_, _) => Task.FromResult(new TemplateLearningResult(
+                TemplateMatchingEngine.OpenCv,
+                true,
+                new Dictionary<string, string>
+                {
+                    ["templateWidth"] = "30",
+                    ["templateHeight"] = "20",
+                    ["templatePixels"] = Convert.ToBase64String([5, 6, 7, 8])
+                },
+                "learned",
+                null))
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+
+        await viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+
+        Assert.Equal(activeBytes, File.ReadAllBytes(activePath));
+        Assert.NotEqual(activePath, viewModel.PendingParameters["modelPath"]);
+        Assert.True(File.Exists(viewModel.PendingParameters["modelPath"]));
+    }
+
+    [Fact]
+    public async Task OpenCvPersistenceFailureDoesNotReactivateOldModelWithNewPixels()
+    {
+        using var tempDirectory = new TempDirectory();
+        Directory.CreateDirectory(tempDirectory.Path);
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        parameters[TemplateMatchingParameterCatalog.Engine] = TemplateMatchingEngine.OpenCv.ToString();
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var oldModelPath = Path.Combine(tempDirectory.Path, "old-model.bin");
+        File.WriteAllBytes(oldModelPath, [1, 2, 3, 4]);
+        parameters["modelPath"] = oldModelPath;
+        parameters["modelVersion"] = "1.0";
+        tool.ParametersText = string.Join("; ", parameters.Select(parameter => $"{parameter.Key}={parameter.Value}"));
+        var runtimePaths = new RuntimePaths(tempDirectory.Path);
+        Directory.CreateDirectory(runtimePaths.TemplateResourceDirectory);
+        File.WriteAllText(
+            Path.Combine(
+                runtimePaths.TemplateResourceDirectory,
+                RuntimePaths.SanitizePathSegment(tool.Id)),
+            "blocks directory creation");
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = (_, _) => Task.FromResult(new TemplateLearningResult(
+                TemplateMatchingEngine.OpenCv,
+                true,
+                new Dictionary<string, string>
+                {
+                    ["templateWidth"] = "30",
+                    ["templateHeight"] = "20",
+                    ["templatePixels"] = Convert.ToBase64String([5, 6, 7, 8])
+                },
+                "learned",
+                null))
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+        var before = viewModel.PendingParameters.ToArray();
+
+        await viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+
+        Assert.Equal(before, viewModel.PendingParameters);
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, File.ReadAllBytes(oldModelPath));
+        Assert.Contains("failed", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LateHalconResolveCannotPublishLearnedStateAfterEngineSwitch()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        foreach (var parameter in CreateCompleteHalconLearnedState())
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<ResolvedTemplateModel>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new RecordingTemplateModelStore
+        {
+            ResolveHandler = async (_, _, _) =>
+            {
+                entered.TrySetResult();
+                return await release.Task;
+            }
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            RecordingTemplateMatchingService.Successful(),
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60),
+            store);
+        var initialization = InvokeTaskMethodAsync(viewModel, "InitializeAsync", CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.SelectedEngine = TemplateMatchingEngine.OpenCv;
+
+        release.TrySetResult(new ResolvedTemplateModel("resolved/model.shm", "{}"u8.ToArray()));
+        await initialization;
+
+        Assert.Equal(TemplateMatchingEngine.OpenCv, viewModel.SelectedEngine);
+        Assert.False(viewModel.HasLearnedTemplateModel);
+    }
+
+    [Fact]
+    public async Task LateHalconResolveCannotPublishLearnedStateAfterGenerationEdit()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        foreach (var parameter in CreateCompleteHalconLearnedState())
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<ResolvedTemplateModel>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new RecordingTemplateModelStore
+        {
+            ResolveHandler = async (_, _, _) =>
+            {
+                entered.TrySetResult();
+                return await release.Task;
+            }
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            RecordingTemplateMatchingService.Successful(),
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60),
+            store);
+        var initialization = InvokeTaskMethodAsync(viewModel, "InitializeAsync", CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        viewModel.HalconScaleMin = "0.91";
+        release.TrySetResult(new ResolvedTemplateModel("resolved/model.shm", "{}"u8.ToArray()));
+        await initialization;
+
+        Assert.True(viewModel.RequiresRelearn);
+        Assert.False(viewModel.HasLearnedTemplateModel);
+        Assert.Contains(TemplateMatchingDiagnosticCodes.ModelRelearnRequired, viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task HalconResetRemovesOnlyKnownHalconStateAndRetiresStableOwner()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        foreach (var parameter in CreateCompleteHalconLearnedState())
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        parameters["halcon.futureExtension"] = "keep";
+        parameters["modelPath"] = "opencv/model.bin";
+        parameters["modelVersion"] = "1.0";
+        parameters["templateImagePng"] = "opencv-preview";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var resources = new RecordingTemplateModelResourceManager();
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            RecordingTemplateMatchingService.Successful(),
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60),
+            modelResources: resources);
+
+        await GetProperty<IAsyncCommand>(viewModel, "ResetTemplateCommand")
+            .ExecuteAsync(null, CancellationToken.None);
+
+        Assert.All(TemplateModelParameterCodec.Keys, key => Assert.False(viewModel.PendingParameters.ContainsKey(key)));
+        Assert.Equal("keep", viewModel.PendingParameters["halcon.futureExtension"]);
+        Assert.Equal("opencv/model.bin", viewModel.PendingParameters["modelPath"]);
+        Assert.Equal("1.0", viewModel.PendingParameters["modelVersion"]);
+        Assert.Equal("opencv-preview", viewModel.PendingParameters["templateImagePng"]);
+        Assert.Equal(
+            new TemplateModelOwner("recipe", "flow", tool.Id),
+            Assert.Single(resources.RetiredOwners));
+    }
+
+    [Fact]
+    public async Task OpenCvResetRemovesLegacyModelAndPreservesCompleteHalconState()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        var halconState = CreateCompleteHalconLearnedState();
+        foreach (var parameter in halconState)
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        parameters[TemplateMatchingParameterCatalog.Engine] = TemplateMatchingEngine.OpenCv.ToString();
+        parameters["modelPath"] = "opencv/model.bin";
+        parameters["modelVersion"] = "1.0";
+        parameters["templatePixels"] = Convert.ToBase64String([1, 2, 3, 4]);
+        parameters["templateImagePng"] = "opencv-preview";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var resources = new RecordingTemplateModelResourceManager();
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            RecordingTemplateMatchingService.Successful(),
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60),
+            modelResources: resources);
+
+        await GetProperty<IAsyncCommand>(viewModel, "ResetTemplateCommand")
+            .ExecuteAsync(null, CancellationToken.None);
+
+        Assert.False(viewModel.PendingParameters.ContainsKey("modelPath"));
+        Assert.False(viewModel.PendingParameters.ContainsKey("modelVersion"));
+        Assert.False(viewModel.PendingParameters.ContainsKey("templatePixels"));
+        Assert.False(viewModel.PendingParameters.ContainsKey("templateImagePng"));
+        foreach (var parameter in halconState)
+        {
+            Assert.Equal(parameter.Value, viewModel.PendingParameters[parameter.Key]);
+        }
+
+        Assert.Single(resources.RetiredOwners);
+    }
+
+    [Fact]
+    public async Task SuccessfulHalconLearningShowsNeutralPreviewWithoutPersistingIt()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var preview = new TemplateLearningPreview(
+            new Point2D(40, 30),
+            [new Point2D(-10, -5), new Point2D(10, -5), new Point2D(10, 5)],
+            [[new Point2D(-2, 0), new Point2D(2, 0)]]);
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = (_, _) => Task.FromResult(new TemplateLearningResult(
+                TemplateMatchingEngine.Halcon,
+                true,
+                CreateCompleteHalconLearnedState(),
+                "learned",
+                null)
+            {
+                Preview = preview
+            })
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+
+        await viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+
+        Assert.Contains(viewModel.PreviewOverlays, item => item.Label == "学习外轮廓");
+        Assert.Contains(viewModel.PreviewOverlays, item => item.Label.StartsWith("学习内部特征", StringComparison.Ordinal));
+        Assert.Contains(viewModel.PreviewOverlays, item => item.Label == "模型原点");
+        Assert.DoesNotContain(viewModel.PendingParameters.Keys, key =>
+            key.Contains("preview", StringComparison.OrdinalIgnoreCase) &&
+            key.StartsWith("halcon.", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task HalconLearningPreviewIsHiddenWhileOpenCvIsActive()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = (_, _) => Task.FromResult(new TemplateLearningResult(
+                TemplateMatchingEngine.Halcon,
+                true,
+                CreateCompleteHalconLearnedState(),
+                "learned",
+                null)
+            {
+                Preview = new TemplateLearningPreview(
+                    new Point2D(40, 30),
+                    [new Point2D(-5, 0), new Point2D(5, 0)],
+                    Array.Empty<IReadOnlyList<Point2D>>())
+            })
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+        await viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+        Assert.Contains(viewModel.PreviewOverlays, item => item.Label == "学习外轮廓");
+
+        viewModel.SelectedEngine = TemplateMatchingEngine.OpenCv;
+
+        Assert.DoesNotContain(viewModel.PreviewOverlays, item => item.Label == "学习外轮廓");
+        Assert.DoesNotContain(viewModel.PreviewOverlays, item => item.Label == "模型原点");
+    }
+
+    [Fact]
+    public async Task ResetWithMissingOwnerDoesNotCallRetirementWithEmptyIds()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        foreach (var parameter in CreateCompleteHalconLearnedState())
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var resources = new RecordingTemplateModelResourceManager();
+        var viewModel = new TemplateLocateToolDialogViewModel(
+            tool,
+            Array.Empty<RoiChoiceItem>(),
+            Array.Empty<RoiDefinition>(),
+            "Display flow",
+            CreateFrame(80, 60),
+            new RuntimePaths(tempDirectory.Path),
+            new NullAppLogService(),
+            null,
+            null,
+            RecordingTemplateMatchingService.Successful(),
+            NoOpTemplateModelStore.Instance,
+            resources);
+
+        await viewModel.ResetTemplateCommand.Execute(CancellationToken.None);
+
+        Assert.Empty(resources.RetiredOwners);
+        Assert.Contains(TemplateMatchingDiagnosticCodes.ConfigInvalidParameter, viewModel.StatusText);
+    }
+
     private static bool CompleteQueuedRun(
         QueuedSynchronizationContext queuedContext,
         SynchronizationContext? previousContext,
@@ -1246,15 +2236,20 @@ public sealed class TemplateLocateToolDialogViewModelTests
         TempDirectory tempDirectory,
         ITemplateMatchingService service,
         Recipe recipe,
-        ImageFrame frame)
+        ImageFrame frame,
+        ITemplateModelStore? modelStore = null,
+        ITemplateModelResourceManager? modelResources = null,
+        IVisionPipeline? pipeline = null)
     {
         var constructor = typeof(TemplateLocateToolDialogViewModel)
             .GetConstructors()
             .SingleOrDefault(candidate =>
             {
                 var parameters = candidate.GetParameters();
-                return parameters.Length == 10 &&
-                       parameters[^1].ParameterType == typeof(ITemplateMatchingService);
+                return parameters.Length == 12 &&
+                       parameters[^3].ParameterType == typeof(ITemplateMatchingService) &&
+                       parameters[^2].ParameterType == typeof(ITemplateModelStore) &&
+                       parameters[^1].ParameterType == typeof(ITemplateModelResourceManager);
             });
         Assert.NotNull(constructor);
         return Assert.IsType<TemplateLocateToolDialogViewModel>(constructor.Invoke(
@@ -1267,9 +2262,30 @@ public sealed class TemplateLocateToolDialogViewModelTests
             new RuntimePaths(tempDirectory.Path),
             new NullAppLogService(),
             recipe,
-            null,
-            service
+            pipeline,
+            service,
+            modelStore ?? NoOpTemplateModelStore.Instance,
+            modelResources ?? NoOpTemplateModelResourceManager.Instance
         ]));
+    }
+
+    private sealed class BlockingVisionPipeline : IVisionPipeline
+    {
+        public TaskCompletionSource Entered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public CancellationToken LastToken { get; private set; }
+
+        public async Task<VisionPipelineResult> ExecuteAsync(
+            Recipe recipe,
+            ImageFrame frame,
+            CancellationToken cancellationToken = default)
+        {
+            LastToken = cancellationToken;
+            Entered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("The blocking pipeline should only finish by cancellation.");
+        }
     }
 
     private static VisionToolItem CreateTool(
@@ -1402,6 +2418,34 @@ public sealed class TemplateLocateToolDialogViewModelTests
         return property;
     }
 
+    private static async Task InvokeTaskMethodAsync(
+        object target,
+        string methodName,
+        CancellationToken cancellationToken)
+    {
+        var method = target.GetType().GetMethod(
+            methodName,
+            BindingFlags.Instance | BindingFlags.Public,
+            binder: null,
+            [typeof(CancellationToken)],
+            modifiers: null);
+        Assert.NotNull(method);
+        var task = Assert.IsAssignableFrom<Task>(method.Invoke(target, [cancellationToken]));
+        await task;
+    }
+
+    private static void InvokeVoidMethod(object target, string methodName)
+    {
+        var method = target.GetType().GetMethod(
+            methodName,
+            BindingFlags.Instance | BindingFlags.Public,
+            binder: null,
+            Type.EmptyTypes,
+            modifiers: null);
+        Assert.NotNull(method);
+        method.Invoke(target, null);
+    }
+
     private static T GetProperty<T>(object target, string propertyName)
     {
         return (T)RequireProperty(target.GetType(), propertyName).GetValue(target)!;
@@ -1517,7 +2561,9 @@ public sealed class TemplateLocateToolDialogViewModelTests
             new NullAppLogService(),
             null,
             null,
-            TemplateMatchingService.CreateLegacyOnly());
+            TemplateMatchingService.CreateLegacyOnly(),
+            NoOpTemplateModelStore.Instance,
+            NoOpTemplateModelResourceManager.Instance);
     }
 
     private sealed class RecordingTemplateMatchingService : ITemplateMatchingService
@@ -1541,7 +2587,7 @@ public sealed class TemplateLocateToolDialogViewModelTests
                 LearnHandler = (_, _) => Task.FromResult(new TemplateLearningResult(
                     TemplateMatchingEngine.Halcon,
                     true,
-                    new Dictionary<string, string> { ["halcon.learnedMarker"] = "learned" },
+                    CreateCompleteHalconLearnedState(),
                     "learned",
                     null))
             };
@@ -1557,7 +2603,7 @@ public sealed class TemplateLocateToolDialogViewModelTests
                    ?? Task.FromResult(new TemplateLearningResult(
                        TemplateMatchingEngine.Halcon,
                        true,
-                       new Dictionary<string, string>(),
+                       CreateCompleteHalconLearnedState(),
                        "learned",
                        null));
         }
@@ -1580,6 +2626,95 @@ public sealed class TemplateLocateToolDialogViewModelTests
         public ValueTask DisposeAsync()
         {
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingTemplateModelStore : ITemplateModelStore
+    {
+        public Func<TemplateModelOwner, TemplateModelReference, CancellationToken, Task<ResolvedTemplateModel>>?
+            ResolveHandler
+        { get; init; }
+
+        public List<(TemplateModelOwner Owner, TemplateModelReference Reference, CancellationToken Token)> Resolutions
+        {
+            get;
+        } = new();
+
+        public Task<ResolvedTemplateModel> ResolveAsync(
+            TemplateModelOwner owner,
+            TemplateModelReference reference,
+            CancellationToken cancellationToken)
+        {
+            Resolutions.Add((owner, reference, cancellationToken));
+            return ResolveHandler?.Invoke(owner, reference, cancellationToken)
+                   ?? throw new NotSupportedException();
+        }
+
+        public Task<TemplateModelWriteSession> BeginWriteAsync(
+            TemplateModelOwner owner,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<TemplateModelReference> CommitAsync(
+            TemplateModelWriteSession session,
+            ReadOnlyMemory<byte> metadataJson,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<TemplateModelReference> CopyGenerationAsync(
+            TemplateModelOwner sourceOwner,
+            TemplateModelReference sourceReference,
+            TemplateModelOwner targetOwner,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task DeleteGenerationAsync(
+            TemplateModelOwner owner,
+            TemplateModelReference reference,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task DeleteOwnerResourcesAsync(
+            TemplateModelOwner owner,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class RecordingTemplateModelResourceManager : ITemplateModelResourceManager
+    {
+        public List<TemplateModelOwner> RetiredOwners { get; } = new();
+
+        public Task RetireToolAsync(
+            TemplateModelOwner owner,
+            CancellationToken cancellationToken)
+        {
+            RetiredOwners.Add(owner);
+            return Task.CompletedTask;
+        }
+
+        public Task<TemplateRecipeCopySession> PrepareRecipeCopyAsync(
+            Recipe source,
+            string newRecipeId,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task DeleteRecipeResourcesAsync(
+            Recipe deletedRecipe,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
         }
     }
 
@@ -1679,5 +2814,92 @@ public sealed class TemplateLocateToolDialogViewModelTests
                 System.IO.Directory.Delete(Path, recursive: true);
             }
         }
+    }
+}
+
+internal sealed class NoOpTemplateModelStore : ITemplateModelStore
+{
+    public static NoOpTemplateModelStore Instance { get; } = new();
+
+    private NoOpTemplateModelStore()
+    {
+    }
+
+    public Task<TemplateModelWriteSession> BeginWriteAsync(
+        TemplateModelOwner owner,
+        CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException();
+    }
+
+    public Task<TemplateModelReference> CommitAsync(
+        TemplateModelWriteSession session,
+        ReadOnlyMemory<byte> metadataJson,
+        CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException();
+    }
+
+    public Task<ResolvedTemplateModel> ResolveAsync(
+        TemplateModelOwner owner,
+        TemplateModelReference reference,
+        CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException();
+    }
+
+    public Task<TemplateModelReference> CopyGenerationAsync(
+        TemplateModelOwner sourceOwner,
+        TemplateModelReference sourceReference,
+        TemplateModelOwner targetOwner,
+        CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException();
+    }
+
+    public Task DeleteGenerationAsync(
+        TemplateModelOwner owner,
+        TemplateModelReference reference,
+        CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException();
+    }
+
+    public Task DeleteOwnerResourcesAsync(
+        TemplateModelOwner owner,
+        CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException();
+    }
+}
+
+internal sealed class NoOpTemplateModelResourceManager : ITemplateModelResourceManager
+{
+    public static NoOpTemplateModelResourceManager Instance { get; } = new();
+
+    private NoOpTemplateModelResourceManager()
+    {
+    }
+
+    public Task<TemplateRecipeCopySession> PrepareRecipeCopyAsync(
+        Recipe source,
+        string newRecipeId,
+        CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException();
+    }
+
+    public Task RetireToolAsync(
+        TemplateModelOwner owner,
+        CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteRecipeResourcesAsync(
+        Recipe deletedRecipe,
+        CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException();
     }
 }
