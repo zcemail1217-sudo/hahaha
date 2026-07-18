@@ -48,6 +48,11 @@ internal sealed class HalconTestHostRunner
 
         return command.Name switch
         {
+            HalconTestHostCommands.Benchmark => await RunBenchmarkAsync(
+                preflight,
+                command.Iterations!.Value,
+                command.OutputPath!,
+                cancellationToken).ConfigureAwait(false),
             HalconTestHostCommands.Probe => await RunProbeAsync(
                 preflight,
                 command.ExpectedVersion!,
@@ -68,6 +73,87 @@ internal sealed class HalconTestHostRunner
                 cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"Unsupported TestHost command '{command.Name}'.")
         };
+    }
+
+    private static async Task<HalconTestHostReport> RunBenchmarkAsync(
+        RuntimePreflightResult preflight,
+        int iterations,
+        string outputPath,
+        CancellationToken cancellationToken)
+    {
+        return await RunTemporaryLearningCommandAsync(
+            preflight,
+            HalconTestHostCommands.Benchmark,
+            async (store, owner) =>
+            {
+                var runner = new HalconBenchmarkRunner(
+                    store,
+                    owner,
+                    preflight.RuntimeRoot!,
+                    preflight.RuntimeVersion!);
+                HalconBenchmarkRunResult benchmark = await runner.RunAsync(
+                    iterations,
+                    cancellationToken).ConfigureAwait(false);
+                if (benchmark.Document is null)
+                {
+                    return Failure(
+                        benchmark.Code ?? "BENCHMARK_FAILED",
+                        benchmark.Stage ?? HalconTestHostCommands.Benchmark,
+                        preflight.RuntimeVersion,
+                        benchmark.TechnicalSummary ?? "HALCON benchmark did not produce a report.");
+                }
+
+                try
+                {
+                    await HalconBenchmarkOutputWriter.WriteAsync(
+                        benchmark.Document,
+                        outputPath,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (
+                    exception is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
+                {
+                    return Failure(
+                        "BENCHMARK_OUTPUT_INVALID",
+                        "benchmark-output",
+                        preflight.RuntimeVersion,
+                        $"Benchmark output could not be committed atomically; " +
+                        $"ExceptionType={exception.GetType().Name}.");
+                }
+
+                if (!benchmark.Document.IsSuccessful)
+                {
+                    return Failure(
+                        "BENCHMARK_INCOMPLETE",
+                        HalconTestHostCommands.Benchmark,
+                        preflight.RuntimeVersion,
+                        CreateBenchmarkSummary(benchmark.Document, outputPath));
+                }
+
+                return Success(
+                    HalconTestHostCommands.Benchmark,
+                    preflight.RuntimeVersion!,
+                    CreateBenchmarkSummary(benchmark.Document, outputPath));
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string CreateBenchmarkSummary(
+        HalconBenchmarkDocument document,
+        string outputPath)
+    {
+        int operatorFailures = document.ColdLoad.OperatorFailures +
+                               document.WarmSingle.OperatorFailures +
+                               document.Targets1.OperatorFailures +
+                               document.Targets3.OperatorFailures +
+                               document.Targets5.OperatorFailures;
+        return $"HALCON benchmark completed; iterations={document.Iterations}; " +
+               $"coldLoadSamples={document.ColdLoad.ValidSamples}; " +
+               $"warmSingleSamples={document.WarmSingle.ValidSamples}; " +
+               $"targets1Samples={document.Targets1.ValidSamples}; " +
+               $"targets3Samples={document.Targets3.ValidSamples}; " +
+               $"targets5Samples={document.Targets5.ValidSamples}; " +
+               $"operatorFailures={operatorFailures}; output={outputPath}.";
     }
 
     private static async Task<HalconTestHostReport> RunProbeAsync(

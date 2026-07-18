@@ -5,6 +5,8 @@ namespace VisionStation.Vision.Halcon.TestHost;
 
 public static class HalconTestHostCommands
 {
+    public const string Benchmark = "benchmark";
+
     public const string Probe = "probe";
 
     public const string LicenseSmoke = "license-smoke";
@@ -32,6 +34,10 @@ public sealed record HalconTestHostCommand(
     string? WorkingDirectory,
     int? Milliseconds)
 {
+    public int? Iterations { get; init; }
+
+    public string? OutputPath { get; init; }
+
     public string? SecondRuntimeRoot { get; init; }
 
     public bool CorruptModel { get; init; }
@@ -48,6 +54,8 @@ public sealed record HalconTestHostReport(
 
 public static class HalconTestHostCommandLine
 {
+    private const int MinimumBenchmarkIterations = 1;
+    private const int MaximumBenchmarkIterations = 1000;
     private const int MinimumTimeoutMilliseconds = 100;
     private const int MaximumTimeoutMilliseconds = 60000;
 
@@ -90,6 +98,8 @@ public static class HalconTestHostCommandLine
         string? secondRuntimeRoot = null;
         var corruptModel = false;
         int? cancelAfterMilliseconds = null;
+        int? iterations = null;
+        string? outputPath = null;
         HashSet<string> allowedOptions = new(StringComparer.Ordinal)
         {
             "--root"
@@ -97,6 +107,38 @@ public static class HalconTestHostCommandLine
 
         switch (name)
         {
+            case HalconTestHostCommands.Benchmark:
+                allowedOptions.Add("--iterations");
+                allowedOptions.Add("--output");
+                if (!TryReadRequired(options!, "--iterations", out string rawIterations) ||
+                    !int.TryParse(
+                        rawIterations,
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out int parsedIterations) ||
+                    parsedIterations < MinimumBenchmarkIterations ||
+                    parsedIterations > MaximumBenchmarkIterations)
+                {
+                    failure = Invalid(
+                        $"Option '--iterations' must be an integer from {MinimumBenchmarkIterations} to {MaximumBenchmarkIterations}.");
+                    return false;
+                }
+
+                if (!TryReadRequired(options!, "--output", out outputPath))
+                {
+                    failure = Invalid("Option '--output' is required for 'benchmark'.");
+                    return false;
+                }
+
+                if (!HasJsonExtension(outputPath))
+                {
+                    failure = Invalid("Option '--output' must name a '.json' file.");
+                    return false;
+                }
+
+                iterations = parsedIterations;
+                break;
+
             case HalconTestHostCommands.Probe:
                 allowedOptions.Add("--expected-version");
                 allowedOptions.Add("--second-root");
@@ -192,6 +234,8 @@ public static class HalconTestHostCommandLine
             workingDirectory,
             milliseconds)
         {
+            Iterations = iterations,
+            OutputPath = outputPath,
             SecondRuntimeRoot = secondRuntimeRoot,
             CorruptModel = corruptModel,
             CancelAfterMilliseconds = cancelAfterMilliseconds
@@ -201,7 +245,8 @@ public static class HalconTestHostCommandLine
 
     private static bool IsKnownCommand(string name)
     {
-        return string.Equals(name, HalconTestHostCommands.Probe, StringComparison.Ordinal) ||
+        return string.Equals(name, HalconTestHostCommands.Benchmark, StringComparison.Ordinal) ||
+               string.Equals(name, HalconTestHostCommands.Probe, StringComparison.Ordinal) ||
                string.Equals(name, HalconTestHostCommands.LicenseSmoke, StringComparison.Ordinal) ||
                string.Equals(name, HalconTestHostCommands.ModelRoundtrip, StringComparison.Ordinal) ||
                string.Equals(name, HalconTestHostCommands.Timeout, StringComparison.Ordinal);
@@ -256,6 +301,22 @@ public static class HalconTestHostCommandLine
 
         value = string.Empty;
         return false;
+    }
+
+    private static bool HasJsonExtension(string path)
+    {
+        try
+        {
+            return string.Equals(
+                Path.GetExtension(path),
+                ".json",
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
     }
 
     private static HalconTestHostReport Invalid(string summary)
