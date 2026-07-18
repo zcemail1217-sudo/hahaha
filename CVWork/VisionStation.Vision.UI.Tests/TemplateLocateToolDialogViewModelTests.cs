@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Reflection;
 using System.Text.Json;
+using Prism.Commands;
 using VisionStation.Domain;
 using VisionStation.Infrastructure;
 using VisionStation.Vision;
@@ -13,6 +15,27 @@ namespace VisionStation.Vision.UI.Tests;
 
 public sealed class TemplateLocateToolDialogViewModelTests
 {
+    private static readonly string[] HalconEditorPropertyNames =
+    [
+        "HalconAngleStartDeg",
+        "HalconAngleExtentDeg",
+        "HalconScaleMin",
+        "HalconScaleMax",
+        "HalconCandidateMinScore",
+        "HalconOuterCoverageMin",
+        "HalconInnerCoverageMin",
+        "HalconEdgeTolerancePx",
+        "HalconPolarityAgreementMin",
+        "HalconCandidateMaxOverlap",
+        "HalconMaxOverlap",
+        "HalconGreediness",
+        "HalconSubPixel",
+        "HalconNumLevels",
+        "HalconOperatorTimeoutMs",
+        "HalconCandidateLimit",
+        "HalconExpectedCount"
+    ];
+
     [Theory]
     [InlineData(VisionToolKind.TemplateLocate, "ScaleOutput")]
     [InlineData(VisionToolKind.MultiTargetMatch, "ScalesOutput")]
@@ -118,7 +141,10 @@ public sealed class TemplateLocateToolDialogViewModelTests
             "Flow",
             frame,
             new RuntimePaths(tempDirectory.Path),
-            new NullAppLogService());
+            new NullAppLogService(),
+            null,
+            null,
+            TemplateMatchingService.CreateLegacyOnly());
 
         viewModel.LearnTemplateCommand.Execute();
 
@@ -165,7 +191,10 @@ public sealed class TemplateLocateToolDialogViewModelTests
             "Flow",
             CreateFrame(320, 240),
             new RuntimePaths(tempDirectory.Path),
-            new NullAppLogService());
+            new NullAppLogService(),
+            null,
+            null,
+            TemplateMatchingService.CreateLegacyOnly());
 
         viewModel.CreateTemplateRoiCommand.Execute();
         viewModel.PlaceRoiCommand.Execute(new Point2D(120, 100));
@@ -196,7 +225,10 @@ public sealed class TemplateLocateToolDialogViewModelTests
             "Flow",
             frame,
             new RuntimePaths(tempDirectory.Path),
-            new NullAppLogService());
+            new NullAppLogService(),
+            null,
+            null,
+            TemplateMatchingService.CreateLegacyOnly());
 
         viewModel.RunToolCommand.Execute();
 
@@ -232,7 +264,10 @@ public sealed class TemplateLocateToolDialogViewModelTests
             "Flow",
             frame,
             new RuntimePaths(tempDirectory.Path),
-            new NullAppLogService());
+            new NullAppLogService(),
+            null,
+            null,
+            TemplateMatchingService.CreateLegacyOnly());
 
         viewModel.RunToolCommand.Execute();
 
@@ -268,7 +303,10 @@ public sealed class TemplateLocateToolDialogViewModelTests
             "Flow",
             frame,
             new RuntimePaths(tempDirectory.Path),
-            new NullAppLogService());
+            new NullAppLogService(),
+            null,
+            null,
+            TemplateMatchingService.CreateLegacyOnly());
 
         viewModel.RunToolCommand.Execute();
         Assert.True(
@@ -339,7 +377,10 @@ public sealed class TemplateLocateToolDialogViewModelTests
             "Flow",
             frame,
             new RuntimePaths(tempDirectory.Path),
-            new NullAppLogService());
+            new NullAppLogService(),
+            null,
+            null,
+            TemplateMatchingService.CreateLegacyOnly());
 
         viewModel.RunToolCommand.Execute();
         Assert.True(
@@ -455,7 +496,10 @@ public sealed class TemplateLocateToolDialogViewModelTests
             "Flow",
             frame,
             new RuntimePaths(tempDirectory.Path),
-            new NullAppLogService());
+            new NullAppLogService(),
+            null,
+            null,
+            TemplateMatchingService.CreateLegacyOnly());
         viewModel.RunToolCommand.Execute();
         Assert.True(
             SpinWait.SpinUntil(() => !viewModel.IsBusy, TimeSpan.FromSeconds(10)),
@@ -520,6 +564,665 @@ public sealed class TemplateLocateToolDialogViewModelTests
         }
     }
 
+    [Fact]
+    public void LegacyMissingEngineDefaultsToOpenCvWithoutConstructorMutationAndAppliesExplicitEngine()
+    {
+        using var tempDirectory = new TempDirectory();
+        var tool = new VisionToolItem
+        {
+            Id = "legacy-open-cv",
+            Name = "Legacy",
+            Kind = VisionToolKind.TemplateLocate,
+            ParametersText = "matchMode=Shape; angleStart=-10; angleExtent=20; keepMe=unchanged"
+        };
+        var originalText = tool.ParametersText;
+
+        var viewModel = CreateViewModel(tool, tempDirectory);
+
+        Assert.Equal(TemplateMatchingEngine.OpenCv, GetProperty<TemplateMatchingEngine>(viewModel, "SelectedEngine"));
+        Assert.Equal(originalText, tool.ParametersText);
+
+        viewModel.ApplyTo(tool);
+
+        var saved = tool.ToDefinition().Parameters;
+        Assert.Equal("OpenCv", saved[TemplateMatchingParameterCatalog.Engine]);
+        Assert.Equal("-45", saved["angleStart"]);
+        Assert.Equal("90", saved["angleExtent"]);
+        Assert.Equal("unchanged", saved["keepMe"]);
+    }
+
+    [Fact]
+    public void LegacyOpenCvAngleMigrationDoesNotRewriteHalconTools()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.Single);
+        parameters["angleStart"] = "-10";
+        parameters["angleExtent"] = "20";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+
+        var viewModel = CreateViewModel(tool, tempDirectory);
+        viewModel.ApplyTo(tool);
+
+        var saved = tool.ToDefinition().Parameters;
+        Assert.Equal("-10", saved["angleStart"]);
+        Assert.Equal("20", saved["angleExtent"]);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("OpenCv")]
+    public void SwitchingLegacyOpenCvMultiToHalconUsesStrictExpectedCountAndPreservesMaxMatches(
+        string? engine)
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [TemplateMatchingParameterCatalog.LegacyMatchCount] = "128",
+            ["minCount"] = "1",
+            [TemplateMatchingParameterCatalog.MatchMode] = "Shape",
+            ["multiMatchMode"] = "Shape"
+        };
+        if (engine is not null)
+        {
+            parameters[TemplateMatchingParameterCatalog.Engine] = engine;
+        }
+
+        var tool = CreateTool(VisionToolKind.MultiTargetMatch, parameters);
+        var viewModel = CreateViewModel(tool, tempDirectory);
+
+        Assert.Equal("1", viewModel.HalconExpectedCount);
+
+        viewModel.SelectedEngine = TemplateMatchingEngine.Halcon;
+
+        Assert.True(viewModel.ApplyTo(tool));
+        var saved = tool.ToDefinition().Parameters;
+        Assert.Equal("1", saved[TemplateMatchingParameterCatalog.ExpectedCount]);
+        Assert.Equal("128", saved[TemplateMatchingParameterCatalog.LegacyMatchCount]);
+    }
+
+    [Fact]
+    public void HalconMultiDraftWithoutExpectedCountUsesLegacyMatchCountFallback()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.ExactCount);
+        parameters.Remove(TemplateMatchingParameterCatalog.ExpectedCount);
+        parameters[TemplateMatchingParameterCatalog.LegacyMatchCount] = "3";
+        var tool = CreateTool(VisionToolKind.MultiTargetMatch, parameters);
+
+        var viewModel = CreateViewModel(tool, tempDirectory);
+
+        Assert.Equal("3", viewModel.HalconExpectedCount);
+    }
+
+    [Fact]
+    public void HalconEditorExposesStrongEnginePresetAndRawParameterContracts()
+    {
+        var type = typeof(TemplateLocateToolDialogViewModel);
+        Assert.Equal(typeof(TemplateMatchingEngine), RequireProperty(type, "SelectedEngine").PropertyType);
+        Assert.Equal(typeof(TemplateMatchingPreset?), RequireProperty(type, "SelectedPreset").PropertyType);
+        Assert.Equal(typeof(bool), RequireProperty(type, "IsHalconEngine").PropertyType);
+        Assert.Equal(typeof(bool), RequireProperty(type, "IsAdvancedParametersExpanded").PropertyType);
+        Assert.Equal(typeof(bool), RequireProperty(type, "RequiresRelearn").PropertyType);
+
+        foreach (var propertyName in HalconEditorPropertyNames)
+        {
+            Assert.Equal(typeof(string), RequireProperty(type, propertyName).PropertyType);
+        }
+    }
+
+    [Fact]
+    public void BalancedPresetCopiesCatalogAndManualHotEditBecomesCustomWithoutRelearn()
+    {
+        using var tempDirectory = new TempDirectory();
+        var tool = CreateTool(
+            VisionToolKind.TemplateLocate,
+            TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.Single));
+        var viewModel = CreateViewModel(tool, tempDirectory);
+
+        SetProperty(viewModel, "SelectedPreset", TemplateMatchingPreset.Balanced);
+
+        var balanced = TemplateMatchingParameterCatalog.CreateBalancedDefaults(TemplateMatchCardinality.Single);
+        Assert.Equal(balanced[TemplateMatchingParameterCatalog.CandidateMinScore], GetProperty<string>(viewModel, "HalconCandidateMinScore"));
+        Assert.Equal(balanced[TemplateMatchingParameterCatalog.OuterCoverageMin], GetProperty<string>(viewModel, "HalconOuterCoverageMin"));
+        Assert.Equal(balanced[TemplateMatchingParameterCatalog.OperatorTimeoutMs], GetProperty<string>(viewModel, "HalconOperatorTimeoutMs"));
+        Assert.Equal(TemplateMatchingPreset.Balanced, GetProperty<TemplateMatchingPreset?>(viewModel, "SelectedPreset"));
+        Assert.False(GetProperty<bool>(viewModel, "RequiresRelearn"));
+
+        SetProperty(viewModel, "HalconOuterCoverageMin", "0.81");
+
+        Assert.Null(GetProperty<TemplateMatchingPreset?>(viewModel, "SelectedPreset"));
+        Assert.False(GetProperty<bool>(viewModel, "RequiresRelearn"));
+    }
+
+    [Theory]
+    [InlineData("HalconAngleStartDeg", "-170")]
+    [InlineData("HalconAngleExtentDeg", "350")]
+    [InlineData("HalconScaleMin", "0.91")]
+    [InlineData("HalconScaleMax", "1.09")]
+    [InlineData("HalconNumLevels", "4")]
+    public void EditingModelGenerationParameterRequiresRelearn(string propertyName, string value)
+    {
+        using var tempDirectory = new TempDirectory();
+        var tool = CreateTool(
+            VisionToolKind.TemplateLocate,
+            TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.Single));
+        var viewModel = CreateViewModel(tool, tempDirectory);
+
+        SetProperty(viewModel, propertyName, value);
+
+        Assert.True(GetProperty<bool>(viewModel, "RequiresRelearn"));
+        Assert.Null(GetProperty<TemplateMatchingPreset?>(viewModel, "SelectedPreset"));
+    }
+
+    [Fact]
+    public void OpenCvApplyIgnoresAndPreservesBrokenInactiveHalconParameters()
+    {
+        using var tempDirectory = new TempDirectory();
+        var tool = new VisionToolItem
+        {
+            Id = "open-cv-with-inactive-halcon",
+            Name = "OpenCV",
+            Kind = VisionToolKind.TemplateLocate,
+            ParametersText =
+                "engine=OpenCv; matchMode=Shape; halcon.operatorTimeoutMs=garbage; " +
+                "halcon.scaleMin=also-bad; keepMe=unchanged"
+        };
+        var viewModel = CreateViewModel(tool, tempDirectory);
+
+        viewModel.ApplyTo(tool);
+
+        var saved = tool.ToDefinition().Parameters;
+        Assert.Equal("garbage", saved[TemplateMatchingParameterCatalog.OperatorTimeoutMs]);
+        Assert.Equal("also-bad", saved[TemplateMatchingParameterCatalog.ScaleMin]);
+        Assert.Equal("unchanged", saved["keepMe"]);
+    }
+
+    [Fact]
+    public void HalconApplyRejectsBrokenActiveTimeoutWithoutMutatingTool()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.Single);
+        parameters[TemplateMatchingParameterCatalog.OperatorTimeoutMs] = "0";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        tool.Name = "Original";
+        var originalText = tool.ParametersText;
+        var viewModel = CreateViewModel(tool, tempDirectory);
+        viewModel.Name = "Changed";
+
+        viewModel.ApplyTo(tool);
+
+        Assert.Equal("Original", tool.Name);
+        Assert.Equal(originalText, tool.ParametersText);
+        Assert.Contains(TemplateMatchingDiagnosticCodes.ConfigInvalidParameter, viewModel.StatusText);
+    }
+
+    [Fact]
+    public void HalconApplyIgnoresAndPreservesBrokenInactiveOpenCvParameters()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.Single);
+        parameters["minScore"] = "garbage";
+        parameters["angleStart"] = "not-a-number";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var viewModel = CreateViewModel(tool, tempDirectory);
+
+        viewModel.ApplyTo(tool);
+
+        var saved = tool.ToDefinition().Parameters;
+        Assert.Equal("garbage", saved["minScore"]);
+        Assert.Equal("not-a-number", saved["angleStart"]);
+    }
+
+    [Fact]
+    public async Task HalconLearnAndTrialRunUseInjectedAsyncServiceAndStableOwner()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var recipe = CreatePreviewRecipe("recipe-1", "flow-2", tool);
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = (request, _) => Task.FromResult(new TemplateLearningResult(
+                TemplateMatchingEngine.Halcon,
+                true,
+                new Dictionary<string, string> { ["halcon.learnedMarker"] = "learned" },
+                "learned",
+                null)),
+            MatchHandler = (request, _) => Task.FromResult(CreateNoMatchBatch(request, TemplateMatchingEngine.Halcon))
+        };
+        var viewModel = CreateInjectedViewModel(tool, tempDirectory, service, recipe, CreateFrame(80, 60));
+
+        await GetProperty<IAsyncCommand>(viewModel, "LearnTemplateCommand")
+            .ExecuteAsync(null, CancellationToken.None);
+
+        var owner = new TemplateModelOwner("recipe-1", "flow-2", tool.Id);
+        Assert.Equal(owner, Assert.Single(service.LearningRequests).Owner);
+        Assert.Equal(owner, Assert.Single(service.MatchingRequests).Owner);
+        viewModel.ApplyTo(tool);
+        Assert.Equal("learned", tool.ToDefinition().Parameters["halcon.learnedMarker"]);
+    }
+
+    [Fact]
+    public async Task HalconSingleLearnRequestOmitsLegacyMatchCountButApplyPreservesIt()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        parameters[TemplateMatchingParameterCatalog.LegacyMatchCount] = "128";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var service = RecordingTemplateMatchingService.Successful();
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+
+        await GetProperty<IAsyncCommand>(viewModel, "LearnTemplateCommand")
+            .ExecuteAsync(null, CancellationToken.None);
+
+        Assert.False(Assert.Single(service.LearningRequests).Parameters.ContainsKey(
+            TemplateMatchingParameterCatalog.LegacyMatchCount));
+        viewModel.ApplyTo(tool);
+        Assert.Equal("128", tool.ToDefinition().Parameters[TemplateMatchingParameterCatalog.LegacyMatchCount]);
+    }
+
+    [Fact]
+    public async Task AsyncLearnCommandPropagatesCallerCancellationToken()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var enteredService = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = async (_, token) =>
+            {
+                enteredService.SetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                throw new InvalidOperationException("unreachable");
+            }
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+        using var cancellation = new CancellationTokenSource();
+
+        var execution =
+            GetProperty<IAsyncCommand>(viewModel, "LearnTemplateCommand")
+                .ExecuteAsync(null, cancellation.Token);
+        await enteredService.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution);
+        Assert.True(Assert.Single(service.LearningTokens).IsCancellationRequested);
+    }
+
+    [Theory]
+    [InlineData("HalconCandidateMinScore", "0.61")]
+    [InlineData("HalconInnerCoverageMin", "0.79")]
+    [InlineData("HalconEdgeTolerancePx", "3.5")]
+    [InlineData("HalconPolarityAgreementMin", "0.88")]
+    [InlineData("HalconCandidateMaxOverlap", "0.71")]
+    [InlineData("HalconMaxOverlap", "0.24")]
+    [InlineData("HalconGreediness", "0.77")]
+    [InlineData("HalconSubPixel", "custom-subpixel")]
+    [InlineData("HalconOperatorTimeoutMs", "6000")]
+    [InlineData("HalconCandidateLimit", "40")]
+    public void EditingHotHalconParameterDoesNotRequireRelearn(string propertyName, string value)
+    {
+        using var tempDirectory = new TempDirectory();
+        var tool = CreateTool(
+            VisionToolKind.TemplateLocate,
+            TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.Single));
+        var viewModel = CreateViewModel(tool, tempDirectory);
+
+        SetProperty(viewModel, propertyName, value);
+
+        Assert.False(viewModel.RequiresRelearn);
+        Assert.Null(viewModel.SelectedPreset);
+    }
+
+    [Fact]
+    public async Task HalconMultiRequestUsesExpectedCountAndOmitsLegacyMaxMatches()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.ExactCount);
+        parameters[TemplateMatchingParameterCatalog.ExpectedCount] = "3";
+        parameters[TemplateMatchingParameterCatalog.LegacyMatchCount] = "128";
+        parameters["multiMatchMode"] = "GrayNcc";
+        parameters["minScore"] = "broken-inactive-open-cv";
+        var tool = CreateTool(VisionToolKind.MultiTargetMatch, parameters);
+        var service = RecordingTemplateMatchingService.Successful();
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+
+        await viewModel.RunToolCommand.Execute(CancellationToken.None);
+
+        var request = Assert.Single(service.MatchingRequests);
+        Assert.Equal(TemplateMatchCardinality.ExactCount, request.Cardinality);
+        Assert.Equal(3, request.ExpectedCount);
+        Assert.Equal("3", request.Parameters[TemplateMatchingParameterCatalog.ExpectedCount]);
+        Assert.False(request.Parameters.ContainsKey(TemplateMatchingParameterCatalog.LegacyMatchCount));
+        Assert.Equal("Shape", request.Parameters["matchMode"]);
+        Assert.Equal("Shape", request.Parameters["multiMatchMode"]);
+        Assert.Equal("broken-inactive-open-cv", request.Parameters["minScore"]);
+
+        Assert.True(viewModel.ApplyTo(tool));
+        var saved = tool.ToDefinition().Parameters;
+        Assert.Equal("128", saved[TemplateMatchingParameterCatalog.LegacyMatchCount]);
+        Assert.Equal("Shape", saved["multiMatchMode"]);
+        Assert.Equal("GrayNcc", saved["opencv.multiMatchMode"]);
+    }
+
+    [Fact]
+    public async Task OpenCvTrialRunIgnoresAndPreservesBrokenInactiveHalconParameters()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["engine"] = "OpenCv",
+            ["matchMode"] = "Shape",
+            ["templateImagePng"] = "learned-preview",
+            [TemplateMatchingParameterCatalog.OperatorTimeoutMs] = "garbage",
+            [TemplateMatchingParameterCatalog.ScaleMin] = "also-garbage"
+        };
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var service = RecordingTemplateMatchingService.Successful();
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+
+        await viewModel.RunToolCommand.Execute(CancellationToken.None);
+
+        var request = Assert.Single(service.MatchingRequests);
+        Assert.Equal("garbage", request.Parameters[TemplateMatchingParameterCatalog.OperatorTimeoutMs]);
+        Assert.Equal("also-garbage", request.Parameters[TemplateMatchingParameterCatalog.ScaleMin]);
+        Assert.True(viewModel.ApplyTo(tool));
+        Assert.Equal(
+            "garbage",
+            tool.ToDefinition().Parameters[TemplateMatchingParameterCatalog.OperatorTimeoutMs]);
+    }
+
+    [Fact]
+    public async Task InvalidActiveHalconTimeoutBlocksTrialRunBeforeService()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.Single);
+        parameters[TemplateMatchingParameterCatalog.OperatorTimeoutMs] = "not-a-timeout";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var service = RecordingTemplateMatchingService.Successful();
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+
+        await viewModel.RunToolCommand.Execute(CancellationToken.None);
+
+        Assert.Empty(service.MatchingRequests);
+        Assert.Contains(TemplateMatchingDiagnosticCodes.ConfigInvalidParameter, viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task ExplicitHalconNonShapeModeIsRejectedBeforeService()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.Single);
+        parameters[TemplateMatchingParameterCatalog.MatchMode] = "CircularBlob";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var service = RecordingTemplateMatchingService.Successful();
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+
+        await viewModel.RunToolCommand.Execute(CancellationToken.None);
+
+        Assert.Empty(service.MatchingRequests);
+        Assert.Contains(TemplateMatchingDiagnosticCodes.ConfigUnsupportedMode, viewModel.StatusText);
+    }
+
+    [Fact]
+    public void HalconMultiCandidateLimitMustExceedExpectedCount()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.ExactCount);
+        parameters[TemplateMatchingParameterCatalog.ExpectedCount] = "4";
+        parameters[TemplateMatchingParameterCatalog.CandidateLimit] = "4";
+        var tool = CreateTool(VisionToolKind.MultiTargetMatch, parameters);
+        var originalText = tool.ParametersText;
+        var viewModel = CreateViewModel(tool, tempDirectory);
+
+        Assert.False(viewModel.ApplyTo(tool));
+
+        Assert.Equal(originalText, tool.ParametersText);
+        Assert.Contains(TemplateMatchingDiagnosticCodes.ConfigInvalidParameter, viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task OpenCvToHalconLearnAndBackPreservesCompleteOpenCvState()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        parameters["engine"] = "OpenCv";
+        parameters["matchMode"] = "GrayNcc";
+        parameters["minScore"] = "0.77";
+        parameters["angleStart"] = "-22";
+        parameters["angleExtent"] = "44";
+        parameters["standardX"] = "101.25";
+        parameters["standardY"] = "202.5";
+        parameters["standardAngle"] = "13";
+        parameters["standardScale"] = "1.02";
+        parameters["templateWidth"] = "30";
+        parameters["templateHeight"] = "20";
+        parameters["templateImagePng"] = "open-cv-preview";
+        parameters["templatePixels"] = Convert.ToBase64String(new byte[] { 1, 2, 3, 4 });
+        parameters["modelPath"] = "legacy/model.bin";
+        parameters["modelVersion"] = "1.0";
+        var openCvSnapshot = parameters
+            .Where(parameter => !parameter.Key.StartsWith("halcon.", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(parameter => parameter.Key, parameter => parameter.Value, StringComparer.OrdinalIgnoreCase);
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var learnedHalcon = CreateCompleteHalconLearnedState();
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = (_, _) => Task.FromResult(new TemplateLearningResult(
+                TemplateMatchingEngine.Halcon,
+                true,
+                learnedHalcon,
+                "halcon learned",
+                null))
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+        viewModel.SelectedEngine = TemplateMatchingEngine.Halcon;
+
+        await viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+        Assert.True(viewModel.ApplyTo(tool));
+        var halconSaved = tool.ToDefinition().Parameters;
+        Assert.Equal("Shape", halconSaved[TemplateMatchingParameterCatalog.MatchMode]);
+        Assert.Equal("GrayNcc", halconSaved["opencv.matchMode"]);
+
+        var reopened = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+        reopened.SelectedEngine = TemplateMatchingEngine.OpenCv;
+        Assert.True(reopened.ApplyTo(tool));
+
+        var saved = tool.ToDefinition().Parameters;
+        foreach (var parameter in openCvSnapshot)
+        {
+            Assert.Equal(parameter.Value, saved[parameter.Key]);
+        }
+
+        foreach (var parameter in learnedHalcon)
+        {
+            Assert.Equal(parameter.Value, saved[parameter.Key]);
+        }
+    }
+
+    [Fact]
+    public async Task HalconToOpenCvLearnAndBackPreservesCompleteHalconState()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        var halconSnapshot = CreateCompleteHalconLearnedState();
+        foreach (var parameter in halconSnapshot)
+        {
+            parameters[parameter.Key] = parameter.Value;
+        }
+
+        parameters["templateImagePng"] = "existing-open-cv-preview";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = (_, _) => Task.FromResult(new TemplateLearningResult(
+                TemplateMatchingEngine.OpenCv,
+                true,
+                new Dictionary<string, string>
+                {
+                    ["templateImagePng"] = "new-open-cv-preview",
+                    ["templateWidth"] = "30",
+                    ["templateHeight"] = "20",
+                    ["templatePixels"] = Convert.ToBase64String(new byte[] { 5, 6, 7, 8 })
+                },
+                "opencv learned",
+                null))
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+        viewModel.SelectedEngine = TemplateMatchingEngine.OpenCv;
+
+        await viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+        viewModel.SelectedEngine = TemplateMatchingEngine.Halcon;
+        Assert.True(viewModel.ApplyTo(tool));
+
+        var saved = tool.ToDefinition().Parameters;
+        foreach (var parameter in halconSnapshot)
+        {
+            Assert.Equal(parameter.Value, saved[parameter.Key]);
+        }
+
+        Assert.NotNull(TemplateModelParameterCodec.ReadHalcon(saved));
+    }
+
+    [Fact]
+    public async Task OpenCvLearningDoesNotClearPendingHalconRelearnRequirement()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        parameters["engine"] = "OpenCv";
+        parameters["templateImagePng"] = "existing-preview";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var service = new RecordingTemplateMatchingService
+        {
+            LearnHandler = (_, _) => Task.FromResult(new TemplateLearningResult(
+                TemplateMatchingEngine.OpenCv,
+                true,
+                new Dictionary<string, string>
+                {
+                    ["templateImagePng"] = "new-preview",
+                    ["templateWidth"] = "30",
+                    ["templateHeight"] = "20"
+                },
+                "opencv learned",
+                null))
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+        viewModel.HalconScaleMin = "0.91";
+        Assert.True(viewModel.RequiresRelearn);
+
+        await viewModel.LearnTemplateCommand.Execute(CancellationToken.None);
+
+        Assert.True(viewModel.RequiresRelearn);
+    }
+
+    [Fact]
+    public void PresetMarksRelearnOnlyWhenGenerationValuesActuallyChange()
+    {
+        using var tempDirectory = new TempDirectory();
+        var custom = TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.Single);
+        custom[TemplateMatchingParameterCatalog.AngleStartDeg] = "-170";
+        var customViewModel = CreateViewModel(
+            CreateTool(VisionToolKind.TemplateLocate, custom),
+            tempDirectory);
+
+        customViewModel.SelectedPreset = TemplateMatchingPreset.Strict;
+
+        Assert.True(customViewModel.RequiresRelearn);
+
+        var strictViewModel = CreateViewModel(
+            CreateTool(
+                VisionToolKind.TemplateLocate,
+                TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.Single)),
+            tempDirectory);
+        strictViewModel.SelectedPreset = TemplateMatchingPreset.Balanced;
+        Assert.False(strictViewModel.RequiresRelearn);
+    }
+
+    [Fact]
+    public async Task HalconSetStandardDoesNotPolluteInactiveOpenCvStandardPose()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(TemplateMatchCardinality.Single);
+        parameters["standardX"] = "10";
+        parameters["standardY"] = "20";
+        parameters["standardAngle"] = "30";
+        parameters["standardScale"] = "1.2";
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var service = new RecordingTemplateMatchingService
+        {
+            MatchHandler = (request, _) => Task.FromResult(CreateSuccessfulBatch(request))
+        };
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            service,
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60));
+
+        await viewModel.RunToolCommand.Execute(CancellationToken.None);
+        viewModel.SetStandardCommand.Execute();
+        Assert.True(viewModel.ApplyTo(tool));
+
+        var saved = tool.ToDefinition().Parameters;
+        Assert.Equal("10", saved["standardX"]);
+        Assert.Equal("20", saved["standardY"]);
+        Assert.Equal("30", saved["standardAngle"]);
+        Assert.Equal("1.2", saved["standardScale"]);
+        Assert.Contains("重新学习", viewModel.StatusText);
+    }
+
     private static bool CompleteQueuedRun(
         QueuedSynchronizationContext queuedContext,
         SynchronizationContext? previousContext,
@@ -536,6 +1239,179 @@ public sealed class TemplateLocateToolDialogViewModelTests
         {
             SynchronizationContext.SetSynchronizationContext(previousContext);
         }
+    }
+
+    private static TemplateLocateToolDialogViewModel CreateInjectedViewModel(
+        VisionToolItem tool,
+        TempDirectory tempDirectory,
+        ITemplateMatchingService service,
+        Recipe recipe,
+        ImageFrame frame)
+    {
+        var constructor = typeof(TemplateLocateToolDialogViewModel)
+            .GetConstructors()
+            .SingleOrDefault(candidate =>
+            {
+                var parameters = candidate.GetParameters();
+                return parameters.Length == 10 &&
+                       parameters[^1].ParameterType == typeof(ITemplateMatchingService);
+            });
+        Assert.NotNull(constructor);
+        return Assert.IsType<TemplateLocateToolDialogViewModel>(constructor.Invoke(
+        [
+            tool,
+            Array.Empty<RoiChoiceItem>(),
+            Array.Empty<RoiDefinition>(),
+            "Display only flow name",
+            frame,
+            new RuntimePaths(tempDirectory.Path),
+            new NullAppLogService(),
+            recipe,
+            null,
+            service
+        ]));
+    }
+
+    private static VisionToolItem CreateTool(
+        VisionToolKind kind,
+        IReadOnlyDictionary<string, string> parameters)
+    {
+        return new VisionToolItem
+        {
+            Id = $"tool-{Guid.NewGuid():N}",
+            Name = kind.ToString(),
+            Kind = kind,
+            Enabled = true,
+            ParametersText = string.Join("; ", parameters.Select(parameter => $"{parameter.Key}={parameter.Value}"))
+        };
+    }
+
+    private static Dictionary<string, string> CreateHalconParametersWithTemplateRoi(
+        TemplateMatchCardinality cardinality)
+    {
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(cardinality);
+        var roi = new RoiDefinition
+        {
+            Id = "template-roi",
+            Name = "Template ROI",
+            Shape = RoiShapeKind.Rectangle,
+            X = 10,
+            Y = 10,
+            Width = 30,
+            Height = 20
+        };
+        parameters["templateRoiJson"] = JsonSerializer.Serialize(roi);
+        parameters["templateRoiShape"] = RoiShapeKind.Rectangle.ToString();
+        parameters["templateRoiX"] = "10";
+        parameters["templateRoiY"] = "10";
+        parameters["templateRoiWidth"] = "30";
+        parameters["templateRoiHeight"] = "20";
+        return parameters;
+    }
+
+    private static Dictionary<string, string> CreateCompleteHalconLearnedState()
+    {
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["halcon.modelPath"] = "recipes/recipe/flows/flow/tools/tool/model-7.shm",
+            ["halcon.modelMetadataPath"] = "recipes/recipe/flows/flow/tools/tool/model-7.json",
+            ["halcon.modelFormat"] = TemplateModelParameterCodec.HalconScaledShapeModelFormat,
+            ["halcon.modelVersion"] = "26.05",
+            ["halcon.modelRuntimeVersion"] = "26.05.0.0",
+            ["halcon.modelGeneration"] = "7",
+            ["halcon.modelChecksum"] = new string('a', 64),
+            ["halcon.metadataChecksum"] = new string('b', 64),
+            ["halcon.generationParameterFingerprint"] = new string('c', 64),
+            ["halcon.standardX"] = "25",
+            ["halcon.standardY"] = "20",
+            ["halcon.standardAngle"] = "0",
+            ["halcon.standardScale"] = "1",
+            ["halcon.templateWidth"] = "30",
+            ["halcon.templateHeight"] = "20"
+        };
+    }
+
+    private static Recipe CreatePreviewRecipe(
+        string recipeId,
+        string flowId,
+        VisionToolItem tool)
+    {
+        return new Recipe
+        {
+            Id = recipeId,
+            CurrentFlowId = flowId,
+            Flows =
+            [
+                new VisionFlowDefinition
+                {
+                    Id = flowId,
+                    Name = "Stable Flow",
+                    Tools = [tool.ToDefinition()]
+                }
+            ]
+        };
+    }
+
+    private static TemplateMatchBatchResult CreateNoMatchBatch(
+        TemplateMatchingRequest request,
+        TemplateMatchingEngine engine)
+    {
+        return new TemplateMatchBatchResult(
+            engine,
+            InspectionOutcome.Ng,
+            false,
+            Array.Empty<TemplateMatchBatchCandidate>(),
+            new TemplateSearchRegion(0, 0, request.Frame.Width, request.Frame.Height),
+            "No match",
+            false);
+    }
+
+    private static TemplateMatchBatchResult CreateSuccessfulBatch(TemplateMatchingRequest request)
+    {
+        var pose = new Pose2D(40, 30, 15) { Scale = 1.05 };
+        var candidate = new TemplateMatchBatchCandidate(
+            pose,
+            0.95,
+            30,
+            20,
+            Array.Empty<IReadOnlyList<Point2D>>(),
+            new IReadOnlyList<Point2D>[]
+            {
+                new[]
+                {
+                    new Point2D(25, 20),
+                    new Point2D(55, 20),
+                    new Point2D(55, 40),
+                    new Point2D(25, 40)
+                }
+            });
+        return new TemplateMatchBatchResult(
+            TemplateMatchingEngine.Halcon,
+            InspectionOutcome.Ok,
+            true,
+            [candidate],
+            new TemplateSearchRegion(0, 0, request.Frame.Width, request.Frame.Height),
+            "matched",
+            false);
+    }
+
+    private static PropertyInfo RequireProperty(Type type, string propertyName)
+    {
+        var property = type.GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(property);
+        return property;
+    }
+
+    private static T GetProperty<T>(object target, string propertyName)
+    {
+        return (T)RequireProperty(target.GetType(), propertyName).GetValue(target)!;
+    }
+
+    private static void SetProperty(object target, string propertyName, object? value)
+    {
+        var property = RequireProperty(target.GetType(), propertyName);
+        Assert.True(property.CanWrite, $"Property {propertyName} must be writable.");
+        property.SetValue(target, value);
     }
 
     private static Dictionary<string, string> CreateLearnedPolygonTemplateParameters(ImageFrame frame)
@@ -638,7 +1514,73 @@ public sealed class TemplateLocateToolDialogViewModelTests
             "Flow",
             currentFrame: null,
             new RuntimePaths(tempDirectory.Path),
-            new NullAppLogService());
+            new NullAppLogService(),
+            null,
+            null,
+            TemplateMatchingService.CreateLegacyOnly());
+    }
+
+    private sealed class RecordingTemplateMatchingService : ITemplateMatchingService
+    {
+        public Func<TemplateLearningRequest, CancellationToken, Task<TemplateLearningResult>>? LearnHandler { get; init; }
+
+        public Func<TemplateMatchingRequest, CancellationToken, Task<TemplateMatchBatchResult>>? MatchHandler { get; init; }
+
+        public List<TemplateLearningRequest> LearningRequests { get; } = new();
+
+        public List<TemplateMatchingRequest> MatchingRequests { get; } = new();
+
+        public List<CancellationToken> LearningTokens { get; } = new();
+
+        public List<CancellationToken> MatchingTokens { get; } = new();
+
+        public static RecordingTemplateMatchingService Successful()
+        {
+            return new RecordingTemplateMatchingService
+            {
+                LearnHandler = (_, _) => Task.FromResult(new TemplateLearningResult(
+                    TemplateMatchingEngine.Halcon,
+                    true,
+                    new Dictionary<string, string> { ["halcon.learnedMarker"] = "learned" },
+                    "learned",
+                    null))
+            };
+        }
+
+        public Task<TemplateLearningResult> LearnAsync(
+            TemplateLearningRequest request,
+            CancellationToken cancellationToken)
+        {
+            LearningRequests.Add(request);
+            LearningTokens.Add(cancellationToken);
+            return LearnHandler?.Invoke(request, cancellationToken)
+                   ?? Task.FromResult(new TemplateLearningResult(
+                       TemplateMatchingEngine.Halcon,
+                       true,
+                       new Dictionary<string, string>(),
+                       "learned",
+                       null));
+        }
+
+        public Task<TemplateMatchBatchResult> MatchAsync(
+            TemplateMatchingRequest request,
+            CancellationToken cancellationToken)
+        {
+            MatchingRequests.Add(request);
+            MatchingTokens.Add(cancellationToken);
+            return MatchHandler?.Invoke(request, cancellationToken)
+                   ?? Task.FromResult(CreateNoMatchBatch(
+                       request,
+                       request.Parameters.TryGetValue(TemplateMatchingParameterCatalog.Engine, out var engine) &&
+                       Enum.TryParse<TemplateMatchingEngine>(engine, true, out var parsed)
+                           ? parsed
+                           : TemplateMatchingEngine.OpenCv));
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class NullAppLogService : IAppLogService

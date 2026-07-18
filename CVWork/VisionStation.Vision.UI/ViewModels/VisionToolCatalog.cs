@@ -1,4 +1,5 @@
 using VisionStation.Domain;
+using VisionStation.Vision;
 
 namespace VisionStation.Vision.UI.ViewModels;
 
@@ -277,40 +278,8 @@ public static class VisionToolCatalog
         return kind switch
         {
             VisionToolKind.ImageProcess => VisionToolDefaults.CreateImageProcessParameters(),
-            VisionToolKind.TemplateLocate => new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["engine"] = "OpenCv",
-                ["matchMode"] = "Shape",
-                ["autoLearnTemplate"] = "False",
-                ["minScore"] = "0.85",
-                ["angleStart"] = "-45",
-                ["angleExtent"] = "90",
-                ["angleStep"] = "2",
-                ["cannyLow"] = "60",
-                ["cannyHigh"] = "160",
-                ["orbMaxFeatures"] = "600",
-                ["orbMinMatches"] = "8",
-                ["orbRatio"] = "0.75",
-                ["shapeScoreVersion"] = "2",
-                ["shapeCoverageDistance"] = "3"
-            },
-            VisionToolKind.MultiTargetMatch => new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["engine"] = "OpenCv",
-                ["matchMode"] = "Shape",
-                ["multiMatchMode"] = "Shape",
-                ["autoLearnTemplate"] = "False",
-                ["minScore"] = "0.75",
-                ["minCount"] = "1",
-                ["matchCount"] = "128",
-                ["angleStart"] = "-30",
-                ["angleExtent"] = "60",
-                ["angleStep"] = "5",
-                ["cannyLow"] = "60",
-                ["cannyHigh"] = "160",
-                ["nmsOverlap"] = "0.35",
-                ["enabledOutputs"] = "CountOutput,PositionOutput,OriginOutput,BestPositionOutput,ScalesOutput,ResultOutput"
-            },
+            VisionToolKind.TemplateLocate => CreateTemplateLocateParameters(),
+            VisionToolKind.MultiTargetMatch => CreateMultiTargetMatchParameters(),
             VisionToolKind.CoordinateTransform => new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["model"] = "Affine",
@@ -413,6 +382,45 @@ public static class VisionToolCatalog
             VisionToolKind.SerialCommunication => "串口通讯",
             _ => "视觉工具"
         };
+    }
+
+    private static Dictionary<string, string> CreateTemplateLocateParameters()
+    {
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(
+            TemplateMatchCardinality.Single);
+        parameters["autoLearnTemplate"] = "False";
+        parameters["minScore"] = "0.85";
+        parameters["angleStart"] = "-45";
+        parameters["angleExtent"] = "90";
+        parameters["angleStep"] = "2";
+        parameters["cannyLow"] = "60";
+        parameters["cannyHigh"] = "160";
+        parameters["orbMaxFeatures"] = "600";
+        parameters["orbMinMatches"] = "8";
+        parameters["orbRatio"] = "0.75";
+        parameters["shapeScoreVersion"] = "2";
+        parameters["shapeCoverageDistance"] = "3";
+        return parameters;
+    }
+
+    private static Dictionary<string, string> CreateMultiTargetMatchParameters()
+    {
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(
+            TemplateMatchCardinality.ExactCount);
+        parameters["multiMatchMode"] = "Shape";
+        parameters["autoLearnTemplate"] = "False";
+        parameters["minScore"] = "0.75";
+        parameters["minCount"] = "1";
+        parameters[TemplateMatchingParameterCatalog.LegacyMatchCount] = "128";
+        parameters["angleStart"] = "-30";
+        parameters["angleExtent"] = "60";
+        parameters["angleStep"] = "5";
+        parameters["cannyLow"] = "60";
+        parameters["cannyHigh"] = "160";
+        parameters["nmsOverlap"] = "0.35";
+        parameters["enabledOutputs"] =
+            "CountOutput,PositionOutput,OriginOutput,BestPositionOutput,ScalesOutput,ResultOutput";
+        return parameters;
     }
 
     public static IReadOnlyList<ToolboxCatalogItem> GetToolboxCategories()

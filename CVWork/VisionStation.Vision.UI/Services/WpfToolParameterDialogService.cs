@@ -16,6 +16,7 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
     private readonly ICameraDiagnosticsProvider _cameraDiagnostics;
     private readonly IImageFrameFileService _imageFiles;
     private readonly IVisionPipeline _pipeline;
+    private readonly ITemplateMatchingService _templateMatchingService;
     private readonly IDeviceConfigurationRepository _deviceConfigurationRepository;
     private readonly RuntimePaths _paths;
     private readonly IAppLogService _log;
@@ -27,6 +28,7 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
         ICameraDiagnosticsProvider cameraDiagnostics,
         IImageFrameFileService imageFiles,
         IVisionPipeline pipeline,
+        ITemplateMatchingService templateMatchingService,
         IDeviceConfigurationRepository deviceConfigurationRepository,
         RuntimePaths paths,
         IAppLogService log)
@@ -37,6 +39,7 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
         _cameraDiagnostics = cameraDiagnostics;
         _imageFiles = imageFiles;
         _pipeline = pipeline;
+        _templateMatchingService = templateMatchingService ?? throw new ArgumentNullException(nameof(templateMatchingService));
         _deviceConfigurationRepository = deviceConfigurationRepository;
         _paths = paths;
         _log = log;
@@ -59,7 +62,7 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
 
         if (tool.Kind is VisionToolKind.TemplateLocate or VisionToolKind.MultiTargetMatch)
         {
-            return EditTemplateLocateTool(tool, roiChoices, rois, flowName, currentFrame, previewRecipe, _paths, _pipeline, _log);
+            return EditTemplateLocateTool(tool, roiChoices, rois, flowName, currentFrame, previewRecipe, _paths, _pipeline, _log, _templateMatchingService);
         }
 
         if (tool.Kind == VisionToolKind.FindLine)
@@ -161,9 +164,10 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
         Recipe? previewRecipe,
         RuntimePaths paths,
         IVisionPipeline pipeline,
-        IAppLogService log)
+        IAppLogService log,
+        ITemplateMatchingService templateMatchingService)
     {
-        var viewModel = new TemplateLocateToolDialogViewModel(tool, roiChoices, rois, flowName, currentFrame, paths, log, previewRecipe, pipeline);
+        var viewModel = new TemplateLocateToolDialogViewModel(tool, roiChoices, rois, flowName, currentFrame, paths, log, previewRecipe, pipeline, templateMatchingService);
         var dialog = new TemplateLocateToolDialog
         {
             DataContext = viewModel,
@@ -179,7 +183,10 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
                     return;
                 }
 
-                viewModel.ApplyTo(tool);
+                if (!viewModel.ApplyTo(tool))
+                {
+                    return;
+                }
             }
 
             dialog.DialogResult = accepted;

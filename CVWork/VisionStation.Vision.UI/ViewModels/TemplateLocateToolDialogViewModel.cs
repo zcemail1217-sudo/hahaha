@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using VisionStation.Vision.UI.Models;
 using Prism.Commands;
@@ -16,10 +17,14 @@ namespace VisionStation.Vision.UI.ViewModels;
 
 public sealed class TemplateLocateToolDialogViewModel : BindableBase
 {
+    private const string OpenCvMatchModeStateKey = "opencv.matchMode";
+    private const string OpenCvMultiMatchModeStateKey = "opencv.multiMatchMode";
+
     private readonly IAppLogService _log;
     private readonly RuntimePaths _paths;
     private readonly IReadOnlyList<RoiDefinition> _availableRois;
-    private readonly Dictionary<string, string> _parameters;
+    private readonly ITemplateMatchingService _matchingService;
+    private Dictionary<string, string> _parameters;
     private readonly Recipe? _previewRecipe;
     private readonly IVisionPipeline? _pipeline;
     private readonly string _toolId;
@@ -72,6 +77,32 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     private string _poseText = "-";
     private string _durationText = "0ms";
     private string _statusText = "等待运行";
+    private TemplateMatchingEngine _selectedEngine;
+    private TemplateMatchingPreset? _selectedPreset;
+    private bool _isAdvancedParametersExpanded;
+    private bool _requiresRelearn;
+    private bool _applyingPreset;
+    private bool _halconLearnedSuccessfullyInSession;
+    private bool _rejectLoadedHalconMode;
+    private string _openCvMatchModeState = "Shape";
+    private string _openCvMultiMatchModeState = "Shape";
+    private string _halconAngleStartDeg = string.Empty;
+    private string _halconAngleExtentDeg = string.Empty;
+    private string _halconScaleMin = string.Empty;
+    private string _halconScaleMax = string.Empty;
+    private string _halconCandidateMinScore = string.Empty;
+    private string _halconOuterCoverageMin = string.Empty;
+    private string _halconInnerCoverageMin = string.Empty;
+    private string _halconEdgeTolerancePx = string.Empty;
+    private string _halconPolarityAgreementMin = string.Empty;
+    private string _halconCandidateMaxOverlap = string.Empty;
+    private string _halconMaxOverlap = string.Empty;
+    private string _halconGreediness = string.Empty;
+    private string _halconSubPixel = string.Empty;
+    private string _halconNumLevels = string.Empty;
+    private string _halconOperatorTimeoutMs = string.Empty;
+    private string _halconCandidateLimit = string.Empty;
+    private string _halconExpectedCount = string.Empty;
 
     public TemplateLocateToolDialogViewModel(
         VisionToolItem tool,
@@ -81,11 +112,13 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         ImageFrame? currentFrame,
         RuntimePaths paths,
         IAppLogService log,
-        Recipe? previewRecipe = null,
-        IVisionPipeline? pipeline = null)
+        Recipe? previewRecipe,
+        IVisionPipeline? pipeline,
+        ITemplateMatchingService matchingService)
     {
         _log = log;
         _paths = paths;
+        _matchingService = matchingService ?? throw new ArgumentNullException(nameof(matchingService));
         _previewRecipe = previewRecipe;
         _pipeline = pipeline;
         _enabled = tool.Enabled;
@@ -94,6 +127,13 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         _toolId = tool.Id;
         _toolKind = tool.Kind == VisionToolKind.MultiTargetMatch ? VisionToolKind.MultiTargetMatch : VisionToolKind.TemplateLocate;
         var parameters = _parameters;
+        _selectedEngine = ResolveSelectedEngine(parameters);
+        EngineOptions = new ReadOnlyCollection<TemplateMatchingEngine>(
+            [TemplateMatchingEngine.ManagedNcc, TemplateMatchingEngine.OpenCv, TemplateMatchingEngine.Halcon]);
+        PresetOptions = new ReadOnlyCollection<TemplateMatchingPreset>(
+            [TemplateMatchingPreset.Strict, TemplateMatchingPreset.Balanced, TemplateMatchingPreset.HighRecall]);
+        LoadHalconEditorValues(parameters);
+        _selectedPreset = DetectPreset();
         var positionSourceToolId = GetPositionInputSourceToolId();
         _roiReferenceDirty = _toolKind == VisionToolKind.MultiTargetMatch &&
                              ReadRoiReferencePose(parameters, positionSourceToolId).Status != PoseReadStatus.Success;
@@ -106,14 +146,32 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         _pyramidLevels = Math.Clamp(GetInt(parameters, "pyramidLevels", 3), 1, 8);
         _angleStart = GetDouble(parameters, "angleStart", -45);
         _angleExtent = GetDouble(parameters, "angleExtent", 90);
-        if (Math.Abs(_angleStart + 10) < 0.001 && Math.Abs(_angleExtent - 20) < 0.001)
+        if (_selectedEngine == TemplateMatchingEngine.OpenCv &&
+            Math.Abs(_angleStart + 10) < 0.001 &&
+            Math.Abs(_angleExtent - 20) < 0.001)
         {
             _angleStart = -45;
             _angleExtent = 90;
         }
 
         _polarity = GetString(parameters, "polarity", "use_polarity");
-        _selectedMatchMode = NormalizeMatchMode(GetString(parameters, "matchMode", "Shape"));
+        _openCvMatchModeState = GetString(
+            parameters,
+            OpenCvMatchModeStateKey,
+            GetString(parameters, TemplateMatchingParameterCatalog.MatchMode, "Shape"));
+        _openCvMultiMatchModeState = GetString(
+            parameters,
+            OpenCvMultiMatchModeStateKey,
+            GetString(parameters, "multiMatchMode", _openCvMatchModeState));
+        _selectedMatchMode = NormalizeMatchMode(
+            _toolKind == VisionToolKind.MultiTargetMatch
+                ? _openCvMultiMatchModeState
+                : _openCvMatchModeState);
+        _rejectLoadedHalconMode = _selectedEngine == TemplateMatchingEngine.Halcon &&
+                                  !string.Equals(
+                                      GetString(parameters, TemplateMatchingParameterCatalog.MatchMode, "Shape").Trim(),
+                                      "Shape",
+                                      StringComparison.OrdinalIgnoreCase);
         _contrast = Math.Clamp(GetDouble(parameters, "contrast", 30), 0, 255);
         _autoContrast = GetBool(parameters, "autoContrast", false);
         _matchCount = Math.Clamp(
@@ -204,15 +262,14 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         CreateTemplateRoiCommand = new DelegateCommand(CreateTemplateRoi, () => !IsMissingInputImage);
         CreateTemplateMaskRoiCommand = new DelegateCommand(CreateTemplateMaskRoi, () => !IsMissingInputImage);
         PlaceRoiCommand = new DelegateCommand<Point2D>(PlacePendingRoi);
-        MoreCommand = new DelegateCommand(ShowMoreOptions);
-        LearnTemplateCommand = new DelegateCommand(LearnTemplate, () => !IsBusy && !IsMissingInputImage)
+        LearnTemplateCommand = new AsyncDelegateCommand(LearnTemplateAsync, () => !IsBusy && !IsMissingInputImage)
             .ObservesProperty(() => IsBusy);
         ResetTemplateCommand = new DelegateCommand(ResetTemplate, () => !IsBusy)
             .ObservesProperty(() => IsBusy);
         SetStandardCommand = new DelegateCommand(SetStandard);
-        RunToolCommand = new DelegateCommand(async () => { await RunToolAsync(); }, () => !IsBusy && !IsMissingInputImage)
+        RunToolCommand = new AsyncDelegateCommand(RunToolAsync, () => !IsBusy && !IsMissingInputImage)
             .ObservesProperty(() => IsBusy);
-        RunFlowCommand = new DelegateCommand(async () => await RunFlowAsync(), () => !IsBusy && !IsMissingInputImage)
+        RunFlowCommand = new AsyncDelegateCommand(RunFlowAsync, () => !IsBusy && !IsMissingInputImage)
             .ObservesProperty(() => IsBusy);
         ConfirmCommand = new DelegateCommand(() => CloseRequested?.Invoke(this, true));
         CancelCommand = new DelegateCommand(() => CloseRequested?.Invoke(this, false));
@@ -235,6 +292,160 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     public string MissingInputImageText => "未连接输入图像。请把采图工具的输出图像连接到本工具的输入图像。";
 
     public string InputFrameInfo { get; }
+
+    public IReadOnlyDictionary<string, string> PendingParameters =>
+        new ReadOnlyDictionary<string, string>(
+            new Dictionary<string, string>(_parameters, StringComparer.OrdinalIgnoreCase));
+
+    public IReadOnlyList<TemplateMatchingEngine> EngineOptions { get; }
+
+    public IReadOnlyList<TemplateMatchingPreset> PresetOptions { get; }
+
+    public TemplateMatchingEngine SelectedEngine
+    {
+        get => _selectedEngine;
+        set
+        {
+            if (SetProperty(ref _selectedEngine, value))
+            {
+                _rejectLoadedHalconMode = false;
+                RaisePropertyChanged(nameof(IsHalconEngine));
+                _selectedPreset = DetectPreset();
+                RaisePropertyChanged(nameof(SelectedPreset));
+            }
+        }
+    }
+
+    public bool IsHalconEngine => SelectedEngine == TemplateMatchingEngine.Halcon;
+
+    public bool IsAdvancedParametersExpanded
+    {
+        get => _isAdvancedParametersExpanded;
+        set => SetProperty(ref _isAdvancedParametersExpanded, value);
+    }
+
+    public TemplateMatchingPreset? SelectedPreset
+    {
+        get => _selectedPreset;
+        set
+        {
+            if (value is null)
+            {
+                SetProperty(ref _selectedPreset, null);
+                return;
+            }
+
+            ApplyPreset(value.Value);
+        }
+    }
+
+    public bool RequiresRelearn
+    {
+        get => _requiresRelearn;
+        private set => SetProperty(ref _requiresRelearn, value);
+    }
+
+    public string HalconAngleStartDeg
+    {
+        get => _halconAngleStartDeg;
+        set => SetHalconEditorValue(ref _halconAngleStartDeg, value, requiresRelearn: true);
+    }
+
+    public string HalconAngleExtentDeg
+    {
+        get => _halconAngleExtentDeg;
+        set => SetHalconEditorValue(ref _halconAngleExtentDeg, value, requiresRelearn: true);
+    }
+
+    public string HalconScaleMin
+    {
+        get => _halconScaleMin;
+        set => SetHalconEditorValue(ref _halconScaleMin, value, requiresRelearn: true);
+    }
+
+    public string HalconScaleMax
+    {
+        get => _halconScaleMax;
+        set => SetHalconEditorValue(ref _halconScaleMax, value, requiresRelearn: true);
+    }
+
+    public string HalconCandidateMinScore
+    {
+        get => _halconCandidateMinScore;
+        set => SetHalconEditorValue(ref _halconCandidateMinScore, value);
+    }
+
+    public string HalconOuterCoverageMin
+    {
+        get => _halconOuterCoverageMin;
+        set => SetHalconEditorValue(ref _halconOuterCoverageMin, value);
+    }
+
+    public string HalconInnerCoverageMin
+    {
+        get => _halconInnerCoverageMin;
+        set => SetHalconEditorValue(ref _halconInnerCoverageMin, value);
+    }
+
+    public string HalconEdgeTolerancePx
+    {
+        get => _halconEdgeTolerancePx;
+        set => SetHalconEditorValue(ref _halconEdgeTolerancePx, value);
+    }
+
+    public string HalconPolarityAgreementMin
+    {
+        get => _halconPolarityAgreementMin;
+        set => SetHalconEditorValue(ref _halconPolarityAgreementMin, value);
+    }
+
+    public string HalconCandidateMaxOverlap
+    {
+        get => _halconCandidateMaxOverlap;
+        set => SetHalconEditorValue(ref _halconCandidateMaxOverlap, value);
+    }
+
+    public string HalconMaxOverlap
+    {
+        get => _halconMaxOverlap;
+        set => SetHalconEditorValue(ref _halconMaxOverlap, value);
+    }
+
+    public string HalconGreediness
+    {
+        get => _halconGreediness;
+        set => SetHalconEditorValue(ref _halconGreediness, value);
+    }
+
+    public string HalconSubPixel
+    {
+        get => _halconSubPixel;
+        set => SetHalconEditorValue(ref _halconSubPixel, value);
+    }
+
+    public string HalconNumLevels
+    {
+        get => _halconNumLevels;
+        set => SetHalconEditorValue(ref _halconNumLevels, value, requiresRelearn: true);
+    }
+
+    public string HalconOperatorTimeoutMs
+    {
+        get => _halconOperatorTimeoutMs;
+        set => SetHalconEditorValue(ref _halconOperatorTimeoutMs, value);
+    }
+
+    public string HalconCandidateLimit
+    {
+        get => _halconCandidateLimit;
+        set => SetHalconEditorValue(ref _halconCandidateLimit, value);
+    }
+
+    public string HalconExpectedCount
+    {
+        get => _halconExpectedCount;
+        set => SetHalconEditorValue(ref _halconExpectedCount, value);
+    }
 
     public string TemplatePreviewImagePng
     {
@@ -302,17 +513,15 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
     public DelegateCommand<Point2D> PlaceRoiCommand { get; }
 
-    public DelegateCommand MoreCommand { get; }
-
-    public DelegateCommand LearnTemplateCommand { get; }
+    public AsyncDelegateCommand LearnTemplateCommand { get; }
 
     public DelegateCommand ResetTemplateCommand { get; }
 
     public DelegateCommand SetStandardCommand { get; }
 
-    public DelegateCommand RunToolCommand { get; }
+    public AsyncDelegateCommand RunToolCommand { get; }
 
-    public DelegateCommand RunFlowCommand { get; }
+    public AsyncDelegateCommand RunFlowCommand { get; }
 
     public DelegateCommand ConfirmCommand { get; }
 
@@ -411,6 +620,15 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         {
             if (SetProperty(ref _selectedMatchMode, NormalizeMatchMode(value)))
             {
+                if (_toolKind == VisionToolKind.MultiTargetMatch)
+                {
+                    _openCvMultiMatchModeState = _selectedMatchMode;
+                }
+                else
+                {
+                    _openCvMatchModeState = _selectedMatchMode;
+                }
+
                 StatusText = $"匹配方法：{GetMatchModeName(_selectedMatchMode)}";
             }
         }
@@ -591,23 +809,49 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         private set => SetProperty(ref _statusText, value);
     }
 
-    public void ApplyTo(VisionToolItem tool)
+    public bool ApplyTo(VisionToolItem tool)
     {
+        SyncEditorRois();
+        Dictionary<string, string> parameters;
+        try
+        {
+            parameters = BuildCurrentParameters();
+        }
+        catch (TemplateMatchingConfigurationException exception)
+        {
+            StatusText = FormatDiagnostic(exception);
+            return false;
+        }
+
         tool.Name = string.IsNullOrWhiteSpace(Name) ? tool.Name : Name.Trim();
         tool.Kind = _toolKind;
         tool.Enabled = Enabled;
         tool.RoiId = RoiId ?? string.Empty;
-
-        SyncEditorRois();
-        var parameters = BuildCurrentParameters();
         tool.ParametersText = FormatParameters(parameters);
+        _parameters = new Dictionary<string, string>(parameters, StringComparer.OrdinalIgnoreCase);
+        RaisePropertyChanged(nameof(PendingParameters));
+        return true;
     }
 
     public async Task<bool> PrepareToCloseAsync()
     {
         SyncEditorRois();
         var capture = await CaptureRoiReferencePoseIfNeededAsync();
-        return capture.IsSuccess;
+        if (!capture.IsSuccess)
+        {
+            return false;
+        }
+
+        try
+        {
+            _ = BuildCurrentParameters();
+            return true;
+        }
+        catch (TemplateMatchingConfigurationException exception)
+        {
+            StatusText = FormatDiagnostic(exception);
+            return false;
+        }
     }
 
     private void CreateRoi()
@@ -863,20 +1107,31 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         StatusText = $"模板区域类型：{shape.Name}";
     }
 
-    private void ShowMoreOptions()
+    private async Task LearnTemplateAsync(CancellationToken cancellationToken)
     {
-        StatusText = "更多模板参数暂未开放，后续接入 HALCON 高级参数";
-    }
-
-    private void LearnTemplate()
-    {
-        if (TryLearnTemplate())
+        if (IsBusy)
         {
-            _ = RunToolAsync();
+            return;
+        }
+
+        IsBusy = true;
+        var learned = false;
+        try
+        {
+            learned = await TryLearnTemplateAsync(cancellationToken);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        if (learned)
+        {
+            await RunToolAsync(cancellationToken);
         }
     }
 
-    private bool TryLearnTemplate()
+    private async Task<bool> TryLearnTemplateAsync(CancellationToken cancellationToken)
     {
         if (CurrentFrame is null)
         {
@@ -894,22 +1149,51 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             SyncEditorRois();
-            var learned = TemplateMatcher.Learn(CurrentFrame, FindSelectedRoi(), BuildCurrentParameters());
-            foreach (var parameter in learned)
+            if (!TryGetTemplateRoiDefinition(out var templateRoi))
             {
-                _parameters[parameter.Key] = parameter.Value;
+                StatusText = "Please place a template ROI before learning.";
+                return false;
             }
 
-            var standardCreated = SetLearnedStandardPose(learned);
-            TemplatePreviewImagePng = GetString(learned, "templateImagePng", string.Empty);
-            TemplatePreviewEdgeOverlayPng = GetString(learned, "templateEdgeOverlayPng", string.Empty);
+            var persisted = BuildCurrentParameters();
+            var requestParameters = BuildActiveRequestParameters(persisted, out _);
+            EnsureStableOwnerForHalcon();
+            var result = await _matchingService.LearnAsync(
+                new TemplateLearningRequest(
+                    CreateModelOwner(),
+                    CurrentFrame,
+                    templateRoi,
+                    FindSelectedRoi(),
+                    requestParameters),
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!result.Success)
+            {
+                StatusText = result.Diagnostic is null
+                    ? result.Message
+                    : FormatDiagnostic(result.Diagnostic);
+                return false;
+            }
+
+            var merged = new Dictionary<string, string>(persisted, StringComparer.OrdinalIgnoreCase);
+            foreach (var parameter in result.Parameters)
+            {
+                merged[parameter.Key] = parameter.Value;
+            }
+
+            var standardCreated = result.Engine != TemplateMatchingEngine.Halcon &&
+                                  SetLearnedStandardPose(merged, result.Parameters);
+            var previewImage = GetString(merged, "templateImagePng", string.Empty);
+            var previewEdges = GetString(merged, "templateEdgeOverlayPng", string.Empty);
 
             // Save template pixels to a resource file for persistent model storage
-            if (learned.TryGetValue("templatePixels", out var pixelsBase64) &&
+            if (result.Engine != TemplateMatchingEngine.Halcon &&
+                merged.TryGetValue("templatePixels", out var pixelsBase64) &&
                 !string.IsNullOrWhiteSpace(pixelsBase64) &&
-                learned.TryGetValue("templateWidth", out var tw) &&
-                learned.TryGetValue("templateHeight", out var th))
+                merged.ContainsKey("templateWidth") &&
+                merged.ContainsKey("templateHeight"))
             {
                 try
                 {
@@ -919,8 +1203,8 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                     Directory.CreateDirectory(resourceDir);
                     var filePath = Path.Combine(resourceDir, "template.bin");
                     File.WriteAllBytes(filePath, Convert.FromBase64String(pixelsBase64));
-                    _parameters["modelPath"] = filePath;
-                    _parameters["modelVersion"] = "1.0";
+                    merged["modelPath"] = filePath;
+                    merged["modelVersion"] = "1.0";
                 }
                 catch (Exception ex)
                 {
@@ -928,19 +1212,38 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                 }
             }
 
-            if (!HasLearnedTemplateModel(_parameters))
+            if (result.Engine != TemplateMatchingEngine.Halcon && !HasLearnedTemplateModel(merged))
             {
                 StatusText = "Template learn failed: model data was not generated.";
                 _log.Warning("VisionDebug", $"{Name} template learn failed: model data was not generated");
                 return false;
             }
 
+            _parameters = merged;
+            if (result.Engine == TemplateMatchingEngine.Halcon)
+            {
+                _halconLearnedSuccessfullyInSession = true;
+                RequiresRelearn = false;
+            }
+            TemplatePreviewImagePng = previewImage;
+            TemplatePreviewEdgeOverlayPng = previewEdges;
+            RaisePropertyChanged(nameof(PendingParameters));
             StatusText = standardCreated
-                ? $"Template learned: {learned["templateWidth"]}x{learned["templateHeight"]}; standard pose updated."
-                : $"Template learned: {learned["templateWidth"]}x{learned["templateHeight"]}";
-            _log.Info("VisionDebug", $"{Name} template learned {learned["templateWidth"]}x{learned["templateHeight"]}");
+                ? $"{result.Message}; standard pose updated."
+                : result.Message;
+            _log.Info("VisionDebug", $"{Name} {result.Message}");
             HideTemplateRoiEditor();
             return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (TemplateMatchingConfigurationException exception)
+        {
+            StatusText = FormatDiagnostic(exception);
+            _log.Warning("VisionDebug", $"{Name} template learn configuration failed: {exception.Code}");
+            return false;
         }
         catch (Exception ex)
         {
@@ -972,6 +1275,12 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
     private void SetStandard()
     {
+        if (SelectedEngine == TemplateMatchingEngine.Halcon)
+        {
+            StatusText = "HALCON 标准位姿由模型元数据管理；请重新学习模板生成新模型。";
+            return;
+        }
+
         if (!_hasMatchResult)
         {
             StatusText = "请先匹配模板，再设置标准";
@@ -985,7 +1294,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         StatusText = $"已设置当前匹配结果为标准：{PoseText}";
     }
 
-    private async Task RunToolAsync()
+    private async Task RunToolAsync(CancellationToken cancellationToken = default)
     {
         if (IsBusy)
         {
@@ -999,11 +1308,11 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             return;
         }
 
-        await RunTemplateMatcherAsync();
+        await RunTemplateMatcherAsync(cancellationToken);
 
     }
 
-    private async Task RunTemplateMatcherAsync()
+    private async Task RunTemplateMatcherAsync(CancellationToken cancellationToken)
     {
         if (CurrentFrame is null || IsBusy)
         {
@@ -1014,10 +1323,13 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         var stopwatch = Stopwatch.StartNew();
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             _lastTemplateMatch = null;
             ClearMultiTargetResults();
             _mappedSearchRoi = null;
             RefreshPreviewOverlays();
+            await Task.Yield();
+            cancellationToken.ThrowIfCancellationRequested();
             SyncEditorRois();
             var frame = CurrentFrame!;
             var configuredReference = ReadConfiguredReferencePose();
@@ -1052,21 +1364,35 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             var roi = mapping.Roi;
             _mappedSearchRoi = roi;
             var currentParameters = BuildCurrentParameters();
-            if (!HasLearnedTemplateModel(currentParameters) && _templateRoiEditor is not null && !TryLearnTemplate())
+            if (!HasActiveLearnedTemplateModel(currentParameters) &&
+                _templateRoiEditor is not null &&
+                !await TryLearnTemplateAsync(cancellationToken))
             {
                 return;
             }
 
-            var parameters = BuildCurrentParameters();
+            var persisted = BuildCurrentParameters();
+            var parameters = BuildActiveRequestParameters(persisted, out var expectedCount);
+            EnsureStableOwnerForHalcon();
+            var batch = await _matchingService.MatchAsync(
+                new TemplateMatchingRequest(
+                    CreateModelOwner(),
+                    frame,
+                    roi,
+                    parameters,
+                    GetCardinality(),
+                    expectedCount),
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (_toolKind == VisionToolKind.MultiTargetMatch)
             {
                 _lastTemplateMatch = null;
-                var multiMatch = await Task.Run(() => MultiTargetMatcher.Match(frame, roi, parameters));
                 stopwatch.Stop();
 
+                var multiMatch = TemplateMatchResultProjector.ToMulti(batch);
                 SetMultiTargetResults(multiMatch.Matches);
                 DurationText = $"{stopwatch.ElapsedMilliseconds}ms";
-                _matchState = multiMatch.Outcome == InspectionOutcome.Ok ? VisionOverlayState.Ok : VisionOverlayState.Ng;
+                _matchState = batch.Outcome == InspectionOutcome.Ok ? VisionOverlayState.Ok : VisionOverlayState.Ng;
                 if (MultiTargetResultPoints.FirstOrDefault() is { } bestPoint)
                 {
                     SelectedMultiTargetResultPoint = bestPoint;
@@ -1085,12 +1411,12 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
                 RefreshPreviewOverlays();
                 SelectTab(Tabs.First(tab => tab.Key == "Result"));
-                StatusText = multiMatch.Message;
-                _log.Info("VisionDebug", $"{Name} {multiMatch.Message} best={ScoreText} {PoseText}");
+                StatusText = batch.Diagnostic is null ? batch.Message : FormatDiagnostic(batch.Diagnostic);
+                _log.Info("VisionDebug", $"{Name} {batch.Message} best={ScoreText} {PoseText}");
                 return;
             }
 
-            var match = await Task.Run(() => TemplateMatcher.Match(frame, roi, parameters));
+            var match = TemplateMatchResultProjector.ToSingle(batch);
             stopwatch.Stop();
 
             _lastTemplateMatch = match;
@@ -1104,11 +1430,28 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             _matchScale = match.Pose.Scale;
             _matchState = match.Outcome == InspectionOutcome.Ok ? VisionOverlayState.Ok : VisionOverlayState.Ng;
             _hasMatchResult = match.HasMatch;
-            var standardCreated = TrySetInitialStandard(match);
+            var standardCreated = batch.Engine != TemplateMatchingEngine.Halcon && TrySetInitialStandard(match);
             RefreshPreviewOverlays();
             SelectTab(Tabs.First(tab => tab.Key == "Result"));
-            StatusText = standardCreated ? $"{match.Message}；已建立标准位姿" : match.Message;
+            StatusText = batch.Diagnostic is not null
+                ? FormatDiagnostic(batch.Diagnostic)
+                : standardCreated
+                    ? $"{match.Message}；已建立标准位姿"
+                    : match.Message;
             _log.Info("VisionDebug", $"{Name} {match.Message} score={ScoreText} pose={PoseText}");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (TemplateMatchingConfigurationException exception)
+        {
+            ClearFailedRunResult(FormatDiagnostic(exception));
+        }
+        catch (Exception exception)
+        {
+            ClearFailedRunResult($"Template match failed: {exception.Message}");
+            _log.Error("VisionDebug", $"{Name} template match failed: {exception.Message}");
         }
         finally
         {
@@ -1133,7 +1476,9 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         return true;
     }
 
-    private bool SetLearnedStandardPose(IReadOnlyDictionary<string, string> learned)
+    private static bool SetLearnedStandardPose(
+        IDictionary<string, string> parameters,
+        IReadOnlyDictionary<string, string> learned)
     {
         if (!TryGetDouble(learned, "templateX", out var x) ||
             !TryGetDouble(learned, "templateY", out var y) ||
@@ -1143,10 +1488,136 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             return false;
         }
 
-        _parameters["standardX"] = (x + width / 2.0).ToString("0.###", CultureInfo.InvariantCulture);
-        _parameters["standardY"] = (y + height / 2.0).ToString("0.###", CultureInfo.InvariantCulture);
-        _parameters["standardAngle"] = "0";
+        parameters["standardX"] = (x + width / 2.0).ToString("0.###", CultureInfo.InvariantCulture);
+        parameters["standardY"] = (y + height / 2.0).ToString("0.###", CultureInfo.InvariantCulture);
+        parameters["standardAngle"] = "0";
+        parameters.TryAdd("standardScale", "1");
         return true;
+    }
+
+    private bool TryGetTemplateRoiDefinition(out RoiDefinition templateRoi)
+    {
+        if (_templateRoiEditor is not null)
+        {
+            templateRoi = _templateRoiEditor.ToDefinition();
+            return true;
+        }
+
+        if (TryReadTemplateRoiDefinition(out templateRoi))
+        {
+            return true;
+        }
+
+        if (!TryGetTemplateRoiGeometry(out var x, out var y, out var width, out var height))
+        {
+            templateRoi = null!;
+            return false;
+        }
+
+        templateRoi = new RoiDefinition
+        {
+            Id = "template-roi",
+            Name = "Template ROI",
+            Shape = GetTemplateShape(),
+            X = x,
+            Y = y,
+            Width = width,
+            Height = height,
+            Angle = GetDouble(_parameters, "templateRoiAngle", 0),
+            Radius = GetDouble(_parameters, "templateRoiRadius", Math.Min(width, height) / 2d)
+        };
+        return true;
+    }
+
+    private Dictionary<string, string> BuildActiveRequestParameters(
+        IReadOnlyDictionary<string, string> persisted,
+        out int expectedCount)
+    {
+        var request = new Dictionary<string, string>(persisted, StringComparer.OrdinalIgnoreCase);
+        expectedCount = 1;
+        if (SelectedEngine == TemplateMatchingEngine.Halcon)
+        {
+            request[TemplateMatchingParameterCatalog.Engine] = TemplateMatchingEngine.Halcon.ToString();
+            request[TemplateMatchingParameterCatalog.MatchMode] = "Shape";
+            if (_toolKind == VisionToolKind.MultiTargetMatch)
+            {
+                request["multiMatchMode"] = "Shape";
+            }
+
+            var parsed = TemplateMatchingParameterCatalog.ParseHalcon(request, GetCardinality());
+            expectedCount = parsed.ExpectedCount;
+            request.Remove(TemplateMatchingParameterCatalog.LegacyMatchCount);
+            if (_toolKind == VisionToolKind.MultiTargetMatch)
+            {
+                request[TemplateMatchingParameterCatalog.ExpectedCount] =
+                    expectedCount.ToString(CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                request.Remove(TemplateMatchingParameterCatalog.ExpectedCount);
+            }
+
+            return request;
+        }
+
+        if (_toolKind == VisionToolKind.MultiTargetMatch &&
+            request.TryGetValue("minCount", out var minimumRaw) &&
+            int.TryParse(minimumRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var minimum) &&
+            minimum is >= 1 and <= 100)
+        {
+            expectedCount = minimum;
+        }
+
+        return request;
+    }
+
+    private TemplateModelOwner CreateModelOwner()
+    {
+        return new TemplateModelOwner(
+            _previewRecipe?.Id ?? string.Empty,
+            _previewRecipe?.GetActiveFlow().Id ?? string.Empty,
+            _toolId);
+    }
+
+    private void EnsureStableOwnerForHalcon()
+    {
+        if (SelectedEngine != TemplateMatchingEngine.Halcon)
+        {
+            return;
+        }
+
+        var owner = CreateModelOwner();
+        if (string.IsNullOrWhiteSpace(owner.RecipeId) ||
+            string.IsNullOrWhiteSpace(owner.FlowId) ||
+            string.IsNullOrWhiteSpace(owner.ToolId))
+        {
+            throw new TemplateMatchingConfigurationException(
+                TemplateMatchingDiagnostics.Create(
+                    TemplateMatchingDiagnosticCodes.ConfigInvalidParameter,
+                    "HALCON learning and trial run require stable RecipeId, FlowId, and ToolId values."));
+        }
+    }
+
+    private bool HasActiveLearnedTemplateModel(IReadOnlyDictionary<string, string> parameters)
+    {
+        if (SelectedEngine != TemplateMatchingEngine.Halcon)
+        {
+            return HasLearnedTemplateModel(parameters);
+        }
+
+        if (_halconLearnedSuccessfullyInSession)
+        {
+            return true;
+        }
+
+        try
+        {
+            return TemplateModelParameterCodec.ReadHalcon(parameters) is not null;
+        }
+        catch (TemplateMatchingConfigurationException)
+        {
+            return false;
+        }
     }
 
     private async Task<RoiReferenceCaptureResult> CaptureRoiReferencePoseIfNeededAsync()
@@ -1489,9 +1960,9 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         RaisePropertyChanged(nameof(MultiTargetResultSummary));
     }
 
-    private async Task RunFlowAsync()
+    private async Task RunFlowAsync(CancellationToken cancellationToken)
     {
-        await RunToolAsync();
+        await RunToolAsync(cancellationToken);
         RunFlowRequested = true;
         CloseRequested?.Invoke(this, true);
     }
@@ -1929,24 +2400,215 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
                TryGetDouble(_parameters, "templateHeight", out height);
     }
 
+    private static TemplateMatchingEngine ResolveSelectedEngine(
+        IReadOnlyDictionary<string, string> parameters)
+    {
+        if (!parameters.TryGetValue(TemplateMatchingParameterCatalog.Engine, out var raw) ||
+            string.IsNullOrWhiteSpace(raw))
+        {
+            return TemplateMatchingEngine.OpenCv;
+        }
+
+        return Enum.TryParse<TemplateMatchingEngine>(raw.Trim(), true, out var engine) &&
+               engine != TemplateMatchingEngine.Unknown
+            ? engine
+            : TemplateMatchingEngine.Unknown;
+    }
+
+    private void LoadHalconEditorValues(IReadOnlyDictionary<string, string> parameters)
+    {
+        var defaults = TemplateMatchingParameterCatalog.CreateStrictDefaults(GetCardinality());
+        _halconAngleStartDeg = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.AngleStartDeg);
+        _halconAngleExtentDeg = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.AngleExtentDeg);
+        _halconScaleMin = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.ScaleMin);
+        _halconScaleMax = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.ScaleMax);
+        _halconCandidateMinScore = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.CandidateMinScore);
+        _halconOuterCoverageMin = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.OuterCoverageMin);
+        _halconInnerCoverageMin = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.InnerCoverageMin);
+        _halconEdgeTolerancePx = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.EdgeTolerancePx);
+        _halconPolarityAgreementMin = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.PolarityAgreementMin);
+        _halconCandidateMaxOverlap = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.CandidateMaxOverlap);
+        _halconMaxOverlap = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.MaxOverlap);
+        _halconGreediness = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.Greediness);
+        _halconSubPixel = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.SubPixel);
+        _halconNumLevels = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.NumLevels);
+        _halconOperatorTimeoutMs = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.OperatorTimeoutMs);
+        _halconCandidateLimit = GetRaw(parameters, defaults, TemplateMatchingParameterCatalog.CandidateLimit);
+        var defaultExpectedCount = _toolKind == VisionToolKind.MultiTargetMatch
+            ? defaults[TemplateMatchingParameterCatalog.ExpectedCount]
+            : "1";
+        _halconExpectedCount = parameters.TryGetValue(TemplateMatchingParameterCatalog.ExpectedCount, out var expected)
+            ? expected
+            : _selectedEngine == TemplateMatchingEngine.Halcon &&
+              parameters.TryGetValue(TemplateMatchingParameterCatalog.LegacyMatchCount, out var legacy)
+                ? legacy
+                : defaultExpectedCount;
+    }
+
+    private TemplateMatchingPreset? DetectPreset()
+    {
+        if (SelectedEngine != TemplateMatchingEngine.Halcon)
+        {
+            return null;
+        }
+
+        foreach (var preset in PresetOptions)
+        {
+            var values = TemplateMatchingParameterCatalog.CreateDefaults(preset, GetCardinality());
+            if (HalconEditorValuesMatch(values))
+            {
+                return preset;
+            }
+        }
+
+        return null;
+    }
+
+    private bool HalconEditorValuesMatch(IReadOnlyDictionary<string, string> values)
+    {
+        return string.Equals(HalconAngleStartDeg, values[TemplateMatchingParameterCatalog.AngleStartDeg], StringComparison.Ordinal) &&
+               string.Equals(HalconAngleExtentDeg, values[TemplateMatchingParameterCatalog.AngleExtentDeg], StringComparison.Ordinal) &&
+               string.Equals(HalconScaleMin, values[TemplateMatchingParameterCatalog.ScaleMin], StringComparison.Ordinal) &&
+               string.Equals(HalconScaleMax, values[TemplateMatchingParameterCatalog.ScaleMax], StringComparison.Ordinal) &&
+               string.Equals(HalconCandidateMinScore, values[TemplateMatchingParameterCatalog.CandidateMinScore], StringComparison.Ordinal) &&
+               string.Equals(HalconOuterCoverageMin, values[TemplateMatchingParameterCatalog.OuterCoverageMin], StringComparison.Ordinal) &&
+               string.Equals(HalconInnerCoverageMin, values[TemplateMatchingParameterCatalog.InnerCoverageMin], StringComparison.Ordinal) &&
+               string.Equals(HalconEdgeTolerancePx, values[TemplateMatchingParameterCatalog.EdgeTolerancePx], StringComparison.Ordinal) &&
+               string.Equals(HalconPolarityAgreementMin, values[TemplateMatchingParameterCatalog.PolarityAgreementMin], StringComparison.Ordinal) &&
+               string.Equals(HalconCandidateMaxOverlap, values[TemplateMatchingParameterCatalog.CandidateMaxOverlap], StringComparison.Ordinal) &&
+               string.Equals(HalconMaxOverlap, values[TemplateMatchingParameterCatalog.MaxOverlap], StringComparison.Ordinal) &&
+               string.Equals(HalconGreediness, values[TemplateMatchingParameterCatalog.Greediness], StringComparison.Ordinal) &&
+               string.Equals(HalconSubPixel, values[TemplateMatchingParameterCatalog.SubPixel], StringComparison.Ordinal) &&
+               string.Equals(HalconNumLevels, values[TemplateMatchingParameterCatalog.NumLevels], StringComparison.Ordinal) &&
+               string.Equals(HalconOperatorTimeoutMs, values[TemplateMatchingParameterCatalog.OperatorTimeoutMs], StringComparison.Ordinal) &&
+               string.Equals(HalconCandidateLimit, values[TemplateMatchingParameterCatalog.CandidateLimit], StringComparison.Ordinal);
+    }
+
+    private void ApplyPreset(TemplateMatchingPreset preset)
+    {
+        var values = TemplateMatchingParameterCatalog.CreateDefaults(preset, GetCardinality());
+        var generationChanged =
+            !string.Equals(HalconAngleStartDeg, values[TemplateMatchingParameterCatalog.AngleStartDeg], StringComparison.Ordinal) ||
+            !string.Equals(HalconAngleExtentDeg, values[TemplateMatchingParameterCatalog.AngleExtentDeg], StringComparison.Ordinal) ||
+            !string.Equals(HalconScaleMin, values[TemplateMatchingParameterCatalog.ScaleMin], StringComparison.Ordinal) ||
+            !string.Equals(HalconScaleMax, values[TemplateMatchingParameterCatalog.ScaleMax], StringComparison.Ordinal) ||
+            !string.Equals(HalconNumLevels, values[TemplateMatchingParameterCatalog.NumLevels], StringComparison.Ordinal);
+        _applyingPreset = true;
+        try
+        {
+            HalconAngleStartDeg = values[TemplateMatchingParameterCatalog.AngleStartDeg];
+            HalconAngleExtentDeg = values[TemplateMatchingParameterCatalog.AngleExtentDeg];
+            HalconScaleMin = values[TemplateMatchingParameterCatalog.ScaleMin];
+            HalconScaleMax = values[TemplateMatchingParameterCatalog.ScaleMax];
+            HalconCandidateMinScore = values[TemplateMatchingParameterCatalog.CandidateMinScore];
+            HalconOuterCoverageMin = values[TemplateMatchingParameterCatalog.OuterCoverageMin];
+            HalconInnerCoverageMin = values[TemplateMatchingParameterCatalog.InnerCoverageMin];
+            HalconEdgeTolerancePx = values[TemplateMatchingParameterCatalog.EdgeTolerancePx];
+            HalconPolarityAgreementMin = values[TemplateMatchingParameterCatalog.PolarityAgreementMin];
+            HalconCandidateMaxOverlap = values[TemplateMatchingParameterCatalog.CandidateMaxOverlap];
+            HalconMaxOverlap = values[TemplateMatchingParameterCatalog.MaxOverlap];
+            HalconGreediness = values[TemplateMatchingParameterCatalog.Greediness];
+            HalconSubPixel = values[TemplateMatchingParameterCatalog.SubPixel];
+            HalconNumLevels = values[TemplateMatchingParameterCatalog.NumLevels];
+            HalconOperatorTimeoutMs = values[TemplateMatchingParameterCatalog.OperatorTimeoutMs];
+            HalconCandidateLimit = values[TemplateMatchingParameterCatalog.CandidateLimit];
+        }
+        finally
+        {
+            _applyingPreset = false;
+        }
+
+        SetProperty(ref _selectedPreset, preset, nameof(SelectedPreset));
+        if (generationChanged)
+        {
+            _halconLearnedSuccessfullyInSession = false;
+            RequiresRelearn = true;
+        }
+    }
+
+    private bool SetHalconEditorValue(
+        ref string storage,
+        string? value,
+        bool requiresRelearn = false,
+        [CallerMemberName] string? propertyName = null)
+    {
+        if (!SetProperty(ref storage, value ?? string.Empty, propertyName))
+        {
+            return false;
+        }
+
+        if (!_applyingPreset)
+        {
+            if (_selectedPreset is not null)
+            {
+                _selectedPreset = null;
+                RaisePropertyChanged(nameof(SelectedPreset));
+            }
+
+            if (requiresRelearn)
+            {
+                _halconLearnedSuccessfullyInSession = false;
+                RequiresRelearn = true;
+            }
+        }
+
+        return true;
+    }
+
+    private TemplateMatchCardinality GetCardinality()
+    {
+        return _toolKind == VisionToolKind.MultiTargetMatch
+            ? TemplateMatchCardinality.ExactCount
+            : TemplateMatchCardinality.Single;
+    }
+
+    private static string GetRaw(
+        IReadOnlyDictionary<string, string> parameters,
+        IReadOnlyDictionary<string, string> defaults,
+        string key)
+    {
+        return parameters.TryGetValue(key, out var value) ? value : defaults[key];
+    }
+
+    private void OverlayHalconEditorValues(IDictionary<string, string> parameters)
+    {
+        parameters[TemplateMatchingParameterCatalog.AngleStartDeg] = HalconAngleStartDeg;
+        parameters[TemplateMatchingParameterCatalog.AngleExtentDeg] = HalconAngleExtentDeg;
+        parameters[TemplateMatchingParameterCatalog.ScaleMin] = HalconScaleMin;
+        parameters[TemplateMatchingParameterCatalog.ScaleMax] = HalconScaleMax;
+        parameters[TemplateMatchingParameterCatalog.CandidateMinScore] = HalconCandidateMinScore;
+        parameters[TemplateMatchingParameterCatalog.OuterCoverageMin] = HalconOuterCoverageMin;
+        parameters[TemplateMatchingParameterCatalog.InnerCoverageMin] = HalconInnerCoverageMin;
+        parameters[TemplateMatchingParameterCatalog.EdgeTolerancePx] = HalconEdgeTolerancePx;
+        parameters[TemplateMatchingParameterCatalog.PolarityAgreementMin] = HalconPolarityAgreementMin;
+        parameters[TemplateMatchingParameterCatalog.CandidateMaxOverlap] = HalconCandidateMaxOverlap;
+        parameters[TemplateMatchingParameterCatalog.MaxOverlap] = HalconMaxOverlap;
+        parameters[TemplateMatchingParameterCatalog.Greediness] = HalconGreediness;
+        parameters[TemplateMatchingParameterCatalog.SubPixel] = HalconSubPixel;
+        parameters[TemplateMatchingParameterCatalog.NumLevels] = HalconNumLevels;
+        parameters[TemplateMatchingParameterCatalog.OperatorTimeoutMs] = HalconOperatorTimeoutMs;
+        parameters[TemplateMatchingParameterCatalog.CandidateLimit] = HalconCandidateLimit;
+        if (_toolKind == VisionToolKind.MultiTargetMatch)
+        {
+            parameters[TemplateMatchingParameterCatalog.ExpectedCount] = HalconExpectedCount;
+        }
+    }
+
+    private static string FormatDiagnostic(TemplateMatchingDiagnostic diagnostic)
+    {
+        return $"{diagnostic.Code}: {diagnostic.UserMessage}";
+    }
+
+    private static string FormatDiagnostic(TemplateMatchingConfigurationException exception)
+    {
+        return $"{exception.Code}: {exception.Message}";
+    }
+
     private Dictionary<string, string> BuildCurrentParameters()
     {
         var parameters = new Dictionary<string, string>(_parameters, StringComparer.OrdinalIgnoreCase)
         {
-            ["minScore"] = MinScore.ToString("0.###", CultureInfo.InvariantCulture),
-            ["pyramidLevels"] = PyramidLevels.ToString(CultureInfo.InvariantCulture),
-            ["angleStart"] = AngleStart.ToString("0.###", CultureInfo.InvariantCulture),
-            ["angleExtent"] = AngleExtent.ToString("0.###", CultureInfo.InvariantCulture),
-            ["angleStep"] = GetParameterValue("angleStep", "2"),
-            ["engine"] = GetParameterValue("engine", "OpenCv"),
-            ["matchMode"] = SelectedMatchMode,
-            ["autoLearnTemplate"] = GetParameterValue("autoLearnTemplate", "False"),
-            ["cannyLow"] = GetEdgeCannyLow().ToString("0.###", CultureInfo.InvariantCulture),
-            ["cannyHigh"] = GetEdgeCannyHigh().ToString("0.###", CultureInfo.InvariantCulture),
-            ["polarity"] = Polarity,
-            ["contrast"] = Contrast.ToString("0.###", CultureInfo.InvariantCulture),
-            ["autoContrast"] = AutoContrast.ToString(),
-            ["matchCount"] = MatchCount.ToString(CultureInfo.InvariantCulture),
+            [TemplateMatchingParameterCatalog.Engine] = SelectedEngine.ToString(),
             ["templateShape"] = SelectedTemplateShape,
             ["showTemplateRegion"] = ShowTemplateRegion.ToString(),
             ["showSearchRegion"] = ShowSearchRegion.ToString(),
@@ -1955,15 +2617,70 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             ["enabledOutputs"] = FormatEnabledOutputKeys()
         };
 
-        if (_toolKind == VisionToolKind.MultiTargetMatch)
+        if (SelectedEngine is TemplateMatchingEngine.OpenCv or TemplateMatchingEngine.ManagedNcc)
         {
-            parameters.Remove("shapeScoreVersion");
-            parameters.Remove("shapeCoverageDistance");
+            parameters["minScore"] = MinScore.ToString("0.###", CultureInfo.InvariantCulture);
+            parameters["pyramidLevels"] = PyramidLevels.ToString(CultureInfo.InvariantCulture);
+            parameters["angleStart"] = AngleStart.ToString("0.###", CultureInfo.InvariantCulture);
+            parameters["angleExtent"] = AngleExtent.ToString("0.###", CultureInfo.InvariantCulture);
+            parameters["angleStep"] = GetParameterValue("angleStep", "2");
+            parameters[TemplateMatchingParameterCatalog.MatchMode] = _toolKind == VisionToolKind.MultiTargetMatch
+                ? _openCvMatchModeState
+                : SelectedMatchMode;
+            if (_toolKind == VisionToolKind.MultiTargetMatch)
+            {
+                parameters["multiMatchMode"] = SelectedMatchMode;
+            }
+
+            parameters.Remove(OpenCvMatchModeStateKey);
+            parameters.Remove(OpenCvMultiMatchModeStateKey);
+            parameters["autoLearnTemplate"] = GetParameterValue("autoLearnTemplate", "False");
+            parameters["cannyLow"] = GetEdgeCannyLow().ToString("0.###", CultureInfo.InvariantCulture);
+            parameters["cannyHigh"] = GetEdgeCannyHigh().ToString("0.###", CultureInfo.InvariantCulture);
+            parameters["polarity"] = Polarity;
+            parameters["contrast"] = Contrast.ToString("0.###", CultureInfo.InvariantCulture);
+            parameters["autoContrast"] = AutoContrast.ToString();
+            parameters[TemplateMatchingParameterCatalog.LegacyMatchCount] =
+                MatchCount.ToString(CultureInfo.InvariantCulture);
+
+            if (_toolKind == VisionToolKind.MultiTargetMatch)
+            {
+                parameters.Remove("shapeScoreVersion");
+                parameters.Remove("shapeCoverageDistance");
+            }
+            else if (SelectedMatchMode.Equals("Shape", StringComparison.OrdinalIgnoreCase))
+            {
+                parameters["shapeScoreVersion"] = "2";
+                parameters["shapeCoverageDistance"] = GetParameterValue("shapeCoverageDistance", "3");
+            }
         }
-        else if (SelectedMatchMode.Equals("Shape", StringComparison.OrdinalIgnoreCase))
+        else if (SelectedEngine == TemplateMatchingEngine.Halcon)
         {
-            parameters["shapeScoreVersion"] = "2";
-            parameters["shapeCoverageDistance"] = GetParameterValue("shapeCoverageDistance", "3");
+            if (_rejectLoadedHalconMode)
+            {
+                throw new TemplateMatchingConfigurationException(
+                    TemplateMatchingDiagnostics.Create(
+                        TemplateMatchingDiagnosticCodes.ConfigUnsupportedMode,
+                        "HALCON template matching supports Shape mode only."));
+            }
+
+            parameters[OpenCvMatchModeStateKey] = _openCvMatchModeState;
+            if (_toolKind == VisionToolKind.MultiTargetMatch)
+            {
+                parameters[OpenCvMultiMatchModeStateKey] = _openCvMultiMatchModeState;
+                parameters["multiMatchMode"] = "Shape";
+            }
+
+            OverlayHalconEditorValues(parameters);
+            parameters[TemplateMatchingParameterCatalog.MatchMode] = "Shape";
+            _ = TemplateMatchingParameterCatalog.ParseHalcon(parameters, GetCardinality());
+        }
+        else
+        {
+            throw new TemplateMatchingConfigurationException(
+                TemplateMatchingDiagnostics.Create(
+                    TemplateMatchingDiagnosticCodes.ConfigUnknownEngine,
+                    $"Unknown template matching engine '{_parameters.GetValueOrDefault(TemplateMatchingParameterCatalog.Engine)}'."));
         }
 
         return parameters;

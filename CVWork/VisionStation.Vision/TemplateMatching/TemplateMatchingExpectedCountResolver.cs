@@ -17,14 +17,14 @@ internal static class TemplateMatchingExpectedCountResolver
         IReadOnlyDictionary<string, string> parameters)
     {
         ArgumentNullException.ThrowIfNull(parameters);
-        if (TryGetValue(parameters, TemplateMatchingParameterCatalog.ExpectedCount, out var expectedRaw))
-        {
-            return ParseStrict(TemplateMatchingParameterCatalog.ExpectedCount, expectedRaw);
-        }
-
         var hasEngine = TryGetValue(parameters, TemplateMatchingParameterCatalog.Engine, out var engineRaw);
         if (hasEngine && string.Equals(engineRaw?.Trim(), "Halcon", StringComparison.OrdinalIgnoreCase))
         {
+            if (TryGetValue(parameters, TemplateMatchingParameterCatalog.ExpectedCount, out var expectedRaw))
+            {
+                return ParseStrict(TemplateMatchingParameterCatalog.ExpectedCount, expectedRaw);
+            }
+
             return TryGetValue(parameters, TemplateMatchingParameterCatalog.LegacyMatchCount, out var legacyRaw)
                 ? ParseStrict(TemplateMatchingParameterCatalog.LegacyMatchCount, legacyRaw)
                 : Valid(DefaultExpectedCount);

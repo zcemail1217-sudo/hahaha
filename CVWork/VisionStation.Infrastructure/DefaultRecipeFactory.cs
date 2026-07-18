@@ -1,5 +1,7 @@
 ﻿using VisionStation.Domain;
 
+using VisionStation.Vision;
+
 namespace VisionStation.Infrastructure;
 
 public static class DefaultRecipeFactory
@@ -57,20 +59,7 @@ public static class DefaultRecipeFactory
                 Id = "tool-locate",
                 Name = "模板定位",
                 Kind = VisionToolKind.TemplateLocate,
-                Parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["engine"] = "OpenCv",
-                    ["matchMode"] = "Shape",
-                    ["autoLearnTemplate"] = "False",
-                    ["minScore"] = "0.85",
-                    ["angleStart"] = "-45",
-                    ["angleExtent"] = "90",
-                    ["angleStep"] = "2",
-                    ["cannyLow"] = "60",
-                    ["cannyHigh"] = "160",
-                    ["shapeScoreVersion"] = "2",
-                    ["shapeCoverageDistance"] = "3"
-                }
+                Parameters = CreateTemplateLocateParameters()
             },
             new()
             {
@@ -481,5 +470,21 @@ public static class DefaultRecipeFactory
             },
             UpdatedAt = DateTimeOffset.Now
         };
+    }
+
+    private static Dictionary<string, string> CreateTemplateLocateParameters()
+    {
+        var parameters = TemplateMatchingParameterCatalog.CreateStrictDefaults(
+            TemplateMatchCardinality.Single);
+        parameters["autoLearnTemplate"] = "False";
+        parameters["minScore"] = "0.85";
+        parameters["angleStart"] = "-45";
+        parameters["angleExtent"] = "90";
+        parameters["angleStep"] = "2";
+        parameters["cannyLow"] = "60";
+        parameters["cannyHigh"] = "160";
+        parameters["shapeScoreVersion"] = "2";
+        parameters["shapeCoverageDistance"] = "3";
+        return parameters;
     }
 }

@@ -1,6 +1,7 @@
 using System.IO;
 using VisionStation.Domain;
 using VisionStation.Infrastructure;
+using VisionStation.Vision;
 using VisionStation.Vision.UI.Models;
 using VisionStation.Vision.UI.ViewModels;
 using Xunit;
@@ -190,7 +191,8 @@ public sealed class PositionInputScaleDialogViewModelTests
             new RuntimePaths(Path.GetTempPath()),
             new NullAppLogService(),
             new Recipe { Tools = [source] },
-            pipeline);
+            pipeline,
+            TemplateMatchingService.CreateLegacyOnly());
 
         var prepared = await viewModel.PrepareToCloseAsync();
         viewModel.ApplyTo(tool);
@@ -533,7 +535,8 @@ public sealed class PositionInputScaleDialogViewModelTests
             new RuntimePaths(Path.GetTempPath()),
             new NullAppLogService(),
             new Recipe(),
-            new PoseResultPipeline(frame, "unused", new Pose2D(0, 0, 0)));
+            new PoseResultPipeline(frame, "unused", new Pose2D(0, 0, 0)),
+            TemplateMatchingService.CreateLegacyOnly());
 
         var prepared = await viewModel.PrepareToCloseAsync();
         viewModel.ApplyTo(tool);
@@ -578,7 +581,8 @@ public sealed class PositionInputScaleDialogViewModelTests
             new RuntimePaths(Path.GetTempPath()),
             new NullAppLogService(),
             new Recipe { Tools = [source] },
-            new PoseResultPipeline(frame, source.Id, new Pose2D(100, 200, 30) { Scale = 1.2 }));
+            new PoseResultPipeline(frame, source.Id, new Pose2D(100, 200, 30) { Scale = 1.2 }),
+            TemplateMatchingService.CreateLegacyOnly());
 
         var prepared = await viewModel.PrepareToCloseAsync();
         viewModel.ApplyTo(tool);
@@ -668,7 +672,8 @@ public sealed class PositionInputScaleDialogViewModelTests
             new RuntimePaths(Path.GetTempPath()),
             new NullAppLogService(),
             new Recipe { Tools = [source] },
-            new UnexpectedPipeline());
+            new UnexpectedPipeline(),
+            TemplateMatchingService.CreateLegacyOnly());
 
         Assert.True(await viewModel.PrepareToCloseAsync());
         viewModel.ApplyTo(tool);
@@ -760,7 +765,8 @@ public sealed class PositionInputScaleDialogViewModelTests
             new RuntimePaths(Path.GetTempPath()),
             new NullAppLogService(),
             recipe,
-            pipeline);
+            pipeline,
+            TemplateMatchingService.CreateLegacyOnly());
 
         Assert.True(await lineViewModel.ApplyToAsync(lineTool));
         Assert.True(await circleViewModel.ApplyToAsync(circleTool));
@@ -825,7 +831,8 @@ public sealed class PositionInputScaleDialogViewModelTests
             new RuntimePaths(Path.GetTempPath()),
             new NullAppLogService(),
             recipe,
-            pipeline);
+            pipeline,
+            TemplateMatchingService.CreateLegacyOnly());
 
         Assert.False(await lineViewModel.ApplyToAsync(lineTool));
         Assert.False(await circleViewModel.ApplyToAsync(circleTool));
@@ -883,7 +890,8 @@ public sealed class PositionInputScaleDialogViewModelTests
             new RuntimePaths(Path.GetTempPath()),
             new NullAppLogService(),
             new Recipe { Tools = [source] },
-            new PoseResultPipeline(frame, source.Id, new Pose2D(20, 16, 0)));
+            new PoseResultPipeline(frame, source.Id, new Pose2D(20, 16, 0)),
+            TemplateMatchingService.CreateLegacyOnly());
 
         viewModel.RunToolCommand.Execute();
 
@@ -954,7 +962,8 @@ public sealed class PositionInputScaleDialogViewModelTests
             new RuntimePaths(Path.GetTempPath()),
             new NullAppLogService(),
             new Recipe { Tools = [source] },
-            pipeline);
+            pipeline,
+            TemplateMatchingService.CreateLegacyOnly());
 
         viewModel.RunToolCommand.Execute();
 
@@ -1070,7 +1079,7 @@ public sealed class PositionInputScaleDialogViewModelTests
             sourceStandardScale: parameter == "standardScale" ? invalidScale : null,
             currentScale: 1);
 
-        scenario.ViewModel.RunToolCommand.Execute();
+        await scenario.ViewModel.RunToolCommand.Execute(CancellationToken.None);
 
         Assert.True(
             SpinWait.SpinUntil(() => !scenario.ViewModel.IsBusy, TimeSpan.FromSeconds(10)),
@@ -1251,7 +1260,8 @@ public sealed class PositionInputScaleDialogViewModelTests
             new RuntimePaths(Path.GetTempPath()),
             new NullAppLogService(),
             new Recipe { Tools = [source] },
-            pipeline);
+            pipeline,
+            TemplateMatchingService.CreateLegacyOnly());
         return new MultiTargetRunScenario(viewModel, pipeline, tool);
     }
 

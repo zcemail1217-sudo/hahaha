@@ -1193,6 +1193,7 @@
                                             <DataGridTextColumn Header="Y" Binding="{Binding Y}" Width="80" />
                                             <DataGridTextColumn Header="角度" Binding="{Binding Angle}" Width="68" />
                                             <DataGridTextColumn Header="分数" Binding="{Binding Score}" Width="68" />
+                                            <DataGridTextColumn Header="尺度" Binding="{Binding Scale}" Width="68" />
                                             <DataGridTextColumn Header="尺寸" Binding="{Binding SizeText}" Width="94" />
                                             <DataGridTextColumn Header="形状" Binding="{Binding Shape}" Width="82" />
                                             <DataGridTextColumn Header="半径" Binding="{Binding RadiusText}" Width="70" />

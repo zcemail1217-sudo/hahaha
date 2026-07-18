@@ -382,34 +382,56 @@ public sealed class TemplateMatchingToolPortSafetyTests
     }
 
     [Theory]
-    [InlineData(null, "1")]
-    [InlineData("future-engine", "1")]
-    public async Task OpenCvAndUnknownDoNotTreatLegacyMatchCountAsExpectedCount(
-        string? engine,
-        string minCount)
+    [InlineData(null)]
+    [InlineData("OpenCv")]
+    public async Task MissingAndOpenCvEnginesUseMinCountAndIgnoreInactiveHalconCounts(
+        string? engine)
     {
         var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["matchCount"] = "128",
-            ["minCount"] = minCount
+            ["minCount"] = "2",
+            ["expectedCount"] = "garbage"
         };
         if (engine is not null)
         {
             parameters["engine"] = engine;
         }
 
-        var batchEngine = engine is null ? TemplateMatchingEngine.OpenCv : TemplateMatchingEngine.Unknown;
         var service = new RecordingMatchingService(_ => Task.FromResult(
-            Batch(batchEngine, InspectionOutcome.Ng, false, [])));
+            Batch(TemplateMatchingEngine.OpenCv, InspectionOutcome.Ng, false, [])));
         var fixture = ToolFixture.Create(VisionToolKind.MultiTargetMatch, parameters);
         using var context = fixture.Context;
 
         var result = await new MultiTargetMatchTool(service).ExecuteAsync(fixture.Definition, context);
 
-        Assert.Equal(batchEngine.ToString(), result.Data["engine"]);
+        Assert.Equal("OpenCv", result.Data["engine"]);
         var request = Assert.Single(service.MatchRequests);
-        Assert.Equal(1, request.ExpectedCount);
+        Assert.Equal(2, request.ExpectedCount);
         Assert.Equal("128", request.Parameters["matchCount"]);
+        Assert.Equal("garbage", request.Parameters["expectedCount"]);
+    }
+
+    [Fact]
+    public async Task UnknownEngineDiagnosticIsNotMaskedByInactiveExpectedCount()
+    {
+        var diagnostic = TemplateMatchingDiagnostics.Create(
+            TemplateMatchingDiagnosticCodes.ConfigUnknownEngine,
+            "future-engine");
+        var service = new RecordingMatchingService(_ => Task.FromResult(
+            Batch(TemplateMatchingEngine.Unknown, InspectionOutcome.Ng, false, [], diagnostic)));
+        var fixture = ToolFixture.Create(VisionToolKind.MultiTargetMatch, new Dictionary<string, string>
+        {
+            ["engine"] = "future-engine",
+            ["expectedCount"] = "garbage",
+            ["minCount"] = "4"
+        });
+        using var context = fixture.Context;
+
+        var result = await new MultiTargetMatchTool(service).ExecuteAsync(fixture.Definition, context);
+
+        Assert.Equal(TemplateMatchingDiagnosticCodes.ConfigUnknownEngine, result.Data["failureCode"]);
+        Assert.Equal(1, Assert.Single(service.MatchRequests).ExpectedCount);
     }
 
     [Fact]
@@ -431,13 +453,10 @@ public sealed class TemplateMatchingToolPortSafetyTests
     }
 
     [Theory]
-    [InlineData("OpenCv", "abc")]
-    [InlineData("OpenCv", "0")]
-    [InlineData("OpenCv", "101")]
-    [InlineData(null, "0")]
-    [InlineData("future-engine", "abc")]
-    public async Task InvalidExplicitExpectedCountFailsBeforeServiceAndPublishesOnlyZeroCount(
-        string? engine,
+    [InlineData("abc")]
+    [InlineData("0")]
+    [InlineData("101")]
+    public async Task InvalidActiveHalconExpectedCountFailsBeforeServiceAndPublishesOnlyZeroCount(
         string expectedCount)
     {
         var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -445,10 +464,7 @@ public sealed class TemplateMatchingToolPortSafetyTests
             ["expectedCount"] = expectedCount,
             ["minCount"] = "1"
         };
-        if (engine is not null)
-        {
-            parameters["engine"] = engine;
-        }
+        parameters["engine"] = "Halcon";
 
         var service = new RecordingMatchingService(_ => throw new InvalidOperationException("Must not run."));
         var fixture = ToolFixture.Create(VisionToolKind.MultiTargetMatch, parameters);
