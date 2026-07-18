@@ -30,6 +30,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VisionStation.Application.T
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VisionStation.Vision.UI.Tests", "VisionStation.Vision.UI.Tests\VisionStation.Vision.UI.Tests.csproj", "{C21CCFFA-B5E6-4F31-8413-0EC118E90F7B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VisionStation.Vision.Halcon.TestHost", "VisionStation.Vision.Halcon.TestHost\VisionStation.Vision.Halcon.TestHost.csproj", "{2AC0728E-4648-4A58-B694-932AD2C63052}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VisionStation.Vision.Halcon.Tests", "VisionStation.Vision.Halcon.Tests\VisionStation.Vision.Halcon.Tests.csproj", "{A13468FC-8DB8-4B6A-A73A-B91A0B54D2C2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -92,6 +96,14 @@ Global
 		{C21CCFFA-B5E6-4F31-8413-0EC118E90F7B}.Debug|x64.Build.0 = Debug|x64
 		{C21CCFFA-B5E6-4F31-8413-0EC118E90F7B}.Release|x64.ActiveCfg = Release|x64
 		{C21CCFFA-B5E6-4F31-8413-0EC118E90F7B}.Release|x64.Build.0 = Release|x64
+		{2AC0728E-4648-4A58-B694-932AD2C63052}.Debug|x64.ActiveCfg = Debug|x64
+		{2AC0728E-4648-4A58-B694-932AD2C63052}.Debug|x64.Build.0 = Debug|x64
+		{2AC0728E-4648-4A58-B694-932AD2C63052}.Release|x64.ActiveCfg = Release|x64
+		{2AC0728E-4648-4A58-B694-932AD2C63052}.Release|x64.Build.0 = Release|x64
+		{A13468FC-8DB8-4B6A-A73A-B91A0B54D2C2}.Debug|x64.ActiveCfg = Debug|x64
+		{A13468FC-8DB8-4B6A-A73A-B91A0B54D2C2}.Debug|x64.Build.0 = Debug|x64
+		{A13468FC-8DB8-4B6A-A73A-B91A0B54D2C2}.Release|x64.ActiveCfg = Release|x64
+		{A13468FC-8DB8-4B6A-A73A-B91A0B54D2C2}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -61,9 +61,23 @@ public static class HalconTemplateMatchingFactory
         HalconRuntimeConfiguration configuration,
         ITemplateMatchingDiagnosticSink diagnostics)
     {
+        return Create(
+            store,
+            configuration,
+            diagnostics,
+            NullHalconFindScaledShapeObserver.Instance);
+    }
+
+    internal static TemplateMatchingRuntime Create(
+        ITemplateModelStore store,
+        HalconRuntimeConfiguration configuration,
+        ITemplateMatchingDiagnosticSink diagnostics,
+        IHalconFindScaledShapeObserver findObserver)
+    {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(diagnostics);
+        ArgumentNullException.ThrowIfNull(findObserver);
 
         var scheduler = new HalconOperationScheduler();
         HalconTemplateModelCache? cache = null;
@@ -90,7 +104,7 @@ public static class HalconTemplateMatchingFactory
                 runtimeProbe,
                 cache,
                 scheduler,
-                new HalconScaledShapeCandidateSource(operators),
+                new HalconScaledShapeCandidateSource(operators, findObserver),
                 new TemplateCandidateEvidenceBuilder(),
                 new TemplateCandidateValidator(),
                 diagnostics);

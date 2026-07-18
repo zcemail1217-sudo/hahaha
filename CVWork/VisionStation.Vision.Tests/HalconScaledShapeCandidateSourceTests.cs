@@ -278,6 +278,7 @@ public sealed class HalconScaledShapeCandidateSourceTests
     public async Task CancellationAfterNativeAdmissionWaitsForReturnThenPropagates()
     {
         using var cancellation = new CancellationTokenSource();
+        var observer = new RecordingFindScaledShapeObserver();
         var operators = new RecordingOperatorBackend
         {
             OnFind = cancellation.Cancel,
@@ -287,7 +288,7 @@ public sealed class HalconScaledShapeCandidateSourceTests
             ])
         };
         var operation = new RecordingModelOperation();
-        var source = new HalconScaledShapeCandidateSource(operators);
+        var source = new HalconScaledShapeCandidateSource(operators, observer);
 
         OperationCanceledException exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             source.FindAsync(
@@ -300,6 +301,49 @@ public sealed class HalconScaledShapeCandidateSourceTests
         Assert.Equal(cancellation.Token, exception.CancellationToken);
         Assert.Equal(1, operation.InvocationCount);
         Assert.Equal(1, operators.FindCount);
+        Assert.Equal(["started", "completed"], observer.Events);
+    }
+
+    [Fact]
+    public async Task NativeObserverCompletesWhenFindOperatorThrows()
+    {
+        var observer = new RecordingFindScaledShapeObserver();
+        var operators = new RecordingOperatorBackend
+        {
+            FindFailure = new InvalidOperationException("native-failure")
+        };
+        var source = new HalconScaledShapeCandidateSource(operators, observer);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            source.FindAsync(
+                new RecordingModelOperation(),
+                Frame(),
+                null,
+                Parameters(),
+                default));
+
+        Assert.Equal(["started", "completed"], observer.Events);
+    }
+
+    [Fact]
+    public async Task CancellationBeforeNativeAdmissionDoesNotNotifyObserver()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var observer = new RecordingFindScaledShapeObserver();
+        var operators = new RecordingOperatorBackend();
+        var source = new HalconScaledShapeCandidateSource(operators, observer);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            source.FindAsync(
+                new RecordingModelOperation(),
+                Frame(),
+                null,
+                Parameters(),
+                cancellation.Token));
+
+        Assert.Empty(observer.Events);
+        Assert.Equal(0, operators.FindCount);
     }
 
     public static IEnumerable<object[]> NonRectangularSearchRois()
@@ -450,6 +494,21 @@ public sealed class HalconScaledShapeCandidateSourceTests
 
         public void VerifyMatchingLicense()
         {
+        }
+    }
+
+    private sealed class RecordingFindScaledShapeObserver : IHalconFindScaledShapeObserver
+    {
+        public List<string> Events { get; } = [];
+
+        public void OnStarted()
+        {
+            Events.Add("started");
+        }
+
+        public void OnCompleted()
+        {
+            Events.Add("completed");
         }
     }
 }

@@ -5,10 +5,19 @@ namespace VisionStation.Vision;
 internal sealed class HalconScaledShapeCandidateSource : IHalconCandidateSource
 {
     private readonly IHalconOperatorBackend _operators;
+    private readonly IHalconFindScaledShapeObserver _observer;
 
     public HalconScaledShapeCandidateSource(IHalconOperatorBackend operators)
+        : this(operators, NullHalconFindScaledShapeObserver.Instance)
+    {
+    }
+
+    internal HalconScaledShapeCandidateSource(
+        IHalconOperatorBackend operators,
+        IHalconFindScaledShapeObserver observer)
     {
         _operators = operators ?? throw new ArgumentNullException(nameof(operators));
+        _observer = observer ?? throw new ArgumentNullException(nameof(observer));
     }
 
     public async Task<HalconCandidateBatch> FindAsync(
@@ -35,7 +44,18 @@ internal sealed class HalconScaledShapeCandidateSource : IHalconCandidateSource
             // Timeout mutation and FindScaledShapeModel are one callback, therefore one model
             // gate admission and one scheduler work item. No other request can interleave them.
             nativeResult = await modelOperation.InvokeAsync(
-                model => _operators.FindScaledShapeModel(model, findRequest),
+                model =>
+                {
+                    _observer.OnStarted();
+                    try
+                    {
+                        return _operators.FindScaledShapeModel(model, findRequest);
+                    }
+                    finally
+                    {
+                        _observer.OnCompleted();
+                    }
+                },
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
