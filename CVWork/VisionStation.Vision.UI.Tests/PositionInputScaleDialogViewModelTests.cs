@@ -239,7 +239,7 @@ public sealed class PositionInputScaleDialogViewModelTests
     }
 
     [Fact]
-    public async Task FindLineApplyRecapturesExplicitInvalidReferenceScale()
+    public async Task FindLineApplyRejectsExplicitInvalidReferenceScaleWithoutRoiEdit()
     {
         var frame = CreateFrame();
         var source = new VisionToolDefinition { Id = "position-source", Kind = VisionToolKind.TemplateLocate };
@@ -263,18 +263,64 @@ public sealed class PositionInputScaleDialogViewModelTests
                 "roiReferencePoseAngle=30; roiReferencePoseScale=0; " +
                 "roiReferencePoseToolId=position-source"
         };
+        var pipeline = new PoseResultPipeline(frame, source.Id, new Pose2D(100, 200, 30) { Scale = 1.1 });
         var viewModel = new FindLineToolDialogViewModel(
             tool,
             [roi],
             "Flow",
             frame,
             new Recipe { Tools = [source] },
-            new PoseResultPipeline(frame, source.Id, new Pose2D(100, 200, 30) { Scale = 1.1 }),
+            pipeline,
             new NullAppLogService());
 
         var applied = await viewModel.ApplyToAsync(tool);
 
+        Assert.False(applied);
+        Assert.Equal(0, pipeline.ExecutionCount);
+        Assert.Contains("roiReferencePoseScale", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Equal("0", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
+    }
+
+    [Fact]
+    public async Task FindLineApplyCanRepairExplicitInvalidReferenceScaleAfterRoiEdit()
+    {
+        var frame = CreateFrame();
+        var source = new VisionToolDefinition { Id = "position-source", Kind = VisionToolKind.TemplateLocate };
+        var roi = new RoiDefinition
+        {
+            Id = "roi",
+            Shape = RoiShapeKind.RotatedRectangle,
+            X = 16,
+            Y = 16,
+            Width = 20,
+            Height = 10
+        };
+        var tool = new VisionToolItem
+        {
+            Id = "find-line",
+            Kind = VisionToolKind.FindLine,
+            RoiId = roi.Id,
+            ParametersText =
+                "input:PositionInput:toolId=position-source; " +
+                "roiReferencePoseX=100; roiReferencePoseY=200; " +
+                "roiReferencePoseAngle=30; roiReferencePoseScale=0; " +
+                "roiReferencePoseToolId=position-source"
+        };
+        var pipeline = new PoseResultPipeline(frame, source.Id, new Pose2D(100, 200, 30) { Scale = 1.1 });
+        var viewModel = new FindLineToolDialogViewModel(
+            tool,
+            [roi],
+            "Flow",
+            frame,
+            new Recipe { Tools = [source] },
+            pipeline,
+            new NullAppLogService());
+
+        viewModel.EditableRois.Single().X += 1;
+        var applied = await viewModel.ApplyToAsync(tool);
+
         Assert.True(applied);
+        Assert.Equal(1, pipeline.ExecutionCount);
         Assert.Equal("1.1", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
     }
 
@@ -313,7 +359,7 @@ public sealed class PositionInputScaleDialogViewModelTests
     }
 
     [Fact]
-    public async Task FindCircleApplyRecapturesExplicitInvalidReferenceScale()
+    public async Task FindCircleApplyRejectsExplicitInvalidReferenceScaleWithoutRoiEdit()
     {
         var frame = CreateFrame();
         var source = new VisionToolDefinition { Id = "position-source", Kind = VisionToolKind.TemplateLocate };
@@ -336,19 +382,22 @@ public sealed class PositionInputScaleDialogViewModelTests
                 "roiReferencePoseAngle=30; roiReferencePoseScale=NaN; " +
                 "roiReferencePoseToolId=position-source"
         };
+        var pipeline = new PoseResultPipeline(frame, source.Id, new Pose2D(100, 200, 30) { Scale = 0.9 });
         var viewModel = new FindCircleToolDialogViewModel(
             tool,
             [roi],
             "Flow",
             frame,
             new Recipe { Tools = [source] },
-            new PoseResultPipeline(frame, source.Id, new Pose2D(100, 200, 30) { Scale = 0.9 }),
+            pipeline,
             new NullAppLogService());
 
         var applied = await viewModel.ApplyToAsync(tool);
 
-        Assert.True(applied);
-        Assert.Equal("0.9", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
+        Assert.False(applied);
+        Assert.Equal(0, pipeline.ExecutionCount);
+        Assert.Contains("roiReferencePoseScale", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Equal("NaN", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
     }
 
     [Theory]
@@ -476,7 +525,7 @@ public sealed class PositionInputScaleDialogViewModelTests
     }
 
     [Fact]
-    public async Task BlobAnalysisApplyRecapturesExplicitInvalidReferenceScale()
+    public async Task BlobAnalysisApplyRejectsExplicitInvalidReferenceScaleWithoutRoiEdit()
     {
         var frame = CreateFrame();
         var source = new VisionToolDefinition { Id = "position-source", Kind = VisionToolKind.TemplateLocate };
@@ -500,19 +549,22 @@ public sealed class PositionInputScaleDialogViewModelTests
                 "roiReferencePoseAngle=30; roiReferencePoseScale=-1; " +
                 "roiReferencePoseToolId=position-source"
         };
+        var pipeline = new PoseResultPipeline(frame, source.Id, new Pose2D(100, 200, 30) { Scale = 1.25 });
         var viewModel = new BlobAnalysisToolDialogViewModel(
             tool,
             [roi],
             "Flow",
             frame,
             new Recipe { Tools = [source] },
-            new PoseResultPipeline(frame, source.Id, new Pose2D(100, 200, 30) { Scale = 1.25 }),
+            pipeline,
             new NullAppLogService());
 
         var applied = await viewModel.ApplyToAsync(tool);
 
-        Assert.True(applied);
-        Assert.Equal("1.25", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
+        Assert.False(applied);
+        Assert.Equal(0, pipeline.ExecutionCount);
+        Assert.Contains("roiReferencePoseScale", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Equal("-1", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
     }
 
     [Fact]
@@ -552,7 +604,7 @@ public sealed class PositionInputScaleDialogViewModelTests
     }
 
     [Fact]
-    public async Task MultiTargetPrepareRecapturesExplicitInvalidReferenceScale()
+    public async Task MultiTargetPrepareRejectsExplicitInvalidReferenceScaleWithoutRoiEdit()
     {
         var frame = CreateFrame();
         var source = new VisionToolDefinition { Id = "position-source", Kind = VisionToolKind.TemplateLocate };
@@ -576,6 +628,7 @@ public sealed class PositionInputScaleDialogViewModelTests
                 "roiReferencePoseAngle=30; roiReferencePoseScale=0; " +
                 "roiReferencePoseToolId=position-source"
         };
+        var pipeline = new PoseResultPipeline(frame, source.Id, new Pose2D(100, 200, 30) { Scale = 1.2 });
         var viewModel = new TemplateLocateToolDialogViewModel(
             tool,
             Array.Empty<RoiChoiceItem>(),
@@ -585,16 +638,17 @@ public sealed class PositionInputScaleDialogViewModelTests
             new RuntimePaths(Path.GetTempPath()),
             new NullAppLogService(),
             new Recipe { Tools = [source] },
-            new PoseResultPipeline(frame, source.Id, new Pose2D(100, 200, 30) { Scale = 1.2 }),
+            pipeline,
             TemplateMatchingService.CreateLegacyOnly(),
             NoOpTemplateModelStore.Instance,
             NoOpTemplateModelResourceManager.Instance);
 
         var prepared = await viewModel.PrepareToCloseAsync();
-        viewModel.ApplyTo(tool);
 
-        Assert.True(prepared);
-        Assert.Equal("1.2", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
+        Assert.False(prepared);
+        Assert.Equal(0, pipeline.ExecutionCount);
+        Assert.Contains("roiReferencePoseScale", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Equal("0", tool.ToDefinition().Parameters["roiReferencePoseScale"]);
     }
 
     [Fact]
@@ -628,6 +682,26 @@ public sealed class PositionInputScaleDialogViewModelTests
         Assert.Equal("16", saved["roiReferencePoseY"]);
         Assert.Equal("1.25", saved["roiReferencePoseScale"]);
         Assert.Equal("new-source", saved["roiReferencePoseToolId"]);
+    }
+
+    [Fact]
+    public void MultiTargetRunCanRepairExplicitInvalidReferenceScaleAfterRoiEdit()
+    {
+        var scenario = CreateMultiTargetRunScenario(
+            roiReferenceScale: "0",
+            sourceStandardScale: null,
+            currentScale: 1.2);
+        scenario.ViewModel.EditableRois.Single(item => item.Id == "area-roi").X += 1;
+
+        scenario.ViewModel.RunToolCommand.Execute();
+
+        Assert.True(
+            SpinWait.SpinUntil(() => !scenario.ViewModel.IsBusy, TimeSpan.FromSeconds(10)),
+            $"Multi-target preview did not finish: {scenario.ViewModel.StatusText}");
+        Assert.Equal(1, scenario.Pipeline.ExecutionCount);
+        Assert.DoesNotContain("roiReferencePoseScale must", scenario.ViewModel.StatusText, StringComparison.Ordinal);
+        Assert.True(scenario.ViewModel.ApplyTo(scenario.Tool));
+        Assert.Equal("1.2", scenario.Tool.ToDefinition().Parameters["roiReferencePoseScale"]);
     }
 
     [Theory]
@@ -1102,9 +1176,17 @@ public sealed class PositionInputScaleDialogViewModelTests
             $"Multi-target preview did not finish: {scenario.ViewModel.StatusText}");
         Assert.Equal(0, scenario.Pipeline.ExecutionCount);
         Assert.Equal("-", scenario.ViewModel.ScoreText);
-        Assert.Equal(
-            $"Position input mapping failed: {parameter} must be finite and greater than zero.",
-            scenario.ViewModel.StatusText);
+        if (parameter == "roiReferencePoseScale")
+        {
+            Assert.Equal(
+                $"Position input mapping failed: {parameter} must be finite and greater than zero.",
+                scenario.ViewModel.StatusText);
+        }
+        else
+        {
+            Assert.Contains(parameter, scenario.ViewModel.StatusText, StringComparison.Ordinal);
+            Assert.Contains(invalidScale, scenario.ViewModel.StatusText, StringComparison.Ordinal);
+        }
         var searchOverlay = Assert.Single(scenario.ViewModel.PreviewOverlays);
         Assert.Equal(VisionOverlayState.Warning, searchOverlay.State);
         Assert.Equal(4, searchOverlay.X, 6);
@@ -1112,9 +1194,12 @@ public sealed class PositionInputScaleDialogViewModelTests
         Assert.Equal(12, searchOverlay.Width, 6);
         Assert.Equal(10, searchOverlay.Height, 6);
 
-        Assert.True(await scenario.ViewModel.PrepareToCloseAsync());
-        scenario.ViewModel.ApplyTo(scenario.Tool);
-        Assert.Equal("1", scenario.Tool.ToDefinition().Parameters["roiReferencePoseScale"]);
+        Assert.False(await scenario.ViewModel.PrepareToCloseAsync());
+        Assert.Equal(0, scenario.Pipeline.ExecutionCount);
+        if (parameter == "roiReferencePoseScale")
+        {
+            Assert.Equal(invalidScale, scenario.Tool.ToDefinition().Parameters[parameter]);
+        }
     }
 
     private static async Task<FindGeometryApplyScenario> ApplyFindGeometryDialogAsync(

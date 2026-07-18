@@ -77,6 +77,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
     private MultiTargetMatchPointItem? _selectedMultiTargetResultPoint;
     private RoiDefinition? _mappedSearchRoi;
     private bool _roiReferenceDirty;
+    private bool _roiReferenceEdited;
     private VisionOverlayState _matchState = VisionOverlayState.Neutral;
     private bool _isBusy;
     private string _scoreText = "-";
@@ -151,7 +152,8 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         _selectedPreset = DetectPreset();
         var positionSourceToolId = GetPositionInputSourceToolId();
         _roiReferenceDirty = _toolKind == VisionToolKind.MultiTargetMatch &&
-                             ReadRoiReferencePose(parameters, positionSourceToolId).Status != PoseReadStatus.Success;
+                             PositionInputReferencePoseReader.ReadTaught(parameters, positionSourceToolId).Status ==
+                             PositionInputReadStatus.Missing;
 
         _name = tool.Name;
         _roiId = tool.RoiId;
@@ -1069,6 +1071,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         };
         _mappedSearchRoi = null;
         _roiReferenceDirty = _toolKind == VisionToolKind.MultiTargetMatch;
+        _roiReferenceEdited = _toolKind == VisionToolKind.MultiTargetMatch;
         UpsertCreatedRoi(roi);
         RoiChoices.Add(new RoiChoiceItem(roi.Id, roi.Name));
         RoiId = roi.Id;
@@ -1641,17 +1644,17 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             cancellationToken.ThrowIfCancellationRequested();
             SyncEditorRois();
             var frame = CurrentFrame!;
-            var configuredReference = ReadConfiguredReferencePose();
-            if (configuredReference.Status == PoseReadStatus.Invalid)
-            {
-                ClearFailedRunResult(configuredReference.ErrorMessage);
-                return;
-            }
-
             var capture = await CaptureRoiReferencePoseIfNeededAsync(cancellationToken);
             if (!capture.IsSuccess)
             {
                 ClearFailedRunResult(StatusText);
+                return;
+            }
+
+            var configuredReference = ReadConfiguredReferencePose();
+            if (configuredReference.Status == PoseReadStatus.Invalid)
+            {
+                ClearFailedRunResult(configuredReference.ErrorMessage);
                 return;
             }
 
@@ -2121,14 +2124,10 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!_roiReferenceDirty)
-        {
-            return RoiReferenceCaptureResult.Success();
-        }
-
         if (_toolKind != VisionToolKind.MultiTargetMatch)
         {
             _roiReferenceDirty = false;
+            _roiReferenceEdited = false;
             return RoiReferenceCaptureResult.Success();
         }
 
@@ -2137,6 +2136,34 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         {
             RemoveRoiReferencePose();
             _roiReferenceDirty = false;
+            _roiReferenceEdited = false;
+            return RoiReferenceCaptureResult.Success();
+        }
+
+        var taughtReference = PositionInputReferencePoseReader.ReadTaught(_parameters, sourceToolId);
+        if (!_roiReferenceEdited && taughtReference.Status == PositionInputReadStatus.Missing)
+        {
+            var configuredReference = PositionInputReferencePoseReader.ReadConfigured(
+                _parameters,
+                _previewRecipe,
+                sourceToolId);
+            if (configuredReference.Status == PositionInputReadStatus.Invalid)
+            {
+                var invalidConfiguredReference = ConvertPoseReadResult(configuredReference);
+                StatusText = invalidConfiguredReference.ErrorMessage;
+                return RoiReferenceCaptureResult.Failure(invalidConfiguredReference);
+            }
+        }
+
+        if (!_roiReferenceDirty && taughtReference.Status == PositionInputReadStatus.Invalid)
+        {
+            var invalidReference = ConvertPoseReadResult(taughtReference);
+            StatusText = invalidReference.ErrorMessage;
+            return RoiReferenceCaptureResult.Failure(invalidReference);
+        }
+
+        if (!_roiReferenceDirty && taughtReference.Status == PositionInputReadStatus.Success)
+        {
             return RoiReferenceCaptureResult.Success();
         }
 
@@ -2156,6 +2183,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
 
         SetRoiReferencePose(currentPose.Pose!);
         _roiReferenceDirty = false;
+        _roiReferenceEdited = false;
         return RoiReferenceCaptureResult.Success(currentPose);
     }
 
@@ -2227,24 +2255,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         cancellationToken.ThrowIfCancellationRequested();
         var sourceResult = pipelineResult.ToolResults.LastOrDefault(result =>
             string.Equals(result.ToolId, sourceToolId, StringComparison.OrdinalIgnoreCase));
-        if (sourceResult?.Outcome != InspectionOutcome.Ok ||
-            !TryGetDouble(sourceResult.Data, "x", out var x) ||
-            !TryGetDouble(sourceResult.Data, "y", out var y))
-        {
-            return PoseReadResult.Missing();
-        }
-
-        TryGetDouble(sourceResult.Data, "angle", out var angle);
-        var scale = 1d;
-        if (sourceResult.Data.ContainsKey("scale") &&
-            (!TryGetDouble(sourceResult.Data, "scale", out scale) ||
-             !PoseSimilarityTransform.IsValidScale(scale)))
-        {
-            return PoseReadResult.Invalid(
-                "Position input mapping failed: PositionInput.Scale must be finite and greater than zero.");
-        }
-
-        return PoseReadResult.Success(new Pose2D(x, y, angle) { Scale = scale });
+        return ConvertPoseReadResult(ToolResultPoseReader.Read(sourceResult));
     }
 
     private void ClearFailedRunResult(string errorMessage)
@@ -2315,94 +2326,18 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
             return PoseReadResult.Missing();
         }
 
-        var taughtReference = ReadRoiReferencePose(_parameters, sourceToolId);
-        return taughtReference.Status == PoseReadStatus.Missing
-            ? ReadPositionSourceReferencePose(sourceToolId)
-            : taughtReference;
+        return ConvertPoseReadResult(
+            PositionInputReferencePoseReader.ReadConfigured(_parameters, _previewRecipe, sourceToolId));
     }
 
-    private PoseReadResult ReadPositionSourceReferencePose(string sourceToolId)
+    private static PoseReadResult ConvertPoseReadResult(PositionInputPoseReadResult result)
     {
-        var source = _previewRecipe?.GetActiveFlow().Tools.FirstOrDefault(tool =>
-            string.Equals(tool.Id, sourceToolId, StringComparison.OrdinalIgnoreCase));
-        if (source is null)
+        return result.Status switch
         {
-            return PoseReadResult.Missing();
-        }
-
-        var scale = 1d;
-        if (source.Parameters.ContainsKey("standardScale") &&
-            (!TryGetDouble(source.Parameters, "standardScale", out scale) ||
-             !PoseSimilarityTransform.IsValidScale(scale)))
-        {
-            return PoseReadResult.Invalid(CreateInvalidScaleMessage("standardScale"));
-        }
-
-        if (TryGetDouble(source.Parameters, "standardX", out var standardX) &&
-            TryGetDouble(source.Parameters, "standardY", out var standardY))
-        {
-            TryGetDouble(source.Parameters, "standardAngle", out var standardAngle);
-            return PoseReadResult.Success(
-                new Pose2D(standardX, standardY, standardAngle) { Scale = scale });
-        }
-
-        if (!TryGetDouble(source.Parameters, "templateX", out var templateX) ||
-            !TryGetDouble(source.Parameters, "templateY", out var templateY) ||
-            !TryGetDouble(source.Parameters, "templateWidth", out var templateWidth) ||
-            !TryGetDouble(source.Parameters, "templateHeight", out var templateHeight) ||
-            templateWidth <= 0 ||
-            templateHeight <= 0)
-        {
-            return PoseReadResult.Missing();
-        }
-
-        return PoseReadResult.Success(
-            new Pose2D(
-                templateX + templateWidth / 2.0,
-                templateY + templateHeight / 2.0,
-                0)
-            {
-                Scale = scale
-            });
-    }
-
-    private static PoseReadResult ReadRoiReferencePose(
-        IReadOnlyDictionary<string, string> parameters,
-        string sourceToolId)
-    {
-        if (string.IsNullOrWhiteSpace(sourceToolId))
-        {
-            return PoseReadResult.Missing();
-        }
-
-        var referenceToolId = parameters.GetValueOrDefault("roiReferencePoseToolId") ?? string.Empty;
-        if (!string.IsNullOrWhiteSpace(referenceToolId) &&
-            !string.Equals(referenceToolId, sourceToolId, StringComparison.OrdinalIgnoreCase))
-        {
-            return PoseReadResult.Missing();
-        }
-
-        var scale = 1d;
-        if (parameters.ContainsKey("roiReferencePoseScale") &&
-            (!TryGetDouble(parameters, "roiReferencePoseScale", out scale) ||
-             !PoseSimilarityTransform.IsValidScale(scale)))
-        {
-            return PoseReadResult.Invalid(CreateInvalidScaleMessage("roiReferencePoseScale"));
-        }
-
-        if (!TryGetDouble(parameters, "roiReferencePoseX", out var x) ||
-            !TryGetDouble(parameters, "roiReferencePoseY", out var y))
-        {
-            return PoseReadResult.Missing();
-        }
-
-        TryGetDouble(parameters, "roiReferencePoseAngle", out var angle);
-        return PoseReadResult.Success(new Pose2D(x, y, angle) { Scale = scale });
-    }
-
-    private static string CreateInvalidScaleMessage(string parameter)
-    {
-        return $"Position input mapping failed: {parameter} must be finite and greater than zero.";
+            PositionInputReadStatus.Success => PoseReadResult.Success(result.Pose!),
+            PositionInputReadStatus.Invalid => PoseReadResult.Invalid(result.Failure!.Message),
+            _ => PoseReadResult.Missing()
+        };
     }
 
     private void SetMultiTargetResults(IReadOnlyList<MultiTargetMatchCandidate> matches)
@@ -2749,6 +2684,7 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         {
             _mappedSearchRoi = null;
             _roiReferenceDirty = _toolKind == VisionToolKind.MultiTargetMatch;
+            _roiReferenceEdited = _toolKind == VisionToolKind.MultiTargetMatch;
             UpsertCreatedRoi(item.ToDefinition());
         }
 

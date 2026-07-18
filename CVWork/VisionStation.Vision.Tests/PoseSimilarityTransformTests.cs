@@ -101,6 +101,86 @@ public sealed class PoseSimilarityTransformTests
         }
     }
 
+    [Theory]
+    [InlineData(RoiShapeKind.Rectangle)]
+    [InlineData(RoiShapeKind.RotatedRectangle)]
+    [InlineData(RoiShapeKind.Circle)]
+    [InlineData(RoiShapeKind.Polygon)]
+    public void MapRoiUsesCurrentToReferenceScaleRatioBeforeRotation(RoiShapeKind shape)
+    {
+        var source = CreateRoi(shape);
+        var reference = new Pose2D(10, 20, 10) { Scale = 0.5 };
+        var current = new Pose2D(100, 200, 45) { Scale = 1.1 };
+        const double expectedRatio = 2.2;
+        const double expectedAngleDelta = 35;
+
+        var mapped = PoseSimilarityTransform.MapRoi(source, reference, current);
+
+        switch (shape)
+        {
+            case RoiShapeKind.Rectangle:
+                {
+                    var expectedCenter = MapExpectedPoint(
+                        new Point2D(25, 40),
+                        reference,
+                        current,
+                        expectedRatio,
+                        expectedAngleDelta);
+                    Assert.Equal(RoiShapeKind.RotatedRectangle, mapped.Shape);
+                    Assert.Equal(expectedCenter.X, mapped.X, 6);
+                    Assert.Equal(expectedCenter.Y, mapped.Y, 6);
+                    Assert.Equal(30 * expectedRatio, mapped.Width, 6);
+                    Assert.Equal(40 * expectedRatio, mapped.Height, 6);
+                    Assert.Equal(expectedAngleDelta, mapped.Angle, 6);
+                    break;
+                }
+            case RoiShapeKind.RotatedRectangle:
+                Assert.Equal(current.X, mapped.X, 6);
+                Assert.Equal(current.Y, mapped.Y, 6);
+                Assert.Equal(30 * expectedRatio, mapped.Width, 6);
+                Assert.Equal(40 * expectedRatio, mapped.Height, 6);
+                Assert.Equal(15 + expectedAngleDelta, mapped.Angle, 6);
+                break;
+            case RoiShapeKind.Circle:
+                Assert.Equal(current.X, mapped.X, 6);
+                Assert.Equal(current.Y, mapped.Y, 6);
+                Assert.Equal(8 * expectedRatio, mapped.Radius, 6);
+                break;
+            case RoiShapeKind.Polygon:
+                Assert.Equal(source.Points.Count, mapped.Points.Count);
+                for (var index = 0; index < source.Points.Count; index++)
+                {
+                    var expectedPoint = MapExpectedPoint(
+                        source.Points[index],
+                        reference,
+                        current,
+                        expectedRatio,
+                        expectedAngleDelta);
+                    Assert.Equal(expectedPoint.X, mapped.Points[index].X, 6);
+                    Assert.Equal(expectedPoint.Y, mapped.Points[index].Y, 6);
+                }
+
+                Assert.True(mapped.Points.Max(point => point.X) > mapped.Points.Min(point => point.X));
+                Assert.True(mapped.Points.Max(point => point.Y) > mapped.Points.Min(point => point.Y));
+                break;
+        }
+    }
+
+    private static Point2D MapExpectedPoint(
+        Point2D point,
+        Pose2D reference,
+        Pose2D current,
+        double scaleRatio,
+        double angleDelta)
+    {
+        var dx = (point.X - reference.X) * scaleRatio;
+        var dy = (point.Y - reference.Y) * scaleRatio;
+        var radians = angleDelta * Math.PI / 180d;
+        return new Point2D(
+            current.X + dx * Math.Cos(radians) - dy * Math.Sin(radians),
+            current.Y + dx * Math.Sin(radians) + dy * Math.Cos(radians));
+    }
+
     private static RoiDefinition CreateRoi(RoiShapeKind shape)
     {
         return new RoiDefinition

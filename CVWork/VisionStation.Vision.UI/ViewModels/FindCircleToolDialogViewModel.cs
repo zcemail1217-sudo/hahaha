@@ -44,6 +44,8 @@ public sealed class FindCircleToolDialogViewModel : BindableBase
     private string _centerColumnText = "-";
     private string _radiusText = "-";
     private ToolResult? _previewResult;
+    private RoiDefinition? _previewSearchRoi;
+    private SearchRoiReadStatus _previewSearchRoiStatus = SearchRoiReadStatus.Missing;
     private bool _roiReferenceDirty;
     private bool _syncingCircleEditor;
 
@@ -62,7 +64,9 @@ public sealed class FindCircleToolDialogViewModel : BindableBase
         _toolId = tool.Id;
         _availableRois = rois;
         _parameters = ParseParameters(tool.ParametersText);
-        _roiReferenceDirty = !HasRoiReferencePose(_parameters);
+        var sourceToolId = _parameters.GetValueOrDefault("input:PositionInput:toolId") ?? string.Empty;
+        _roiReferenceDirty = PositionInputReferencePoseReader.ReadTaught(_parameters, sourceToolId).Status ==
+                             PositionInputReadStatus.Missing;
         _name = tool.Name;
         _enabled = tool.Enabled;
         _roiId = tool.RoiId;
@@ -539,6 +543,7 @@ public sealed class FindCircleToolDialogViewModel : BindableBase
         var stopwatch = Stopwatch.StartNew();
         try
         {
+            ClearResultPreview();
             SyncCircleRoi();
             if (!await CaptureRoiReferencePoseIfNeededAsync())
             {
@@ -566,7 +571,12 @@ public sealed class FindCircleToolDialogViewModel : BindableBase
             stopwatch.Stop();
             ScoreText = result.Data.GetValueOrDefault("score", "-");
             DurationText = $"{stopwatch.ElapsedMilliseconds}ms";
-            StatusText = result.Message;
+            var previewSearchRoi = ResolvePreviewSearchRoi(result, pipelineResult, recipe, definition.Parameters, roi);
+            _previewSearchRoiStatus = previewSearchRoi.Status;
+            _previewSearchRoi = previewSearchRoi.Roi;
+            StatusText = previewSearchRoi.Status == SearchRoiReadStatus.Invalid
+                ? previewSearchRoi.Failure!.Message
+                : result.Message;
             UpdateResultValues(result.Data);
             _previewResult = result;
             RefreshPreviewOverlays();
@@ -616,13 +626,27 @@ public sealed class FindCircleToolDialogViewModel : BindableBase
         });
     }
 
-    private async Task<bool> CaptureRoiReferencePoseIfNeededAsync()
+    private static SearchRoiReadResult ResolvePreviewSearchRoi(
+        ToolResult result,
+        VisionPipelineResult pipelineResult,
+        Recipe recipe,
+        IReadOnlyDictionary<string, string> parameters,
+        RoiDefinition sourceRoi)
     {
-        if (!_roiReferenceDirty)
+        var runtimeRoi = ToolResultSearchRoiReader.Read(result.Data, RoiShapeKind.Circle);
+        if (runtimeRoi.Status != SearchRoiReadStatus.Missing)
         {
-            return true;
+            return runtimeRoi;
         }
 
+        var sourceToolId = parameters.GetValueOrDefault("input:PositionInput:toolId") ?? string.Empty;
+        var sourceResult = pipelineResult.ToolResults.LastOrDefault(item =>
+            string.Equals(item.ToolId, sourceToolId, StringComparison.OrdinalIgnoreCase));
+        return PositionInputPreviewRoiResolver.ResolveFallback(sourceRoi, parameters, recipe, sourceResult);
+    }
+
+    private async Task<bool> CaptureRoiReferencePoseIfNeededAsync()
+    {
         var sourceToolId = GetPositionInputSourceToolId();
         if (string.IsNullOrWhiteSpace(sourceToolId))
         {
@@ -631,52 +655,54 @@ public sealed class FindCircleToolDialogViewModel : BindableBase
             return true;
         }
 
+        var taughtReference = PositionInputReferencePoseReader.ReadTaught(_parameters, sourceToolId);
+        if (!_roiReferenceDirty && taughtReference.Status == PositionInputReadStatus.Invalid)
+        {
+            StatusText = taughtReference.Failure!.Message;
+            return false;
+        }
+
+        if (!_roiReferenceDirty && taughtReference.Status == PositionInputReadStatus.Success)
+        {
+            return true;
+        }
+
         var currentPose = await TryGetCurrentPositionInputPoseAsync();
-        if (currentPose is null)
+        if (currentPose.Status == PositionInputReadStatus.Invalid)
+        {
+            StatusText = currentPose.Failure!.Message;
+            return false;
+        }
+
+        if (currentPose.Status != PositionInputReadStatus.Success)
         {
             StatusText = "模板位置未就绪。请先运行模板定位，再保存或预览圆卡尺。";
             return false;
         }
 
-        SetRoiReferencePose(currentPose);
+        SetRoiReferencePose(currentPose.Pose!);
         _roiReferenceDirty = false;
         return true;
     }
 
-    private async Task<Pose2D?> TryGetCurrentPositionInputPoseAsync()
+    private async Task<PositionInputPoseReadResult> TryGetCurrentPositionInputPoseAsync()
     {
         if (CurrentFrame is null)
         {
-            return null;
+            return PositionInputPoseReadResult.Missing();
         }
 
         var sourceToolId = GetPositionInputSourceToolId();
         var recipe = BuildPositionSourcePreviewRecipe(sourceToolId);
         if (string.IsNullOrWhiteSpace(sourceToolId) || recipe is null)
         {
-            return null;
+            return PositionInputPoseReadResult.Missing();
         }
 
         var pipelineResult = await _pipeline.ExecuteAsync(recipe, CurrentFrame);
         var sourceResult = pipelineResult.ToolResults.LastOrDefault(result =>
             string.Equals(result.ToolId, sourceToolId, StringComparison.OrdinalIgnoreCase));
-        if (sourceResult?.Outcome != InspectionOutcome.Ok ||
-            !TryGetDouble(sourceResult.Data, "x", out var x) ||
-            !TryGetDouble(sourceResult.Data, "y", out var y))
-        {
-            return null;
-        }
-
-        TryGetDouble(sourceResult.Data, "angle", out var angle);
-        var scale = 1d;
-        if (sourceResult.Data.ContainsKey("scale") &&
-            (!TryGetDouble(sourceResult.Data, "scale", out scale) ||
-             !PoseSimilarityTransform.IsValidScale(scale)))
-        {
-            return null;
-        }
-
-        return new Pose2D(x, y, angle) { Scale = scale };
+        return ToolResultPoseReader.Read(sourceResult);
     }
 
     private Recipe? BuildPositionSourcePreviewRecipe(string sourceToolId)
@@ -723,46 +749,6 @@ public sealed class FindCircleToolDialogViewModel : BindableBase
         _parameters.Remove("roiReferencePoseAngle");
         _parameters.Remove("roiReferencePoseScale");
         _parameters.Remove("roiReferencePoseToolId");
-    }
-
-    private static bool HasRoiReferencePose(IReadOnlyDictionary<string, string> parameters)
-    {
-        var sourceToolId = parameters.GetValueOrDefault("input:PositionInput:toolId") ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(sourceToolId))
-        {
-            return false;
-        }
-
-        var referenceToolId = parameters.GetValueOrDefault("roiReferencePoseToolId") ?? string.Empty;
-        if (!string.IsNullOrWhiteSpace(referenceToolId) &&
-            !string.Equals(referenceToolId, sourceToolId, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return TryGetRoiReferencePose(parameters, out _);
-    }
-
-    private static bool TryGetRoiReferencePose(IReadOnlyDictionary<string, string> parameters, out Pose2D pose)
-    {
-        pose = new Pose2D(0, 0, 0);
-        if (!TryGetDouble(parameters, "roiReferencePoseX", out var x) ||
-            !TryGetDouble(parameters, "roiReferencePoseY", out var y))
-        {
-            return false;
-        }
-
-        TryGetDouble(parameters, "roiReferencePoseAngle", out var angle);
-        var scale = 1d;
-        if (parameters.ContainsKey("roiReferencePoseScale") &&
-            (!TryGetDouble(parameters, "roiReferencePoseScale", out scale) ||
-             !PoseSimilarityTransform.IsValidScale(scale)))
-        {
-            return false;
-        }
-
-        pose = new Pose2D(x, y, angle) { Scale = scale };
-        return true;
     }
 
     private void UpdateResultValues(IReadOnlyDictionary<string, string> data)
@@ -813,6 +799,11 @@ public sealed class FindCircleToolDialogViewModel : BindableBase
             return;
         }
 
+        if (_previewSearchRoiStatus == SearchRoiReadStatus.Invalid)
+        {
+            return;
+        }
+
         var roi = GetPreviewCircleRoi() ?? _circleRoiEditor;
         if (roi is null)
         {
@@ -831,14 +822,19 @@ public sealed class FindCircleToolDialogViewModel : BindableBase
 
     private RoiEditorItem? GetPreviewCircleRoi()
     {
-        if (_previewResult is null ||
-            !TryGetDouble(_previewResult.Data, "searchRoiX", out var x) ||
-            !TryGetDouble(_previewResult.Data, "searchRoiY", out var y) ||
-            !TryGetDouble(_previewResult.Data, "searchRoiRadius", out var radius))
+        if (_previewResult is null)
         {
             return _circleRoiEditor;
         }
 
+        if (_previewSearchRoiStatus == SearchRoiReadStatus.Invalid || _previewSearchRoi is null)
+        {
+            return null;
+        }
+
+        var x = _previewSearchRoi.X;
+        var y = _previewSearchRoi.Y;
+        var radius = _previewSearchRoi.Radius;
         var runtimeRoi = new RoiEditorItem
         {
             Name = "运行圆卡尺",
@@ -908,8 +904,15 @@ public sealed class FindCircleToolDialogViewModel : BindableBase
     private void ClearResultPreview()
     {
         _previewResult = null;
+        ResetPreviewSearchRoi();
         ShowCircleRoiEditor();
         RefreshPreviewOverlays();
+    }
+
+    private void ResetPreviewSearchRoi()
+    {
+        _previewSearchRoi = null;
+        _previewSearchRoiStatus = SearchRoiReadStatus.Missing;
     }
 
     private void OnCircleRoiPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

@@ -40,6 +40,8 @@ public sealed class BlobAnalysisToolDialogViewModel : BindableBase
     private RoiEditorItem? _blobRoiEditor;
     private RoiEditorItem? _selectedEditableRoi;
     private ToolResult? _previewResult;
+    private RoiDefinition? _previewSearchRoi;
+    private SearchRoiReadStatus _previewSearchRoiStatus = SearchRoiReadStatus.Missing;
     private string _thresholdMode;
     private double _threshold;
     private double _grayMin;
@@ -90,7 +92,9 @@ public sealed class BlobAnalysisToolDialogViewModel : BindableBase
         _log = log;
         _toolId = tool.Id;
         _parameters = ParseParameters(tool.ParametersText);
-        _roiReferenceDirty = !HasValidRoiReferencePose(_parameters);
+        var sourceToolId = _parameters.GetValueOrDefault("input:PositionInput:toolId") ?? string.Empty;
+        _roiReferenceDirty = PositionInputReferencePoseReader.ReadTaught(_parameters, sourceToolId).Status ==
+                             PositionInputReadStatus.Missing;
         _name = tool.Name;
         _enabled = tool.Enabled;
         _roiId = tool.RoiId;
@@ -780,12 +784,14 @@ public sealed class BlobAnalysisToolDialogViewModel : BindableBase
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
+            ClearResultPreview();
             SyncBlobRoi();
             if (!await CaptureRoiReferencePoseIfNeededAsync())
             {
                 return;
             }
 
+            var sourceRoi = _blobRoiEditor?.ToDefinition();
             var definition = new VisionToolDefinition
             {
                 Id = _toolId,
@@ -805,7 +811,17 @@ public sealed class BlobAnalysisToolDialogViewModel : BindableBase
 
             stopwatch.Stop();
             DurationText = $"{stopwatch.ElapsedMilliseconds}ms";
-            StatusText = result.Message;
+            var previewSearchRoi = ResolvePreviewSearchRoi(
+                result,
+                pipelineResult,
+                recipe,
+                definition.Parameters,
+                sourceRoi);
+            _previewSearchRoiStatus = previewSearchRoi.Status;
+            _previewSearchRoi = previewSearchRoi.Roi;
+            StatusText = previewSearchRoi.Status == SearchRoiReadStatus.Invalid
+                ? previewSearchRoi.Failure!.Message
+                : result.Message;
             _previewResult = result;
             UpdateResultSummary(result);
             RefreshPreviewOverlays();
@@ -857,13 +873,36 @@ public sealed class BlobAnalysisToolDialogViewModel : BindableBase
         });
     }
 
-    private async Task<bool> CaptureRoiReferencePoseIfNeededAsync()
+    private static SearchRoiReadResult ResolvePreviewSearchRoi(
+        ToolResult result,
+        VisionPipelineResult pipelineResult,
+        Recipe recipe,
+        IReadOnlyDictionary<string, string> parameters,
+        RoiDefinition? sourceRoi)
     {
-        if (!_roiReferenceDirty)
+        var runtimeRoi = ToolResultSearchRoiReader.Read(
+            result.Data,
+            RoiShapeKind.Rectangle,
+            RoiShapeKind.Circle,
+            RoiShapeKind.RotatedRectangle);
+        if (runtimeRoi.Status != SearchRoiReadStatus.Missing)
         {
-            return true;
+            return runtimeRoi;
         }
 
+        if (sourceRoi is null)
+        {
+            return SearchRoiReadResult.Missing();
+        }
+
+        var sourceToolId = parameters.GetValueOrDefault("input:PositionInput:toolId") ?? string.Empty;
+        var sourceResult = pipelineResult.ToolResults.LastOrDefault(item =>
+            string.Equals(item.ToolId, sourceToolId, StringComparison.OrdinalIgnoreCase));
+        return PositionInputPreviewRoiResolver.ResolveFallback(sourceRoi, parameters, recipe, sourceResult);
+    }
+
+    private async Task<bool> CaptureRoiReferencePoseIfNeededAsync()
+    {
         var sourceToolId = GetPositionInputSourceToolId();
         if (string.IsNullOrWhiteSpace(sourceToolId))
         {
@@ -872,52 +911,54 @@ public sealed class BlobAnalysisToolDialogViewModel : BindableBase
             return true;
         }
 
+        var taughtReference = PositionInputReferencePoseReader.ReadTaught(_parameters, sourceToolId);
+        if (!_roiReferenceDirty && taughtReference.Status == PositionInputReadStatus.Invalid)
+        {
+            StatusText = taughtReference.Failure!.Message;
+            return false;
+        }
+
+        if (!_roiReferenceDirty && taughtReference.Status == PositionInputReadStatus.Success)
+        {
+            return true;
+        }
+
         var currentPose = await TryGetCurrentPositionInputPoseAsync();
-        if (currentPose is null)
+        if (currentPose.Status == PositionInputReadStatus.Invalid)
+        {
+            StatusText = currentPose.Failure!.Message;
+            return false;
+        }
+
+        if (currentPose.Status != PositionInputReadStatus.Success)
         {
             StatusText = "模板位置未就绪。请先运行模板定位，再保存或预览斑点 ROI。";
             return false;
         }
 
-        SetRoiReferencePose(currentPose);
+        SetRoiReferencePose(currentPose.Pose!);
         _roiReferenceDirty = false;
         return true;
     }
 
-    private async Task<Pose2D?> TryGetCurrentPositionInputPoseAsync()
+    private async Task<PositionInputPoseReadResult> TryGetCurrentPositionInputPoseAsync()
     {
         if (CurrentFrame is null)
         {
-            return null;
+            return PositionInputPoseReadResult.Missing();
         }
 
         var sourceToolId = GetPositionInputSourceToolId();
         var recipe = BuildPositionSourcePreviewRecipe(sourceToolId);
         if (string.IsNullOrWhiteSpace(sourceToolId) || recipe is null)
         {
-            return null;
+            return PositionInputPoseReadResult.Missing();
         }
 
         var pipelineResult = await _pipeline.ExecuteAsync(recipe, CurrentFrame);
         var sourceResult = pipelineResult.ToolResults.LastOrDefault(result =>
             string.Equals(result.ToolId, sourceToolId, StringComparison.OrdinalIgnoreCase));
-        if (sourceResult?.Outcome != InspectionOutcome.Ok ||
-            !TryGetDouble(sourceResult.Data, "x", out var x) ||
-            !TryGetDouble(sourceResult.Data, "y", out var y))
-        {
-            return null;
-        }
-
-        TryGetDouble(sourceResult.Data, "angle", out var angle);
-        var scale = 1d;
-        if (sourceResult.Data.ContainsKey("scale") &&
-            (!TryGetDouble(sourceResult.Data, "scale", out scale) ||
-             !PoseSimilarityTransform.IsValidScale(scale)))
-        {
-            return null;
-        }
-
-        return new Pose2D(x, y, angle) { Scale = scale };
+        return ToolResultPoseReader.Read(sourceResult);
     }
 
     private Recipe? BuildPositionSourcePreviewRecipe(string sourceToolId)
@@ -964,46 +1005,6 @@ public sealed class BlobAnalysisToolDialogViewModel : BindableBase
         _parameters.Remove("roiReferencePoseAngle");
         _parameters.Remove("roiReferencePoseScale");
         _parameters.Remove("roiReferencePoseToolId");
-    }
-
-    private static bool HasValidRoiReferencePose(IReadOnlyDictionary<string, string> parameters)
-    {
-        if (!TryGetRoiReferencePose(parameters, out _))
-        {
-            return false;
-        }
-
-        var sourceToolId = parameters.GetValueOrDefault("input:PositionInput:toolId") ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(sourceToolId))
-        {
-            return false;
-        }
-
-        var referenceToolId = parameters.GetValueOrDefault("roiReferencePoseToolId") ?? string.Empty;
-        return string.IsNullOrWhiteSpace(referenceToolId) ||
-               string.Equals(referenceToolId, sourceToolId, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool TryGetRoiReferencePose(IReadOnlyDictionary<string, string> parameters, out Pose2D pose)
-    {
-        pose = new Pose2D(0, 0, 0);
-        if (!TryGetDouble(parameters, "roiReferencePoseX", out var x) ||
-            !TryGetDouble(parameters, "roiReferencePoseY", out var y))
-        {
-            return false;
-        }
-
-        TryGetDouble(parameters, "roiReferencePoseAngle", out var angle);
-        var scale = 1d;
-        if (parameters.ContainsKey("roiReferencePoseScale") &&
-            (!TryGetDouble(parameters, "roiReferencePoseScale", out scale) ||
-             !PoseSimilarityTransform.IsValidScale(scale)))
-        {
-            return false;
-        }
-
-        pose = new Pose2D(x, y, angle) { Scale = scale };
-        return true;
     }
 
     private Dictionary<string, string> BuildParameters(bool includeRoiId)
@@ -1275,95 +1276,48 @@ public sealed class BlobAnalysisToolDialogViewModel : BindableBase
 
     private VisionOverlayItem? CreatePreviewSearchRoiOverlay()
     {
-        if (_previewResult is not null &&
-            TryCreateSearchRoiFromResult(_previewResult.Data, out var runtimeRoi))
+        if (_previewResult is null)
         {
-            return VisionOverlayItem.FromRoi(runtimeRoi, VisionOverlayState.Neutral) with { Label = string.Empty };
+            return _blobRoiEditor is null
+                ? null
+                : VisionOverlayItem.FromRoi(_blobRoiEditor.ToDefinition(), VisionOverlayState.Neutral) with
+                {
+                    Label = string.Empty
+                };
         }
 
-        return _blobRoiEditor is null
-            ? null
-            : VisionOverlayItem.FromRoi(_blobRoiEditor.ToDefinition(), VisionOverlayState.Neutral) with { Label = string.Empty };
-    }
-
-    private static bool TryCreateSearchRoiFromResult(IReadOnlyDictionary<string, string> data, out RoiDefinition roi)
-    {
-        roi = new RoiDefinition();
-        if (!data.TryGetValue("searchRoiShape", out var shapeText) ||
-            !Enum.TryParse<RoiShapeKind>(shapeText, true, out var shape) ||
-            !TryGetDouble(data, "searchRoiX", out var x) ||
-            !TryGetDouble(data, "searchRoiY", out var y))
+        if (_previewSearchRoiStatus == SearchRoiReadStatus.Invalid)
         {
-            return false;
+            return null;
         }
 
-        switch (shape)
+        if (_previewSearchRoi is not null)
         {
-            case RoiShapeKind.Circle:
-                if (!TryGetDouble(data, "searchRoiRadius", out var radius))
-                {
-                    return false;
-                }
-
-                roi = new RoiDefinition
-                {
-                    Name = "Runtime ROI",
-                    Shape = RoiShapeKind.Circle,
-                    X = x,
-                    Y = y,
-                    Radius = radius
-                };
-                return true;
-
-            case RoiShapeKind.RotatedRectangle:
-                if (!TryGetDouble(data, "searchRoiWidth", out var rotatedWidth) ||
-                    !TryGetDouble(data, "searchRoiHeight", out var rotatedHeight))
-                {
-                    return false;
-                }
-
-                TryGetDouble(data, "searchRoiAngle", out var angle);
-                roi = new RoiDefinition
-                {
-                    Name = "Runtime ROI",
-                    Shape = RoiShapeKind.RotatedRectangle,
-                    X = x,
-                    Y = y,
-                    Width = rotatedWidth,
-                    Height = rotatedHeight,
-                    Angle = angle
-                };
-                return true;
-
-            default:
-                if (!TryGetDouble(data, "searchRoiWidth", out var width) ||
-                    !TryGetDouble(data, "searchRoiHeight", out var height))
-                {
-                    return false;
-                }
-
-                roi = new RoiDefinition
-                {
-                    Name = "Runtime ROI",
-                    Shape = RoiShapeKind.Rectangle,
-                    X = x,
-                    Y = y,
-                    Width = width,
-                    Height = height
-                };
-                return true;
+            return VisionOverlayItem.FromRoi(_previewSearchRoi, VisionOverlayState.Neutral) with
+            {
+                Label = string.Empty
+            };
         }
+
+        return null;
     }
 
     private void ClearResultPreview()
     {
         _previewResult = null;
+        ResetPreviewSearchRoi();
         CountText = "-";
         BestAreaText = "-";
         BestCenterText = "-";
         BestCircularityText = "-";
         RefreshPreviewOverlays();
         RefreshResultItems();
+    }
+
+    private void ResetPreviewSearchRoi()
+    {
+        _previewSearchRoi = null;
+        _previewSearchRoiStatus = SearchRoiReadStatus.Missing;
     }
 
     private void OnBlobRoiPropertyChanged(object? sender, PropertyChangedEventArgs e)
