@@ -570,6 +570,12 @@ public sealed class JsonDeviceConfigurationRepository : IDeviceConfigurationRepo
         settings ??= new SystemSettingsConfiguration();
         var defaults = CreateDefault().SystemSettings;
 
+        var halcon = settings.Halcon ?? defaults.Halcon;
+        halcon = halcon with
+        {
+            RuntimeRoot = halcon.RuntimeRoot?.Trim() ?? string.Empty
+        };
+
         var mes = settings.Mes ?? defaults.Mes;
         mes = mes with
         {
@@ -681,6 +687,7 @@ public sealed class JsonDeviceConfigurationRepository : IDeviceConfigurationRepo
         {
             Mes = mes,
             Plc = plc,
+            Halcon = halcon,
             Production = production,
             Logging = logging,
             Communication = communication,

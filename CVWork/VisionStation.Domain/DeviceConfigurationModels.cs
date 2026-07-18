@@ -239,6 +239,8 @@ public sealed record SystemSettingsConfiguration
 
     public PlcCommunicationSettings Plc { get; init; } = new();
 
+    public HalconRuntimeConfiguration Halcon { get; init; } = new();
+
     public ProductionSettingsConfiguration Production { get; init; } = new();
 
     public AppLoggingSettingsConfiguration Logging { get; init; } = new();
@@ -248,6 +250,16 @@ public sealed record SystemSettingsConfiguration
     public RuntimeParameterSettings Parameters { get; init; } = new();
 
     public AccessControlSettings AccessControl { get; init; } = new();
+}
+
+public sealed record HalconRuntimeConfiguration
+{
+    /// <summary>
+    /// Gets an optional absolute HALCON installation root. An empty value keeps automatic
+    /// environment and Registry64 discovery enabled; a non-empty value is never resolved
+    /// relative to the application working directory.
+    /// </summary>
+    public string RuntimeRoot { get; init; } = string.Empty;
 }
 
 public sealed record ProductionSettingsConfiguration
