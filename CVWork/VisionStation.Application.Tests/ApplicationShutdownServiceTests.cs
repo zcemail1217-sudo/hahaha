@@ -77,12 +77,18 @@ public sealed class ApplicationShutdownServiceTests
         var steps = new List<string>();
         var lifetime = new InspectionRunLifetime();
         var callbackRegistered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callbackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var run = lifetime.RunTrackedAsync<int>(async cancellationToken =>
         {
             using var registration = cancellationToken.Register(
-                () => throw new InvalidOperationException("cancellation callback failed"));
+                () =>
+                {
+                    callbackEntered.TrySetResult();
+                    throw new InvalidOperationException("cancellation callback failed");
+                });
             callbackRegistered.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            await callbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cancellationToken.ThrowIfCancellationRequested();
             return 1;
         });
         await callbackRegistered.Task;

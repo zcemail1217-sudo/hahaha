@@ -107,12 +107,18 @@ public static class TemplateMatcher
             return engine switch
             {
                 TemplateMatchingEngine.OpenCv => OpenCvTemplateMatcher
-                    .Match(frame, searchRoi, parameters, cancellationToken) with { Engine = engine },
+                    .Match(frame, searchRoi, parameters, cancellationToken) with
+                {
+                    Engine = engine
+                },
                 TemplateMatchingEngine.ManagedNcc => MatchManaged(
                     frame,
                     searchRoi,
                     parameters,
-                    cancellationToken) with { Engine = engine },
+                    cancellationToken) with
+                {
+                    Engine = engine
+                },
                 _ => throw new InvalidOperationException("Unknown cannot be an active template matching engine.")
             };
         }
@@ -148,12 +154,18 @@ public static class TemplateMatcher
             return engine switch
             {
                 TemplateMatchingEngine.OpenCv => OpenCvTemplateMatcher
-                    .Match(frame, searchRoi, parameters, gray, cancellationToken) with { Engine = engine },
+                    .Match(frame, searchRoi, parameters, gray, cancellationToken) with
+                {
+                    Engine = engine
+                },
                 TemplateMatchingEngine.ManagedNcc => MatchManaged(
                     frame,
                     searchRoi,
                     parameters,
-                    cancellationToken) with { Engine = engine },
+                    cancellationToken) with
+                {
+                    Engine = engine
+                },
                 _ => throw new InvalidOperationException("Unknown cannot be an active template matching engine.")
             };
         }

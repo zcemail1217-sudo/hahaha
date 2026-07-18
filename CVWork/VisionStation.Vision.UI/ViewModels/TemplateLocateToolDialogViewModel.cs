@@ -887,23 +887,6 @@ public sealed class TemplateLocateToolDialogViewModel : BindableBase
         }
     }
 
-    public async Task CancelAndRetireAsync()
-    {
-        await CancelAndDrainAsync();
-
-        if (TryCreateStableOwner(out var owner))
-        {
-            try
-            {
-                await _modelResources.RetireToolAsync(owner, CancellationToken.None);
-            }
-            catch (Exception exception)
-            {
-                _log.Warning("VisionDebug", $"{Name} retiring template cache on dialog close failed: {exception.Message}");
-            }
-        }
-    }
-
     private async Task ExecuteTrackedOperationAsync(
         Func<CancellationToken, Task> operation,
         CancellationToken cancellationToken)

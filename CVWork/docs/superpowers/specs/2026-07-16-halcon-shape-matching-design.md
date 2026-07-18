@@ -325,6 +325,7 @@ JSON 元数据至少包含：
 - **复制配方**：不论当前选择哪个 engine，都复制每个完整 `halcon.model*` generation 到新 `RecipeId/FlowId/ToolId` 目录，重新计算 checksum 并重写新配方的 namespaced owner/path；任一资源复制失败则不保存半成品配方。新旧配方不共享可变模型文件。
 - **删除配方**：不论 HALCON 是否为当前 engine，都先确认配方 JSON 删除成功并 retire 其全部 HALCON reference，再验证目录哈希和元数据中的完整原始 RecipeId，只删除确属该配方的独占模型目录；清理失败只记录 orphan 日志，不回滚已经完成的配方删除。
 - **切换引擎**：保留非活动后端数据用于用户切回，但当前模型状态只由所选引擎的完整元数据决定。
+- **取消编辑**：取消或关闭参数对话框只取消并排空该窗口发起的操作，不得按 owner retire。对话框与生产流程共享同一个 owner/cache；owner-wide retire 会让仍在使用旧 generation 的生产 lease 触发 retirement fence。未被配方引用的新 generation 由后续资源治理回收，不进入取消路径的正确性边界。
 
 ### 11.5 路径防护
 

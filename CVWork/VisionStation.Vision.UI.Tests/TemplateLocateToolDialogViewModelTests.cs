@@ -2029,6 +2029,26 @@ public sealed class TemplateLocateToolDialogViewModelTests
     }
 
     [Fact]
+    public async Task CancelAndDrainDoesNotRetireStableProductionOwner()
+    {
+        using var tempDirectory = new TempDirectory();
+        var parameters = CreateHalconParametersWithTemplateRoi(TemplateMatchCardinality.Single);
+        var tool = CreateTool(VisionToolKind.TemplateLocate, parameters);
+        var resources = new RecordingTemplateModelResourceManager();
+        var viewModel = CreateInjectedViewModel(
+            tool,
+            tempDirectory,
+            RecordingTemplateMatchingService.Successful(),
+            CreatePreviewRecipe("recipe", "flow", tool),
+            CreateFrame(80, 60),
+            modelResources: resources);
+
+        await viewModel.CancelAndDrainAsync();
+
+        Assert.Empty(resources.RetiredOwners);
+    }
+
+    [Fact]
     public async Task HalconResetRemovesOnlyKnownHalconStateAndRetiresStableOwner()
     {
         using var tempDirectory = new TempDirectory();

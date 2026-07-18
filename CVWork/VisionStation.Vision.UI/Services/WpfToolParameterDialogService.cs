@@ -252,7 +252,7 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
                     await viewModel.CancelAndDrainAsync();
                     if (cancelCloseRequested)
                     {
-                        await viewModel.CancelAndRetireAsync();
+                        await viewModel.CancelAndDrainAsync();
                         allowClose = true;
                         dialog.DialogResult = false;
                         return;
@@ -268,7 +268,7 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
                 }
                 else
                 {
-                    await viewModel.CancelAndRetireAsync();
+                    await viewModel.CancelAndDrainAsync();
                     allowClose = true;
                 }
 
@@ -284,7 +284,7 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
 
                 try
                 {
-                    await viewModel.CancelAndRetireAsync();
+                    await viewModel.CancelAndDrainAsync();
                     allowClose = true;
                     dialog.DialogResult = false;
                 }
@@ -320,7 +320,7 @@ public sealed class WpfToolParameterDialogService : IToolParameterDialogService
             cancelCloseRequested = true;
             try
             {
-                await viewModel.CancelAndRetireAsync();
+                await viewModel.CancelAndDrainAsync();
                 allowClose = true;
                 dialog.Close();
             }

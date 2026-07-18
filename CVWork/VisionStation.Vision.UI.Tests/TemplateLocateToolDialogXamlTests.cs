@@ -214,7 +214,8 @@ public sealed class TemplateLocateToolDialogXamlTests
         var serviceSource = File.ReadAllText(GetDialogServicePath());
         Assert.Contains("dialog.Loaded += async", serviceSource, StringComparison.Ordinal);
         Assert.Contains("await viewModel.InitializeAsync()", serviceSource, StringComparison.Ordinal);
-        Assert.Contains("await viewModel.CancelAndRetireAsync()", serviceSource, StringComparison.Ordinal);
+        Assert.Contains("await viewModel.CancelAndDrainAsync()", serviceSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("CancelAndRetireAsync", serviceSource, StringComparison.Ordinal);
     }
 
     [Fact]

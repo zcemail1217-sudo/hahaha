@@ -150,11 +150,15 @@ public sealed class RecipeManagementViewModelTests : IDisposable
         {
             IsInsideLifetime = () => lifetime.IsInsideOperation
         };
+        var events = new EventAggregator();
+        var recipeChangedAfterCurrentSelection = false;
+        events.GetEvent<RecipeChangedEvent>().Subscribe(
+            _ => recipeChangedAfterCurrentSelection = repository.SetCurrentCallCount == 1);
         var communication = new UnusedCommunicationChannelRuntime(() => lifetime.IsInsideOperation);
         var runner = new SuccessfulInspectionRunner(() => lifetime.IsInsideOperation);
         var viewModel = CreateViewModel(
             repository,
-            new EventAggregator(),
+            events,
             inspectionRunner: runner,
             communicationChannels: communication,
             inspectionRunLifetime: lifetime);
@@ -178,6 +182,7 @@ public sealed class RecipeManagementViewModelTests : IDisposable
         Assert.True(repository.SetCurrentObservedInsideLifetime);
         Assert.True(communication.ConnectObservedInsideLifetime);
         Assert.True(runner.RunObservedInsideLifetime);
+        Assert.True(recipeChangedAfterCurrentSelection);
     }
 
     [Fact]

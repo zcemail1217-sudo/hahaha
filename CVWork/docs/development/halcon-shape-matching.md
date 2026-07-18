@@ -284,6 +284,8 @@ recipe reference 还保存 metadata 文件的 SHA-256。加载前会同时校验
 - `RetireToolAsync(owner)` 建立 owner retirement fence，阻止旧加载结果重新成为 active generation。它等已经在读文件的 load 结束，但不抢夺活跃 lease；native handle 在最后一个 lease/operation 释放后精确 Dispose。
 - `ITemplateMatchingService.DisposeAsync()` 先拒绝新操作，等当前操作排空，再优先关闭 HALCON cache/worker，最后关闭其他 backend。应用不能在该 await 完成前卸载 runtime 或删除资源。
 
+参数对话框的“取消”和窗口 X 只调用 `CancelAndDrainAsync`，不调用 `RetireToolAsync(owner)`。对话框与生产流程共享同一个 Recipe/Flow/Tool owner 和 cache；在生产 lease 尚未归还时做 owner-wide retire，会让下一帧同 generation 获取命中 retirement fence 并返回 NG。只有 reset、已确认的 active reference 切换、配方删除等真实失效边界才允许 retire。取消后未被配方引用的学习 generation 由后续资源治理清理，不用破坏当前生产模型来即时回收。
+
 ### 配方复制
 
 `PrepareRecipeCopyAsync(source, newRecipeId, token)` 会为目标 Recipe/Flow/Tool owner 复制每个当前引用的精确 generation，并重写目标配方引用。正确顺序是：准备 copy session → 发布新配方 JSON → `copy.CommitAsync(CancellationToken.None)` → 始终 Dispose session。配方 JSON 是持久化 commit point；未 commit 的 Dispose 只回滚本次新建的精确 generation。

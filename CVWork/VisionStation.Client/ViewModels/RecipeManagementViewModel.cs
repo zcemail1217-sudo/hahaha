@@ -1270,7 +1270,6 @@ public sealed class RecipeManagementViewModel : BindableBase
 
         var recipe = BuildRecipe();
         var persistedRecipe = await _recipes.SaveAsync(recipe, cancellationToken);
-        _events.GetEvent<RecipeChangedEvent>().Publish(persistedRecipe.Id);
         if (setCurrentRecipe)
         {
             await _recipes.SetCurrentRecipeAsync(persistedRecipe.Id, cancellationToken);
@@ -1291,6 +1290,7 @@ public sealed class RecipeManagementViewModel : BindableBase
             ApplyRecipe(_loadedRecipe, currentRecipeId);
         }
 
+        _events.GetEvent<RecipeChangedEvent>().Publish(persistedRecipe.Id);
         return _loadedRecipe;
     }
 
