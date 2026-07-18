@@ -77,6 +77,11 @@ internal sealed class HalconNativeBindingState
 internal sealed class HalconNativeLibraryBootstrapper : IHalconNativeLibraryBootstrapper
 {
     internal const uint LoadLibrarySearchDllLoadDir = 0x00000100;
+    internal const uint LoadLibrarySearchSystem32 = 0x00000800;
+    // HALCON's private dependencies live beside halcon.dll, while Windows runtime dependencies
+    // live in System32. Supplying only DLL_LOAD_DIR removes System32 from the dependency search.
+    internal const uint NativeLibraryLoadFlags =
+        LoadLibrarySearchDllLoadDir | LoadLibrarySearchSystem32;
 
     private readonly IHalconNativeLibraryApi _nativeLibrary;
     private readonly IHalconProcessEnvironmentMutator _environment;
@@ -150,7 +155,7 @@ internal sealed class HalconNativeLibraryBootstrapper : IHalconNativeLibraryBoot
                 stage = "load-native-library";
                 moduleHandle = _nativeLibrary.LoadLibrary(
                     Path.GetFullPath(location.NativeLibraryPath.Trim()),
-                    LoadLibrarySearchDllLoadDir);
+                    NativeLibraryLoadFlags);
                 if (moduleHandle == IntPtr.Zero)
                 {
                     var error = _nativeLibrary.GetLastError();

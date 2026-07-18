@@ -29,7 +29,13 @@ public sealed class HalconRuntimeProbeTests
         Assert.True(result.Success);
         Assert.Null(result.Diagnostic);
         Assert.Equal(NativeLibraryPath, native.LoadedPath);
-        Assert.Equal(HalconNativeLibraryBootstrapper.LoadLibrarySearchDllLoadDir, native.LoadFlags);
+        Assert.Equal(HalconNativeLibraryBootstrapper.NativeLibraryLoadFlags, native.LoadFlags);
+        Assert.NotEqual(
+            0u,
+            native.LoadFlags & HalconNativeLibraryBootstrapper.LoadLibrarySearchDllLoadDir);
+        Assert.NotEqual(
+            0u,
+            native.LoadFlags & HalconNativeLibraryBootstrapper.LoadLibrarySearchSystem32);
         Assert.Equal(RuntimeRoot, environment.HalconRoot);
         Assert.Equal(HalconRuntimeLocator.ExpectedArchitecture, environment.HalconArch);
         Assert.Equal(1, native.RegisterResolverCalls);
