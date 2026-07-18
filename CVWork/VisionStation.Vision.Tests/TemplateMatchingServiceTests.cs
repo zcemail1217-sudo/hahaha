@@ -302,6 +302,86 @@ public sealed class TemplateMatchingServiceTests
     }
 
     [Fact]
+    public async Task DisposeReleasesHalconBackendBeforeOtherBackendsRegardlessOfRegistrationOrder()
+    {
+        var disposalOrder = new List<TemplateMatchingEngine>();
+        var openCv = new RecordingTemplateMatchingBackend(TemplateMatchingEngine.OpenCv)
+        {
+            DisposeHandler = Record(TemplateMatchingEngine.OpenCv)
+        };
+        var managed = new RecordingTemplateMatchingBackend(TemplateMatchingEngine.ManagedNcc)
+        {
+            DisposeHandler = Record(TemplateMatchingEngine.ManagedNcc)
+        };
+        var halcon = new RecordingTemplateMatchingBackend(TemplateMatchingEngine.Halcon)
+        {
+            DisposeHandler = Record(TemplateMatchingEngine.Halcon)
+        };
+        var service = TemplateMatchingService.ForTests(openCv, managed, halcon);
+
+        await service.DisposeAsync();
+
+        Assert.Equal(
+            [
+                TemplateMatchingEngine.Halcon,
+                TemplateMatchingEngine.OpenCv,
+                TemplateMatchingEngine.ManagedNcc
+            ],
+            disposalOrder);
+
+        Func<ValueTask> Record(TemplateMatchingEngine engine)
+        {
+            return () =>
+            {
+                disposalOrder.Add(engine);
+                return ValueTask.CompletedTask;
+            };
+        }
+    }
+
+    [Fact]
+    public async Task DisposeAwaitsHalconBackendBeforeStartingOtherBackendCleanup()
+    {
+        var halconDisposeEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseHalconDispose = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var otherDisposeStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var openCv = new RecordingTemplateMatchingBackend(TemplateMatchingEngine.OpenCv)
+        {
+            DisposeHandler = () =>
+            {
+                otherDisposeStarted.TrySetResult();
+                return ValueTask.CompletedTask;
+            }
+        };
+        var halcon = new RecordingTemplateMatchingBackend(TemplateMatchingEngine.Halcon)
+        {
+            DisposeHandler = async () =>
+            {
+                halconDisposeEntered.TrySetResult();
+                await releaseHalconDispose.Task;
+            }
+        };
+        var service = TemplateMatchingService.ForTests(openCv, halcon);
+
+        Task disposeTask = service.DisposeAsync().AsTask();
+        await halconDisposeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            Assert.False(otherDisposeStarted.Task.IsCompleted);
+        }
+        finally
+        {
+            releaseHalconDispose.TrySetResult();
+        }
+
+        await disposeTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(otherDisposeStarted.Task.IsCompletedSuccessfully);
+    }
+
+    [Fact]
     public async Task RegistryCopiesInputRejectsDuplicateAndUnknownEngineKeys()
     {
         var openCv = new RecordingTemplateMatchingBackend(TemplateMatchingEngine.OpenCv);
@@ -382,6 +462,34 @@ public sealed class TemplateMatchingServiceTests
         Assert.Same(failure, exception2);
         Assert.Equal(1, first.DisposeCount);
         Assert.Equal(1, second.DisposeCount);
+    }
+
+    [Fact]
+    public async Task ConcurrentDisposeSharesAggregateAndPreservesEveryBackendFailure()
+    {
+        var halconFailure = new InvalidOperationException("halcon-dispose-failed");
+        var openCvFailure = new IOException("opencv-dispose-failed");
+        var openCv = new RecordingTemplateMatchingBackend(TemplateMatchingEngine.OpenCv)
+        {
+            DisposeHandler = () => ValueTask.FromException(openCvFailure)
+        };
+        var managed = new RecordingTemplateMatchingBackend(TemplateMatchingEngine.ManagedNcc);
+        var halcon = new RecordingTemplateMatchingBackend(TemplateMatchingEngine.Halcon)
+        {
+            DisposeHandler = () => ValueTask.FromException(halconFailure)
+        };
+        var service = TemplateMatchingService.ForTests(openCv, managed, halcon);
+
+        var dispose1 = service.DisposeAsync().AsTask();
+        var dispose2 = service.DisposeAsync().AsTask();
+        var exception1 = await Assert.ThrowsAsync<AggregateException>(() => dispose1);
+        var exception2 = await Assert.ThrowsAsync<AggregateException>(() => dispose2);
+
+        Assert.Same(exception1, exception2);
+        Assert.Equal([halconFailure, openCvFailure], exception1.InnerExceptions);
+        Assert.Equal(1, openCv.DisposeCount);
+        Assert.Equal(1, managed.DisposeCount);
+        Assert.Equal(1, halcon.DisposeCount);
     }
 
     [Fact]

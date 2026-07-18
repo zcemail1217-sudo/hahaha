@@ -4,6 +4,7 @@ public sealed class TemplateMatchingService : ITemplateMatchingService
 {
     private readonly object _lifecycleGate = new();
     private readonly IReadOnlyDictionary<TemplateMatchingEngine, ITemplateMatchingBackend> _backends;
+    private readonly IReadOnlyList<ITemplateMatchingBackend> _backendsInDisposalOrder;
     private readonly TaskCompletionSource _operationsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _disposeCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _activeOperations;
@@ -13,6 +14,7 @@ public sealed class TemplateMatchingService : ITemplateMatchingService
     {
         ArgumentNullException.ThrowIfNull(backends);
         var registry = new Dictionary<TemplateMatchingEngine, ITemplateMatchingBackend>();
+        var registeredBackends = new List<ITemplateMatchingBackend>();
         foreach (var backend in backends)
         {
             if (backend is null)
@@ -33,9 +35,16 @@ public sealed class TemplateMatchingService : ITemplateMatchingService
                     $"Template matching backend '{backend.Engine}' is registered more than once.",
                     nameof(backends));
             }
+
+            registeredBackends.Add(backend);
         }
 
         _backends = registry;
+        // The HALCON backend owns native handles, its cache and dedicated workers. Stable
+        // OrderBy moves it first while preserving registration order for all other backends.
+        _backendsInDisposalOrder = registeredBackends
+            .OrderBy(backend => backend.Engine == TemplateMatchingEngine.Halcon ? 0 : 1)
+            .ToArray();
     }
 
     public static TemplateMatchingService CreateLegacyOnly()
@@ -137,8 +146,8 @@ public sealed class TemplateMatchingService : ITemplateMatchingService
         }
 
         await _operationsDrained.Task.ConfigureAwait(false);
-        Exception? firstFailure = null;
-        foreach (var backend in _backends.Values)
+        var failures = new List<Exception>();
+        foreach (var backend in _backendsInDisposalOrder)
         {
             try
             {
@@ -146,17 +155,22 @@ public sealed class TemplateMatchingService : ITemplateMatchingService
             }
             catch (Exception exception)
             {
-                firstFailure ??= exception;
+                failures.Add(exception);
             }
         }
 
-        if (firstFailure is null)
+        if (failures.Count == 0)
         {
             _disposeCompleted.TrySetResult();
         }
         else
         {
-            _disposeCompleted.TrySetException(firstFailure);
+            var failure = failures.Count == 1
+                ? failures[0]
+                : new AggregateException(
+                    "Multiple template matching backends failed during shutdown.",
+                    failures);
+            _disposeCompleted.TrySetException(failure);
         }
 
         await _disposeCompleted.Task.ConfigureAwait(false);
