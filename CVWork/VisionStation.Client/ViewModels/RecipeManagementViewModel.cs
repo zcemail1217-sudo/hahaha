@@ -9,6 +9,7 @@ using Prism.Events;
 using Prism.Mvvm;
 using VisionStation.Application;
 using VisionStation.Application.Presentation;
+using VisionStation.Application.Recipes;
 using VisionStation.Client.Events;
 using VisionStation.Client.Services;
 using VisionStation.Domain;
@@ -35,6 +36,8 @@ public sealed class RecipeManagementViewModel : BindableBase
     private readonly IInspectionRunControl _inspectionRunControl;
     private readonly IUiDispatcher _uiDispatcher;
     private readonly IUnsavedChangesService _unsavedChanges;
+    private readonly IRecipeTemplateLifecycleService _recipeTemplateLifecycle;
+    private readonly IInspectionRunLifetime _inspectionRunLifetime;
     private Recipe? _loadedRecipe;
     private RecipeListItem? _selectedRecipe;
     private RecipeFlowSummaryItem? _selectedFlow;
@@ -91,7 +94,9 @@ public sealed class RecipeManagementViewModel : BindableBase
         ICommunicationChannelRuntime communicationChannels,
         IInspectionRunControl inspectionRunControl,
         IUiDispatcher uiDispatcher,
-        IUnsavedChangesService unsavedChanges)
+        IUnsavedChangesService unsavedChanges,
+        IRecipeTemplateLifecycleService recipeTemplateLifecycle,
+        IInspectionRunLifetime inspectionRunLifetime)
     {
         _recipes = recipes;
         _paths = paths;
@@ -105,6 +110,8 @@ public sealed class RecipeManagementViewModel : BindableBase
         _inspectionRunControl = inspectionRunControl;
         _uiDispatcher = uiDispatcher;
         _unsavedChanges = unsavedChanges;
+        _recipeTemplateLifecycle = recipeTemplateLifecycle;
+        _inspectionRunLifetime = inspectionRunLifetime;
 
         Recipes.CollectionChanged += (_, _) => RaiseCommandStates();
         AttachEditableCollection(ProductParameters);
@@ -157,6 +164,8 @@ public sealed class RecipeManagementViewModel : BindableBase
 
         _ = LoadAsync();
     }
+
+    internal Func<RecipeListItem, bool> ConfirmDeleteRecipe { get; set; } = ShowDeleteRecipeConfirmation;
 
     public ObservableCollection<RecipeListItem> Recipes { get; } = new();
 
@@ -980,6 +989,19 @@ public sealed class RecipeManagementViewModel : BindableBase
             return;
         }
 
+        try
+        {
+            await _inspectionRunLifetime.RunTrackedAsync(ExecuteTrackedTestRunAsync);
+        }
+        catch (OperationCanceledException) when (_inspectionRunLifetime.IsShutdownRequested)
+        {
+            SetShutdownTestRunStatus();
+            CompleteTestRunLifecycle();
+        }
+    }
+
+    private async Task<bool> ExecuteTrackedTestRunAsync(CancellationToken lifetimeCancellationToken)
+    {
         var recipeName = RecipeName;
         StatusText = "试运行已启动，详情见试运行日志";
         TestRunStateText = StatusText;
@@ -994,17 +1016,20 @@ public sealed class RecipeManagementViewModel : BindableBase
                 restartRequested = false;
                 _testRunResetRequested = false;
                 _testRunCancellation?.Dispose();
-                _testRunCancellation = new CancellationTokenSource();
+                _testRunCancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCancellationToken);
                 var runCancellationToken = _testRunCancellation.Token;
                 _inspectionRunControl.BeginRun();
                 _log.Info("Recipe", $"试运行：正在保存配方 {recipeName} 并启动流程");
                 await Task.Yield();
-                var recipe = await PersistSelectedRecipeAsync(setCurrentRecipe: true, refreshList: false);
+                var recipe = await PersistSelectedRecipeAsync(
+                    setCurrentRecipe: true,
+                    refreshList: false,
+                    cancellationToken: runCancellationToken);
                 if (recipe is null)
                 {
                     StatusText = "试运行取消：当前配方保存失败";
                     _log.Warning("Recipe", StatusText);
-                    return;
+                    return false;
                 }
 
                 recipeName = recipe.Name;
@@ -1014,7 +1039,9 @@ public sealed class RecipeManagementViewModel : BindableBase
                 _log.Info("Recipe", $"Test run started for recipe {recipe.Name}");
                 try
                 {
-                    await _communicationChannels.ConnectAsync(CommunicationChannelConnectionPolicies.Production);
+                    await _communicationChannels.ConnectAsync(
+                        CommunicationChannelConnectionPolicies.Production,
+                        runCancellationToken);
                     var run = await _inspectionRunner.RunAsync(new InspectionRequest
                     {
                         RecipeId = recipe.Id,
@@ -1028,7 +1055,9 @@ public sealed class RecipeManagementViewModel : BindableBase
                     AddTestRunResultSnapshot(run);
                     _log.Info("Recipe", $"Test run completed for recipe {recipe.Name}: {run.Result.Outcome}");
                 }
-                catch (InspectionRunResetException)
+                catch (InspectionRunResetException) when (
+                    !lifetimeCancellationToken.IsCancellationRequested &&
+                    !_inspectionRunLifetime.IsShutdownRequested)
                 {
                     restartRequested = true;
                     IsTestRunPaused = false;
@@ -1039,7 +1068,10 @@ public sealed class RecipeManagementViewModel : BindableBase
                     AddTestRunLog("INFO", "Recipe", StatusText);
                     _log.Info("Recipe", StatusText);
                 }
-                catch (OperationCanceledException) when (_testRunResetRequested)
+                catch (OperationCanceledException) when (
+                    _testRunResetRequested &&
+                    !lifetimeCancellationToken.IsCancellationRequested &&
+                    !_inspectionRunLifetime.IsShutdownRequested)
                 {
                     restartRequested = true;
                     IsTestRunPaused = false;
@@ -1053,6 +1085,10 @@ public sealed class RecipeManagementViewModel : BindableBase
             }
             while (restartRequested);
         }
+        catch (OperationCanceledException) when (_inspectionRunLifetime.IsShutdownRequested)
+        {
+            SetShutdownTestRunStatus();
+        }
         catch (Exception ex)
         {
             StatusText = $"试运行失败：{ex.Message}";
@@ -1062,14 +1098,29 @@ public sealed class RecipeManagementViewModel : BindableBase
         }
         finally
         {
-            _inspectionRunControl.EndRun();
-            _testRunCancellation?.Dispose();
-            _testRunCancellation = null;
-            _testRunResetRequested = false;
-            IsTestRunPaused = false;
-            IsTestRunning = false;
-            RaiseCommandStates();
+            CompleteTestRunLifecycle();
         }
+
+        return true;
+    }
+
+    private void SetShutdownTestRunStatus()
+    {
+        StatusText = "应用正在关闭，试运行已取消";
+        TestRunStateText = StatusText;
+        AddTestRunLog("INFO", "Recipe", StatusText);
+        _log.Info("Recipe", StatusText);
+    }
+
+    private void CompleteTestRunLifecycle()
+    {
+        _inspectionRunControl.EndRun();
+        _testRunCancellation?.Dispose();
+        _testRunCancellation = null;
+        _testRunResetRequested = false;
+        IsTestRunPaused = false;
+        IsTestRunning = false;
+        RaiseCommandStates();
     }
 
     private async Task OpenFlowEditorAsync()
@@ -1104,40 +1155,43 @@ public sealed class RecipeManagementViewModel : BindableBase
 
     private async Task DuplicateRecipeAsync()
     {
-        if (_loadedRecipe is null)
+        if (IsBusy || _loadedRecipe is null)
         {
             return;
         }
 
-        var source = BuildRecipe();
-        var copy = source with
+        IsBusy = true;
+        try
         {
-            Id = BuildRecipeId(source.ProductCode),
-            Name = $"{source.Name}-副本",
-            ProductCode = $"{source.ProductCode}-COPY",
-            UpdatedAt = DateTimeOffset.Now
-        };
-
-        var created = await _recipes.CreateAsync(copy);
-        await LoadAsync(created.Id);
-        StatusText = $"已复制配方 {copy.Name}";
+            var source = BuildRecipe();
+            var copyId = BuildRecipeId(source.ProductCode);
+            var created = await _recipeTemplateLifecycle.DuplicateAsync(source, copyId);
+            await LoadAsync(created.Id);
+            StatusText = $"已复制配方 {created.Name}";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"复制配方失败：{ex.Message}";
+            _log.Error("Recipe", StatusText);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     private async Task DeleteRecipeAsync()
     {
-        var target = SelectedRecipe;
-        if (target is null)
+        var selected = SelectedRecipe;
+        if (selected is null)
         {
             return;
         }
 
-        var confirm = MessageBox.Show(
-            $"确定删除配方“{target.Name}”（{target.ProductCode}）吗？",
-            "删除配方",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning,
-            MessageBoxResult.No);
-        if (confirm != MessageBoxResult.Yes)
+        var targetId = selected.Id;
+        var targetName = selected.Name;
+        var targetProductCode = selected.ProductCode;
+        if (!ConfirmDeleteRecipe(selected))
         {
             StatusText = "已取消删除配方";
             return;
@@ -1147,6 +1201,13 @@ public sealed class RecipeManagementViewModel : BindableBase
         IsBusy = true;
         try
         {
+            var target = await _recipes.GetAsync(targetId);
+            if (target is null)
+            {
+                StatusText = "待删除配方已不存在，请刷新配方列表";
+                return;
+            }
+
             var recipes = await _recipes.ListAsync();
             if (recipes.Count <= 1)
             {
@@ -1155,7 +1216,7 @@ public sealed class RecipeManagementViewModel : BindableBase
             }
 
             fallbackRecipe = recipes
-                .Where(recipe => !string.Equals(recipe.Id, target.Id, StringComparison.OrdinalIgnoreCase))
+                .Where(recipe => !string.Equals(recipe.Id, targetId, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(recipe => recipe.Name)
                 .FirstOrDefault();
 
@@ -1165,15 +1226,17 @@ public sealed class RecipeManagementViewModel : BindableBase
                 return;
             }
 
-            await _recipes.DeleteAsync(target.Id);
-            if (target.IsCurrent)
-            {
-                await _recipes.SetCurrentRecipeAsync(fallbackRecipe.Id);
-            }
+            await _recipeTemplateLifecycle.DeleteAsync(target);
 
             _loadedRecipe = null;
             HasUnsavedChanges = false;
-            _log.Warning("Recipe", $"Deleted recipe {target.Name} ({target.ProductCode})");
+            _log.Warning("Recipe", $"Deleted recipe {targetName} ({targetProductCode})");
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"删除配方失败：{ex.Message}";
+            _log.Error("Recipe", StatusText);
+            return;
         }
         finally
         {
@@ -1181,10 +1244,24 @@ public sealed class RecipeManagementViewModel : BindableBase
         }
 
         await LoadAsync(fallbackRecipe.Id);
-        StatusText = $"已删除配方 {target.Name}，当前选中 {fallbackRecipe.Name}";
+        StatusText = $"已删除配方 {targetName}，当前选中 {fallbackRecipe.Name}";
     }
 
-    private async Task<Recipe?> PersistSelectedRecipeAsync(bool setCurrentRecipe, bool refreshList)
+    private static bool ShowDeleteRecipeConfirmation(RecipeListItem recipe)
+    {
+        var confirm = MessageBox.Show(
+            $"确定删除配方“{recipe.Name}”（{recipe.ProductCode}）吗？",
+            "删除配方",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        return confirm == MessageBoxResult.Yes;
+    }
+
+    private async Task<Recipe?> PersistSelectedRecipeAsync(
+        bool setCurrentRecipe,
+        bool refreshList,
+        CancellationToken cancellationToken = default)
     {
         if (_loadedRecipe is null)
         {
@@ -1192,11 +1269,11 @@ public sealed class RecipeManagementViewModel : BindableBase
         }
 
         var recipe = BuildRecipe();
-        var persistedRecipe = await _recipes.SaveAsync(recipe);
+        var persistedRecipe = await _recipes.SaveAsync(recipe, cancellationToken);
         _events.GetEvent<RecipeChangedEvent>().Publish(persistedRecipe.Id);
         if (setCurrentRecipe)
         {
-            await _recipes.SetCurrentRecipeAsync(persistedRecipe.Id);
+            await _recipes.SetCurrentRecipeAsync(persistedRecipe.Id, cancellationToken);
         }
 
         _loadedRecipe = persistedRecipe.WithNormalizedFlows();

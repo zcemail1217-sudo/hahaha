@@ -10,4 +10,19 @@ public sealed class InspectionRunnerContractTests
     {
         Assert.NotNull(typeof(IInspectionRunner).GetEvent("RunCompleted"));
     }
+
+    [Fact]
+    public void IInspectionRunner_PublicContractRemainsRunAsyncAndRunCompletedOnly()
+    {
+        Assert.Equal(
+            ["RunAsync"],
+            typeof(IInspectionRunner).GetMethods()
+                .Where(method => !method.IsSpecialName)
+                .Select(method => method.Name)
+                .Order()
+                .ToArray());
+        Assert.Equal(
+            ["RunCompleted"],
+            typeof(IInspectionRunner).GetEvents().Select(@event => @event.Name).Order().ToArray());
+    }
 }

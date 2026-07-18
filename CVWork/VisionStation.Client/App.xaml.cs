@@ -5,6 +5,7 @@ using Prism.Ioc;
 using Prism.Navigation.Regions;
 using VisionStation.Application;
 using VisionStation.Application.Presentation;
+using VisionStation.Application.Recipes;
 using VisionStation.Client.Services;
 using VisionStation.Client.ViewModels;
 using VisionStation.Client.Views;
@@ -30,6 +31,7 @@ public partial class App : PrismApplication
     private CrashGuardService? _crashGuard;
     private IAppLogService? _appLogService;
     private ICommunicationChannelRuntime? _communicationRuntime;
+    private IInspectionRunLifetime? _inspectionRunLifetime;
     private ProductionCoordinator? _productionCoordinator;
     private ITemplateMatchingService? _templateMatchingService;
     private ApplicationShutdownService? _shutdownService;
@@ -69,6 +71,9 @@ public partial class App : PrismApplication
         containerRegistry.RegisterSingleton<IAlarmEventRepository, SqliteAlarmEventRepository>();
         containerRegistry.RegisterSingleton<IAlarmService, AlarmService>();
         containerRegistry.RegisterSingleton<IRecipeRepository, JsonRecipeRepository>();
+        var inspectionRunLifetime = new InspectionRunLifetime();
+        _inspectionRunLifetime = inspectionRunLifetime;
+        containerRegistry.RegisterInstance<IInspectionRunLifetime>(inspectionRunLifetime);
         containerRegistry.RegisterSingleton<IInspectionRecordRepository, SqliteInspectionRecordRepository>();
         containerRegistry.RegisterSingleton<IInspectionRunControl, InspectionRunControl>();
         containerRegistry.RegisterSingleton<IImageTraceStore, BmpImageTraceStore>();
@@ -92,6 +97,7 @@ public partial class App : PrismApplication
         containerRegistry.RegisterInstance<ITemplateMatchingService>(templateMatchingService);
         containerRegistry.RegisterInstance<ITemplateModelStore>(templateMatching.Store);
         containerRegistry.RegisterInstance<ITemplateModelResourceManager>(templateMatching.Resources);
+        containerRegistry.RegisterSingleton<IRecipeTemplateLifecycleService, RecipeTemplateLifecycleService>();
 
         var camera = new HikvisionMvsCameraDevice();
         containerRegistry.RegisterInstance<ICameraDevice>(camera);
@@ -146,7 +152,7 @@ public partial class App : PrismApplication
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _startupCancellation.Cancel();
+        CancelStartupWithoutThrowing();
         if (!_mainWindowShown)
         {
             // No production coordinator or production UI callbacks exist before the main shell.
@@ -179,34 +185,53 @@ public partial class App : PrismApplication
     {
         lock (_shutdownSyncRoot)
         {
-            _startupCancellation.Cancel();
             if (_shutdownTask is not null)
             {
                 return _shutdownTask;
             }
 
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _shutdownTask = completion.Task;
+            CancelStartupWithoutThrowing();
+
             var templateMatchingService = _templateMatchingService;
             var communicationRuntime = _communicationRuntime;
-            if (templateMatchingService is null || communicationRuntime is null)
+            var inspectionRunLifetime = _inspectionRunLifetime;
+            if (templateMatchingService is null ||
+                communicationRuntime is null ||
+                inspectionRunLifetime is null)
             {
-                _shutdownTask = Task.CompletedTask;
+                completion.TrySetResult();
                 return _shutdownTask;
             }
 
-            _shutdownService = _productionCoordinator is null
-                ? ApplicationShutdownService.WithoutProduction(
-                    templateMatchingService,
-                    communicationRuntime)
-                : new ApplicationShutdownService(
-                    _productionCoordinator,
-                    templateMatchingService,
-                    communicationRuntime);
-            _shutdownTask = ShutdownRuntimeCoreAsync(_shutdownService);
+            try
+            {
+                _shutdownService = _productionCoordinator is null
+                    ? ApplicationShutdownService.WithoutProduction(
+                        inspectionRunLifetime,
+                        templateMatchingService,
+                        communicationRuntime)
+                    : new ApplicationShutdownService(
+                        _productionCoordinator,
+                        inspectionRunLifetime,
+                        templateMatchingService,
+                        communicationRuntime);
+                _ = ShutdownRuntimeCoreAsync(_shutdownService, completion);
+            }
+            catch (Exception exception)
+            {
+                TryLogShutdownFailure(exception);
+                completion.TrySetResult();
+            }
+
             return _shutdownTask;
         }
     }
 
-    private async Task ShutdownRuntimeCoreAsync(ApplicationShutdownService shutdownService)
+    private async Task ShutdownRuntimeCoreAsync(
+        ApplicationShutdownService shutdownService,
+        TaskCompletionSource completion)
     {
         try
         {
@@ -220,6 +245,19 @@ public partial class App : PrismApplication
         {
             _templateMatchingService = null;
             _communicationRuntime = null;
+            completion.TrySetResult();
+        }
+    }
+
+    private void CancelStartupWithoutThrowing()
+    {
+        try
+        {
+            _startupCancellation.Cancel();
+        }
+        catch (Exception exception)
+        {
+            TryLogShutdownFailure(exception);
         }
     }
 

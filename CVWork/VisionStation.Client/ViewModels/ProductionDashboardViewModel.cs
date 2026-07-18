@@ -14,6 +14,7 @@ namespace VisionStation.Client.ViewModels;
 public sealed class ProductionDashboardViewModel : BindableBase
 {
     private readonly ProductionCoordinator _coordinator;
+    private readonly IInspectionRunLifetime _inspectionRunLifetime;
     private readonly IInspectionRecordRepository _records;
     private readonly IRecipeRepository _recipes;
     private readonly IAppLogService _log;
@@ -43,6 +44,7 @@ public sealed class ProductionDashboardViewModel : BindableBase
 
     public ProductionDashboardViewModel(
         ProductionCoordinator coordinator,
+        IInspectionRunLifetime inspectionRunLifetime,
         IInspectionRecordRepository records,
         IRecipeRepository recipes,
         IAppLogService log,
@@ -51,6 +53,7 @@ public sealed class ProductionDashboardViewModel : BindableBase
         ProductionDashboardLayoutService layoutService)
     {
         _coordinator = coordinator;
+        _inspectionRunLifetime = inspectionRunLifetime;
         _records = records;
         _recipes = recipes;
         _log = log;
@@ -198,6 +201,10 @@ public sealed class ProductionDashboardViewModel : BindableBase
         {
             await _coordinator.RunSingleAsync();
         }
+        catch (OperationCanceledException) when (_inspectionRunLifetime.IsShutdownRequested)
+        {
+            // Application shutdown owns cancellation of in-flight inspections.
+        }
         finally
         {
             IsBusy = false;
@@ -206,7 +213,14 @@ public sealed class ProductionDashboardViewModel : BindableBase
 
     private async Task StartAsync()
     {
-        await _coordinator.StartAsync();
+        try
+        {
+            await _coordinator.StartAsync();
+        }
+        catch (OperationCanceledException) when (_inspectionRunLifetime.IsShutdownRequested)
+        {
+            // Application shutdown owns cancellation of production startup.
+        }
     }
 
     private async Task StopAsync()

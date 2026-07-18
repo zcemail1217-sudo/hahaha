@@ -15,6 +15,7 @@ public sealed record ProductionSnapshot(
 public sealed class ProductionCoordinator
 {
     private readonly IInspectionRunner _runner;
+    private readonly IInspectionRunLifetime _runLifetime;
     private readonly ICameraDevice _camera;
     private readonly IPlcClient _plc;
     private readonly IAxisController _axis;
@@ -23,13 +24,20 @@ public sealed class ProductionCoordinator
     private readonly ICommunicationChannelRuntime _communicationChannels;
     private readonly ProductionSettingsConfiguration _productionSettings;
     private readonly object _syncRoot = new();
+    private readonly object _lifecycleSyncRoot = new();
+    private readonly SemaphoreSlim _startTransitionGate = new(1, 1);
 
+    private CancellationTokenSource? _startupCancellation;
+    private Task? _startTransitionTask;
     private CancellationTokenSource? _loopCancellation;
     private Task? _loopTask;
+    private Task? _stopTask;
+    private long _stopVersion;
     private ProductionSnapshot _snapshot = new(ProductionState.Stopped, 0, 0, 0, 100, TimeSpan.Zero, DateTimeOffset.Now);
 
     public ProductionCoordinator(
         IInspectionRunner runner,
+        IInspectionRunLifetime runLifetime,
         ICameraDevice camera,
         IPlcClient plc,
         IAxisController axis,
@@ -39,6 +47,7 @@ public sealed class ProductionCoordinator
         DeviceConfiguration configuration)
     {
         _runner = runner;
+        _runLifetime = runLifetime;
         _camera = camera;
         _plc = plc;
         _axis = axis;
@@ -57,6 +66,8 @@ public sealed class ProductionCoordinator
     public event EventHandler<InspectionRunResult>? InspectionCompleted;
 
     public event EventHandler<DeviceSnapshot>? DeviceStateChanged;
+
+    internal IInspectionRunLifetime RunLifetime => _runLifetime;
 
     public ProductionSnapshot Snapshot
     {
@@ -77,7 +88,12 @@ public sealed class ProductionCoordinator
         _log.Info("Production", "设备模拟层初始化完成");
     }
 
-    public async Task<InspectionRunResult> RunSingleAsync(CancellationToken cancellationToken = default)
+    public Task<InspectionRunResult> RunSingleAsync(CancellationToken cancellationToken = default)
+    {
+        return _runLifetime.RunTrackedAsync(RunSingleCoreAsync, cancellationToken);
+    }
+
+    private async Task<InspectionRunResult> RunSingleCoreAsync(CancellationToken cancellationToken)
     {
         await InitializeAsync(cancellationToken);
         await _communicationChannels.ConnectAsync(CommunicationChannelConnectionPolicies.Production, cancellationToken);
@@ -97,6 +113,10 @@ public sealed class ProductionCoordinator
             ApplyResult(result.Result);
             InspectionCompleted?.Invoke(this, result);
             return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -118,81 +138,498 @@ public sealed class ProductionCoordinator
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        if (_loopTask is { IsCompleted: false })
+        await _runLifetime.RunTrackedAsync(
+            async runCancellationToken =>
+            {
+                await StartCoreAsync(runCancellationToken).ConfigureAwait(false);
+                return true;
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task StartCoreAsync(CancellationToken cancellationToken)
+    {
+        long admissionStopVersion;
+        lock (_lifecycleSyncRoot)
         {
-            return;
+            admissionStopVersion = _stopVersion;
         }
 
-        await InitializeAsync(cancellationToken);
-        await _communicationChannels.ConnectAsync(CommunicationChannelConnectionPolicies.Production, cancellationToken);
-        _loopCancellation = new CancellationTokenSource();
-        SetState(ProductionState.Running);
-        _log.Info("Production", "连续生产启动");
-
-        _loopTask = Task.Run(async () =>
+        await _startTransitionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        TaskCompletionSource? transitionCompletion = null;
+        try
         {
-            var consecutiveFailures = 0;
-            try
+            lock (_lifecycleSyncRoot)
             {
-                while (!_loopCancellation.IsCancellationRequested)
+                if (admissionStopVersion != _stopVersion)
                 {
-                    try
-                    {
-                        await RunSingleAsync(_loopCancellation.Token);
-                        consecutiveFailures = 0;
-                        await Task.Delay(TimeSpan.FromMilliseconds(_productionSettings.CycleDelayMs), _loopCancellation.Token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        SetState(ProductionState.Faulted);
-                        _log.Error("Production", $"连续生产异常：{ex.Message}");
-                        _alarms.Raise(
-                            AlarmSeverity.Critical,
-                            "Production",
-                            $"Continuous production stopped: {ex.Message}",
-                            ex.ToString(),
-                            "production:continuous-run");
-                        consecutiveFailures++;
-                        if (_productionSettings.AutoStopOnAlarm ||
-                            consecutiveFailures >= _productionSettings.MaxConsecutiveFailures)
-                        {
-                            break;
-                        }
+                    return;
+                }
 
-                        SetState(ProductionState.Running);
-                        await Task.Delay(TimeSpan.FromMilliseconds(_productionSettings.CycleDelayMs), _loopCancellation.Token);
+                transitionCompletion = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                _startTransitionTask = transitionCompletion.Task;
+            }
+
+            await StartSerializedCoreAsync(
+                    admissionStopVersion,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            if (transitionCompletion is not null)
+            {
+                transitionCompletion.TrySetResult();
+                lock (_lifecycleSyncRoot)
+                {
+                    if (ReferenceEquals(_startTransitionTask, transitionCompletion.Task))
+                    {
+                        _startTransitionTask = null;
                     }
                 }
             }
-            finally
-            {
-                await DisconnectProductionAsync();
-            }
-        }, _loopCancellation.Token);
+
+            _startTransitionGate.Release();
+        }
     }
 
-    public async Task StopAsync()
+    private async Task StartSerializedCoreAsync(
+        long observedStopVersion,
+        CancellationToken cancellationToken)
     {
-        _loopCancellation?.Cancel();
-        if (_loopTask is not null)
+        var startupCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            CancellationToken.None);
+        CancellationTokenSource? completedLoopCancellation = null;
+
+        lock (_lifecycleSyncRoot)
+        {
+            if (observedStopVersion != _stopVersion ||
+                _stopTask is { IsCompleted: false } ||
+                _loopTask is { IsCompleted: false })
+            {
+                startupCancellation.Dispose();
+                return;
+            }
+
+            if (_loopTask is { IsCompleted: true })
+            {
+                completedLoopCancellation = _loopCancellation;
+                _loopCancellation = null;
+                _loopTask = null;
+            }
+            _startupCancellation = startupCancellation;
+        }
+
+        completedLoopCancellation?.Dispose();
+
+        var productionConnectAttempted = false;
+        CancellationTokenSource? loopCancellation = null;
+        Task? loopTask = null;
+
+        try
+        {
+            await InitializeAsync(startupCancellation.Token).ConfigureAwait(false);
+            productionConnectAttempted = true;
+            await _communicationChannels.ConnectAsync(
+                CommunicationChannelConnectionPolicies.Production,
+                startupCancellation.Token).ConfigureAwait(false);
+            startupCancellation.Token.ThrowIfCancellationRequested();
+            loopCancellation = new CancellationTokenSource();
+            SetState(ProductionState.Running);
+            _log.Info("Production", "连续生产启动");
+            startupCancellation.Token.ThrowIfCancellationRequested();
+
+            var loopToken = loopCancellation.Token;
+            lock (_lifecycleSyncRoot)
+            {
+                var stopSupersededStartup = observedStopVersion != _stopVersion ||
+                                            _stopTask is { IsCompleted: false };
+                if (!stopSupersededStartup && !startupCancellation.IsCancellationRequested)
+                {
+                    loopTask = Task.Run(
+                        () => RunProductionLoopAsync(loopToken),
+                        loopToken);
+                    _loopCancellation = loopCancellation;
+                    _loopTask = loopTask;
+                }
+
+            }
+
+            if (loopTask is null)
+            {
+                throw new OperationCanceledException(
+                    "Continuous production startup was superseded by a stop request.",
+                    startupCancellation.Token);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (Exception startupException)
+        {
+            IReadOnlyList<Exception> rollbackFailures =
+                await RollbackFailedStartAsync(
+                        productionConnectAttempted,
+                        loopCancellation,
+                        loopTask)
+                    .ConfigureAwait(false);
+            if (rollbackFailures.Count > 0)
+            {
+                throw new AggregateException(
+                    "Continuous production startup failed and rollback was incomplete.",
+                    new[] { startupException }.Concat(rollbackFailures));
+            }
+
+            if (startupException is OperationCanceledException &&
+                !cancellationToken.IsCancellationRequested &&
+                WasStopRequestedAfter(observedStopVersion))
+            {
+                return;
+            }
+
+            throw;
+        }
+        finally
+        {
+            lock (_lifecycleSyncRoot)
+            {
+                if (ReferenceEquals(_startupCancellation, startupCancellation))
+                {
+                    _startupCancellation = null;
+                }
+            }
+
+            startupCancellation.Dispose();
+        }
+    }
+
+    public Task StopAsync()
+    {
+        return StopCoreAsync(disconnectProduction: true);
+    }
+
+    internal Task StopForShutdownAsync()
+    {
+        return StopCoreAsync(disconnectProduction: false);
+    }
+
+    private Task StopCoreAsync(bool disconnectProduction)
+    {
+        TaskCompletionSource completion;
+        CancellationTokenSource? startupCancellation;
+        Task? startTransitionTask;
+        CancellationTokenSource? loopCancellation;
+        Task? loopTask;
+
+        lock (_lifecycleSyncRoot)
+        {
+            _stopVersion++;
+            if (_stopTask is { IsCompleted: false })
+            {
+                return _stopTask;
+            }
+
+            completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _stopTask = completion.Task;
+            startupCancellation = _startupCancellation;
+            startTransitionTask = _startTransitionTask;
+            loopCancellation = _loopCancellation;
+            loopTask = _loopTask;
+        }
+
+        _ = CompleteStopAsync(
+            disconnectProduction,
+            startupCancellation,
+            disconnectProduction ? startTransitionTask : null,
+            loopCancellation,
+            loopTask,
+            completion);
+        return completion.Task;
+    }
+
+    private async Task CompleteStopAsync(
+        bool disconnectProduction,
+        CancellationTokenSource? startupCancellation,
+        Task? startTransitionTask,
+        CancellationTokenSource? loopCancellation,
+        Task? loopTask,
+        TaskCompletionSource completion)
+    {
+        Exception? completionFailure = null;
+        CancellationToken? completionCancellation = null;
+        try
+        {
+            var failures = new List<Exception>();
+            TryCancel(startupCancellation, failures);
+            TryCancel(loopCancellation, failures);
+
+            if (startTransitionTask is not null)
+            {
+                try
+                {
+                    await startTransitionTask.ConfigureAwait(false);
+                }
+                catch
+                {
+                    // The StartAsync caller observes startup failure; StopAsync only waits for settlement.
+                }
+            }
+
+            if (loopTask is not null)
+            {
+                try
+                {
+                    await loopTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (loopCancellation?.IsCancellationRequested == true)
+                {
+                    // The loop is expected to cancel during stop.
+                }
+                catch (Exception exception)
+                {
+                    failures.Add(exception);
+                }
+            }
+
+            try
+            {
+                SetState(ProductionState.Stopped);
+            }
+            catch (Exception exception)
+            {
+                failures.Add(exception);
+            }
+
+            if (disconnectProduction && !_runLifetime.IsShutdownRequested)
+            {
+                try
+                {
+                    await DisconnectProductionAsync().ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    failures.Add(exception);
+                }
+            }
+
+            try
+            {
+                _log.Info("Production", "连续生产停止");
+            }
+            catch (Exception exception)
+            {
+                failures.Add(exception);
+            }
+
+            if (failures.Count > 0)
+            {
+                throw new AggregateException("Continuous production stop completed with failures.", failures);
+            }
+        }
+        catch (OperationCanceledException exception)
+        {
+            completionCancellation = exception.CancellationToken;
+        }
+        catch (Exception exception)
+        {
+            completionFailure = exception;
+        }
+        finally
+        {
+            lock (_lifecycleSyncRoot)
+            {
+                if (ReferenceEquals(_startupCancellation, startupCancellation))
+                {
+                    _startupCancellation = null;
+                }
+
+                if (ReferenceEquals(_loopCancellation, loopCancellation) &&
+                    ReferenceEquals(_loopTask, loopTask))
+                {
+                    _loopCancellation = null;
+                    _loopTask = null;
+                }
+            }
+
+            loopCancellation?.Dispose();
+        }
+
+        if (completionCancellation is CancellationToken cancellationToken)
+        {
+            completion.TrySetCanceled(cancellationToken);
+        }
+        else if (completionFailure is not null)
+        {
+            completion.TrySetException(completionFailure);
+        }
+        else
+        {
+            completion.TrySetResult();
+        }
+    }
+
+    private async Task RunProductionLoopAsync(CancellationToken cancellationToken)
+    {
+        var consecutiveFailures = 0;
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await RunSingleAsync(cancellationToken).ConfigureAwait(false);
+                    consecutiveFailures = 0;
+                    await Task.Delay(
+                            TimeSpan.FromMilliseconds(_productionSettings.CycleDelayMs),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    SetState(ProductionState.Faulted);
+                    _log.Error("Production", $"连续生产异常：{exception.Message}");
+                    _alarms.Raise(
+                        AlarmSeverity.Critical,
+                        "Production",
+                        $"Continuous production stopped: {exception.Message}",
+                        exception.ToString(),
+                        "production:continuous-run");
+                    consecutiveFailures++;
+                    if (_productionSettings.AutoStopOnAlarm ||
+                        consecutiveFailures >= _productionSettings.MaxConsecutiveFailures)
+                    {
+                        break;
+                    }
+
+                    SetState(ProductionState.Running);
+                    await Task.Delay(
+                            TimeSpan.FromMilliseconds(_productionSettings.CycleDelayMs),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+        }
+        finally
+        {
+            if (!_runLifetime.IsShutdownRequested)
+            {
+                await DisconnectProductionAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private bool WasStopRequestedAfter(long observedStopVersion)
+    {
+        lock (_lifecycleSyncRoot)
+        {
+            return observedStopVersion != _stopVersion;
+        }
+    }
+
+    private static void TryCancel(
+        CancellationTokenSource? cancellation,
+        ICollection<Exception> failures)
+    {
+        try
+        {
+            cancellation?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The owner completed between capture and cancellation; no work remains to cancel.
+        }
+        catch (Exception exception)
+        {
+            failures.Add(exception);
+        }
+    }
+
+    private async Task<IReadOnlyList<Exception>> RollbackFailedStartAsync(
+        bool productionConnectAttempted,
+        CancellationTokenSource? loopCancellation,
+        Task? loopTask)
+    {
+        var failures = new List<Exception>();
+        try
+        {
+            loopCancellation?.Cancel();
+        }
+        catch (Exception exception)
+        {
+            failures.Add(exception);
+        }
+
+        if (loopTask is not null)
         {
             try
             {
-                await _loopTask;
+                await loopTask.ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (loopCancellation?.IsCancellationRequested == true)
             {
-                // The loop is expected to cancel during stop.
+                // Startup rollback requested the loop cancellation.
+            }
+            catch (Exception exception)
+            {
+                failures.Add(exception);
             }
         }
 
-        SetState(ProductionState.Stopped);
-        await DisconnectProductionAsync();
-        _log.Info("Production", "连续生产停止");
+        if (loopTask is null)
+        {
+            loopCancellation?.Dispose();
+        }
+        else
+        {
+            var stopOwnsLoopCancellation = false;
+            lock (_lifecycleSyncRoot)
+            {
+                stopOwnsLoopCancellation = _stopTask is { IsCompleted: false } &&
+                                           ReferenceEquals(_loopCancellation, loopCancellation) &&
+                                           ReferenceEquals(_loopTask, loopTask);
+                if (ReferenceEquals(_loopCancellation, loopCancellation) &&
+                    ReferenceEquals(_loopTask, loopTask))
+                {
+                    _loopCancellation = null;
+                    _loopTask = null;
+                }
+            }
+
+            if (!stopOwnsLoopCancellation)
+            {
+                loopCancellation?.Dispose();
+            }
+        }
+
+        try
+        {
+            SetState(ProductionState.Stopped);
+        }
+        catch (Exception exception)
+        {
+            failures.Add(exception);
+        }
+
+        if (productionConnectAttempted &&
+            (loopTask is null || loopTask.IsCanceled) &&
+            !_runLifetime.IsShutdownRequested)
+        {
+            try
+            {
+                await DisconnectProductionAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                failures.Add(exception);
+            }
+        }
+
+        return failures;
     }
 
     private async Task ClearInspectionBusyAsync()
