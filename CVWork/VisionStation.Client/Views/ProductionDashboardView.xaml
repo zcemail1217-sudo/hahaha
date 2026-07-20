@@ -98,7 +98,7 @@
                             </Button>
                             <Button Command="{Binding StopCommand}"
                                     Style="{StaticResource ActionButtonStyle}"
-                                    ToolTip="停止连续检测循环">
+                                    ToolTip="停止当前生产检测">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Style="{StaticResource IconTextStyle}" Text="&#xE71A;" Width="18" FontSize="13" Foreground="{StaticResource NgBrush}" />
                                     <TextBlock Text="停止" Margin="6,0,0,0" />
@@ -436,7 +436,8 @@
             </Border>
         </Grid>
 
-        <controls:SimpleLoadingOverlay Grid.ColumnSpan="2"
+        <controls:SimpleLoadingOverlay Grid.Column="0"
+                                       Margin="0,52,10,0"
                                        Panel.ZIndex="20"
                                        IsActive="{Binding IsBusy}" />
     </Grid>

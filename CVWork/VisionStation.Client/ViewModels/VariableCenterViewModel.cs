@@ -15,13 +15,13 @@ using VisionStation.Vision.UI.ViewModels;
 
 namespace VisionStation.Client.ViewModels;
 
-public sealed class VariableCenterViewModel : BindableBase, IDisposable
+public sealed class VariableCenterViewModel : BindableBase, IDisposable, IAsyncDisposable
 {
     private const string UnsavedChangesKey = "variable-center";
 
     private readonly IRecipeRepository _recipes;
     private readonly IDeviceConfigurationRepository _configurationRepository;
-    private readonly IInspectionRunner _inspectionRunner;
+    private readonly IInspectionExecution _inspectionExecution;
     private readonly IUiDispatcher _uiDispatcher;
     private readonly IEventAggregator _events;
     private readonly ICommunicationChannelRuntime _communicationChannels;
@@ -30,6 +30,11 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
     private readonly IDigitalIoController _digitalIo;
     private readonly IUnsavedChangesService _unsavedChanges;
     private readonly CancellationTokenSource _liveValueCancellation = new();
+    private readonly object _projectionGate = new();
+    private readonly TaskCompletionSource _disposeCompletion = new(
+        TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Task _liveValuePollingTask;
+    private int _disposeStarted;
     private DeviceConfiguration _configuration;
     private Recipe? _loadedRecipe;
     private RecipeListItem? _selectedRecipe;
@@ -45,7 +50,7 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
     public VariableCenterViewModel(
         IRecipeRepository recipes,
         IDeviceConfigurationRepository configurationRepository,
-        IInspectionRunner inspectionRunner,
+        IInspectionExecution inspectionExecution,
         IUiDispatcher uiDispatcher,
         DeviceConfiguration configuration,
         IEventAggregator events,
@@ -57,7 +62,7 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
     {
         _recipes = recipes;
         _configurationRepository = configurationRepository;
-        _inspectionRunner = inspectionRunner;
+        _inspectionExecution = inspectionExecution;
         _uiDispatcher = uiDispatcher;
         _configuration = configuration;
         _events = events;
@@ -73,12 +78,12 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
         AddVariableCommand = new DelegateCommand<string>(AddVariable, _ => CanEditRecipe());
         RemoveVariableCommand = new DelegateCommand(RemoveSelectedVariable, () => SelectedVariable is not null && CanEditRecipe());
         SyncFromRecipeCommand = new DelegateCommand(SyncFromRecipe, CanEditRecipe);
-        _inspectionRunner.RunCompleted += OnInspectionCompleted;
+        _inspectionExecution.RunCompleted += OnInspectionCompleted;
         _communicationChannels.FrameReceived += OnCommunicationFrameReceived;
         _configurationRepository.ConfigurationSaved += OnConfigurationSaved;
 
         _ = LoadAsync();
-        _ = RunLiveValuePollingAsync(_liveValueCancellation.Token);
+        _liveValuePollingTask = RunLiveValuePollingAsync(_liveValueCancellation.Token);
     }
 
     public ObservableCollection<RecipeListItem> Recipes { get; } = new();
@@ -729,18 +734,19 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
 
     private void OnInspectionCompleted(object? sender, InspectionRunResult run)
     {
-        _uiDispatcher.Invoke(() => ApplyRuntimeSnapshot(run));
+        InvokeProjection(() => ApplyRuntimeSnapshot(run));
     }
 
     private void OnConfigurationSaved(object? sender, DeviceConfiguration configuration)
     {
-        _uiDispatcher.Invoke(() => ApplyDeviceConfiguration(configuration));
+        InvokeProjection(() => ApplyDeviceConfiguration(configuration));
     }
 
     private void OnCommunicationFrameReceived(object? sender, CommunicationChannelRuntimeFrame frame)
     {
         var text = DecodeFramePayload(frame.Payload);
-        _uiDispatcher.Invoke(() => ApplyCommunicationFrame(frame.Kind, frame.Key, text, DateTimeOffset.Now));
+        InvokeProjection(() =>
+            ApplyCommunicationFrame(frame.Kind, frame.Key, text, DateTimeOffset.Now));
     }
 
     private void ApplyCommunicationFrame(string kind, string channelKey, string value, DateTimeOffset updatedAt)
@@ -783,7 +789,8 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
             }
             catch (Exception ex)
             {
-                _uiDispatcher.Invoke(() => StatusText = $"Live value refresh failed: {ex.Message}");
+                InvokeProjection(() =>
+                    StatusText = $"Live value refresh failed: {ex.Message}");
             }
 
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
@@ -793,7 +800,7 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
     private async Task RefreshPolledLiveValuesAsync(CancellationToken cancellationToken)
     {
         LivePollRequest[] requests = [];
-        _uiDispatcher.Invoke(() =>
+        InvokeProjection(() =>
         {
             requests = Variables
                 .Where(variable => variable.Enabled)
@@ -829,7 +836,7 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
             return;
         }
 
-        _uiDispatcher.Invoke(() =>
+        InvokeProjection(() =>
         {
             foreach (var (variable, value, updatedAt) in updates)
             {
@@ -1232,11 +1239,112 @@ public sealed class VariableCenterViewModel : BindableBase, IDisposable
 
     public void Dispose()
     {
-        _liveValueCancellation.Cancel();
-        _liveValueCancellation.Dispose();
-        _inspectionRunner.RunCompleted -= OnInspectionCompleted;
-        _communicationChannels.FrameReceived -= OnCommunicationFrameReceived;
-        _configurationRepository.ConfigurationSaved -= OnConfigurationSaved;
+        _ = BeginDispose();
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        return new ValueTask(BeginDispose());
+    }
+
+    private Task BeginDispose()
+    {
+        if (Interlocked.CompareExchange(ref _disposeStarted, 1, 0) != 0)
+        {
+            return _disposeCompletion.Task;
+        }
+
+        lock (_projectionGate)
+        {
+            // Drain an already-running projection before removing subscriptions.
+        }
+
+        UnsubscribeEventsSafely();
+        try
+        {
+            _liveValueCancellation.Cancel();
+        }
+        catch
+        {
+            // External cancellation callbacks must not fault synchronous disposal.
+        }
+
+        _ = CompleteDisposeAsync();
+        return _disposeCompletion.Task;
+    }
+
+    private async Task CompleteDisposeAsync()
+    {
+        try
+        {
+            await _liveValuePollingTask.ConfigureAwait(false);
+        }
+        catch
+        {
+            // The saved polling task is fully observed during teardown.
+        }
+        finally
+        {
+            try
+            {
+                _liveValueCancellation.Dispose();
+            }
+            catch
+            {
+                // Disposal completion remains non-faulting and idempotent.
+            }
+
+            _disposeCompletion.TrySetResult();
+        }
+    }
+
+    private void UnsubscribeEventsSafely()
+    {
+        TryUnsubscribe(() =>
+        {
+            _inspectionExecution.RunCompleted -= OnInspectionCompleted;
+        });
+        TryUnsubscribe(() =>
+        {
+            _communicationChannels.FrameReceived -= OnCommunicationFrameReceived;
+        });
+        TryUnsubscribe(() =>
+        {
+            _configurationRepository.ConfigurationSaved -= OnConfigurationSaved;
+        });
+    }
+
+    private static void TryUnsubscribe(Action unsubscribe)
+    {
+        try
+        {
+            unsubscribe();
+        }
+        catch
+        {
+            // The disposed gate still rejects callbacks from a hostile event source.
+        }
+    }
+
+    private void InvokeProjection(Action projection)
+    {
+        if (Volatile.Read(ref _disposeStarted) != 0)
+        {
+            return;
+        }
+
+        _uiDispatcher.Invoke(() =>
+        {
+            lock (_projectionGate)
+            {
+                if (Volatile.Read(ref _disposeStarted) != 0)
+                {
+                    return;
+                }
+
+                projection();
+            }
+        });
     }
 
     private sealed record LivePollRequest(

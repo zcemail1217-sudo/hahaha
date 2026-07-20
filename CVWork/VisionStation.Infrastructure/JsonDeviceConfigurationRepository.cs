@@ -605,7 +605,10 @@ public sealed class JsonDeviceConfigurationRepository : IDeviceConfigurationRepo
             MaxConsecutiveFailures = production.MaxConsecutiveFailures <= 0
                 ? defaults.Production.MaxConsecutiveFailures
                 : production.MaxConsecutiveFailures,
-            CleanupTimeoutMs = production.CleanupTimeoutMs <= 0 ? defaults.Production.CleanupTimeoutMs : production.CleanupTimeoutMs
+            CleanupTimeoutMs = production.CleanupTimeoutMs <= 0 ? defaults.Production.CleanupTimeoutMs : production.CleanupTimeoutMs,
+            StopWaitTimeoutMs = production.StopWaitTimeoutMs <= 0
+                ? defaults.Production.StopWaitTimeoutMs
+                : production.StopWaitTimeoutMs
         };
 
         var logging = settings.Logging ?? defaults.Logging;
@@ -907,7 +910,8 @@ public sealed class JsonDeviceConfigurationRepository : IDeviceConfigurationRepo
                     CycleDelayMs = 900,
                     MaxConsecutiveFailures = 1,
                     AutoStopOnAlarm = true,
-                    CleanupTimeoutMs = 2000
+                    CleanupTimeoutMs = 2000,
+                    StopWaitTimeoutMs = 10000
                 },
                 Logging = new AppLoggingSettingsConfiguration
                 {

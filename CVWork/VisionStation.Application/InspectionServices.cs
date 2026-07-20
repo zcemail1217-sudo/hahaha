@@ -14,13 +14,6 @@ using VisionStation.Vision;
 
 namespace VisionStation.Application;
 
-public interface IInspectionRunner
-{
-    event EventHandler<InspectionRunResult>? RunCompleted;
-
-    Task<InspectionRunResult> RunAsync(InspectionRequest request, CancellationToken cancellationToken = default);
-}
-
 public sealed record FlowRunResult(
     string FlowId,
     string FlowName,
@@ -38,7 +31,7 @@ public sealed record InspectionRunResult(InspectionResult Result, ImageFrame Ori
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }
 
-public sealed class InspectionRunner : IInspectionRunner
+internal sealed class InspectionRunner : IInspectionExecutor
 {
     private readonly ICameraDevice _camera;
     private readonly IConfigurableCameraDevice _configurableCamera;
@@ -80,34 +73,29 @@ public sealed class InspectionRunner : IInspectionRunner
         ICommunicationChannelRuntime communicationChannels,
         IInspectionRunControl runControl)
     {
-        _camera = camera;
-        _configurableCamera = configurableCamera;
-        _axis = axis;
-        _plc = plc;
-        _devices = devices;
-        _configuration = configuration;
-        _configurationRepository = configurationRepository;
-        _pipeline = pipeline;
-        _recipes = recipes;
-        _records = records;
-        _traceStore = traceStore;
-        _log = log;
-        _communicationChannels = communicationChannels;
-        _runControl = runControl;
+        _camera = camera ?? throw new ArgumentNullException(nameof(camera));
+        _configurableCamera = configurableCamera ??
+            throw new ArgumentNullException(nameof(configurableCamera));
+        _axis = axis ?? throw new ArgumentNullException(nameof(axis));
+        _plc = plc ?? throw new ArgumentNullException(nameof(plc));
+        _devices = devices ?? throw new ArgumentNullException(nameof(devices));
+        _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _configurationRepository = configurationRepository ??
+            throw new ArgumentNullException(nameof(configurationRepository));
+        _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
+        _recipes = recipes ?? throw new ArgumentNullException(nameof(recipes));
+        _records = records ?? throw new ArgumentNullException(nameof(records));
+        _traceStore = traceStore ?? throw new ArgumentNullException(nameof(traceStore));
+        _log = log ?? throw new ArgumentNullException(nameof(log));
+        _communicationChannels = communicationChannels ??
+            throw new ArgumentNullException(nameof(communicationChannels));
+        _runControl = runControl ?? throw new ArgumentNullException(nameof(runControl));
     }
 
-    public event EventHandler<InspectionRunResult>? RunCompleted;
-
-    public async Task<InspectionRunResult> RunAsync(InspectionRequest request, CancellationToken cancellationToken = default)
+    public async Task<InspectionRunResult> ExecuteAsync(InspectionRequest request, CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
-        Recipe? recipe = null;
-        if (!string.IsNullOrWhiteSpace(request.RecipeId))
-        {
-            recipe = await _recipes.GetAsync(request.RecipeId, cancellationToken);
-        }
-
-        recipe = (recipe ?? await _recipes.GetCurrentAsync(cancellationToken)).WithNormalizedFlows();
+        var recipe = await ResolveRecipeAsync(request, cancellationToken);
         _configuration = await _configurationRepository.GetAsync(cancellationToken);
         var initialRuntimeValues = CreateInitialRuntimeValues(recipe, request, _configuration);
         var runtimeRecipe = ApplyVariableBindings(recipe, initialRuntimeValues).WithNormalizedFlows();
@@ -167,8 +155,44 @@ public sealed class InspectionRunner : IInspectionRunner
             FlowResults = execution.FlowResults.ToArray(),
             RuntimeValues = new Dictionary<string, string>(execution.RuntimeValues, StringComparer.OrdinalIgnoreCase)
         };
-        RunCompleted?.Invoke(this, runResult);
         return runResult;
+    }
+
+    private async Task<Recipe> ResolveRecipeAsync(
+        InspectionRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.RecipeSnapshot is { } snapshot)
+        {
+            if (string.IsNullOrWhiteSpace(snapshot.Id))
+            {
+                throw new ArgumentException(
+                    "RecipeSnapshot.Id is required.",
+                    nameof(request));
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.RecipeId) &&
+                !string.Equals(
+                    request.RecipeId,
+                    snapshot.Id,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    $"RecipeId '{request.RecipeId}' does not match RecipeSnapshot.Id '{snapshot.Id}'.",
+                    nameof(request));
+            }
+
+            return snapshot.WithNormalizedFlows();
+        }
+
+        Recipe? recipe = null;
+        if (!string.IsNullOrWhiteSpace(request.RecipeId))
+        {
+            recipe = await _recipes.GetAsync(request.RecipeId, cancellationToken);
+        }
+
+        return (recipe ?? await _recipes.GetCurrentAsync(cancellationToken))
+            .WithNormalizedFlows();
     }
 
     private async Task<ProcessExecutionContext> ExecuteVisionOnlyAsync(
